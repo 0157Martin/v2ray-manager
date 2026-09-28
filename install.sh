@@ -17,4 +17,4 @@ else
   exit 1
 fi
 
-bash "$temporary" bootstrap
+V2M_NONINTERACTIVE=1 bash "$temporary" install

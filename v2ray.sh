@@ -210,7 +210,13 @@ ask_server_values() {
       KEY_SOURCE=${V2M_KEY_FILE:-${KEY_SOURCE:-}}
       [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 组合需要 V2M_CERT_FILE 和 V2M_KEY_FILE。"
     fi
-    PORT=${V2M_PORT:-$default_port}
+    if [[ -n ${V2M_PORT:-} ]]; then
+      PORT=$V2M_PORT
+    elif [[ -n ${PORT:-} ]]; then
+      PORT=$PORT
+    else
+      PORT=$(find_free_port 24443)
+    fi
     UUID=${V2M_UUID:-$default_uuid}
     SERVER_NAME=${V2M_SERVER_NAME:-$default_server}
     REMARK=${V2M_REMARK:-$default_name}
@@ -460,12 +466,6 @@ install_manager_command() {
     fi
     install -m 755 "$0" "$MANAGER_BIN"
   fi
-}
-
-bootstrap_manager() {
-  require_supported_os
-  install_manager_command
-  green "管理命令安装完成。现在输入 v2ray 即可进入菜单。"
 }
 
 stop_legacy_service() {
@@ -1024,7 +1024,6 @@ main() {
   require_root
   case "${1:-menu}" in
     menu) menu ;;
-    bootstrap) bootstrap_manager ;;
     install) install_xray ;;
     add) add_inbound ;;
     inbounds) list_inbounds ;;
@@ -1044,7 +1043,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [bootstrap|install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
