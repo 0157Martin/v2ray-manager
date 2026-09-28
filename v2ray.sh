@@ -477,11 +477,11 @@ stop_legacy_service() {
 
 install_xray() {
   require_supported_os
+  # Install the manager first so users retain a recovery path if download or validation fails.
+  install_manager_command
   [[ -x "$XRAY_BIN" ]] && yellow "检测到已有 Xray 安装，将更新内核并重新生成服务端配置。"
   step "安装依赖并准备 Xray Core"
   download_core
-  # Make the management command available even if a later configuration check fails.
-  install_manager_command
   ask_server_values
   ensure_port_available
   step "生成并校验配置文件"
