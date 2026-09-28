@@ -14,7 +14,7 @@ readonly CONFIG_FILE="$CONFIG_DIR/config.json"
 readonly SERVICE_FILE="/etc/systemd/system/v2ray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly RELEASE_API="https://api.github.com/repos/v2fly/v2ray-core/releases/latest"
-readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray-manager.sh"
+readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
