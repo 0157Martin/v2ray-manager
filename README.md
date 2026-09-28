@@ -86,6 +86,7 @@ v2ray uninstall
 
 ```bash
 export V2M_NONINTERACTIVE=1
+export V2M_MENU_TOKEN=v2ray
 export V2M_PORT=443
 export V2M_PROFILE=vless-reality-raw
 export V2M_ADDRESS=203.0.113.10
@@ -99,6 +100,14 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 `V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合还需 `V2M_CERT_FILE` 和 `V2M_KEY_FILE`。
 
 ## 安装提示
+
+交互安装不会直接展示协议列表，而是先要求输入协议菜单口令：`v2ray`。验证通过后，才会继续选择协议组合。这个口令用于避免误操作，不是安全认证机制（项目源码公开可见）。
+
+自动化部署请额外设置：
+
+```bash
+export V2M_MENU_TOKEN=v2ray
+```
 
 安装时需要选择：
 

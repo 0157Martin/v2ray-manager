@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.0.0"
+readonly MANAGER_VERSION="4.1.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -25,6 +25,8 @@ readonly NODES_DIR="$CONFIG_DIR/nodes"
 readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
 readonly SERVICE_NAME="xray"
+# This is an interaction gate, not an authentication mechanism: the repository is public.
+readonly PROTOCOL_MENU_TOKEN="v2ray"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -100,6 +102,20 @@ valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
 
+require_protocol_menu_token() {
+  local token
+  if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
+    token=${V2M_MENU_TOKEN:-}
+    [[ $token == "$PROTOCOL_MENU_TOKEN" ]] || die "非交互安装需要设置 V2M_MENU_TOKEN。"
+    return
+  fi
+
+  printf '\n请输入协议菜单口令：'
+  read -r -s token
+  printf '\n'
+  [[ $token == "$PROTOCOL_MENU_TOKEN" ]] || die "口令错误，未进入协议选择。"
+}
+
 profile_name() {
   case ${PROFILE:-vless-reality-raw} in
     vless-reality-raw) printf 'VLESS-REALITY-Vision-RAW' ;;
@@ -118,6 +134,8 @@ profile_name() {
 
 choose_profile() {
   local choice default_path
+  require_protocol_menu_token
+  printf '\n%s\n' '口令验证成功，以下是可选协议组合：'
   printf '%s\n' \
     '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书]' \
     '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输、内置多路复用]' \

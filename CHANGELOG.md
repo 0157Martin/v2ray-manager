@@ -1,5 +1,10 @@
 # Changelog
 
+## 4.1.0
+
+- 交互式协议选择前增加 `v2ray` 口令确认，防止误入配置流程。
+- 非交互安装要求通过 `V2M_MENU_TOKEN` 显式确认。
+
 ## 4.0.0
 
 - Replaced the single-inbound model with a multi-inbound registry under `/etc/xray/nodes`.
