@@ -15,6 +15,7 @@ readonly ASSET_DIR="/usr/local/share/xray"
 readonly CONFIG_DIR="/etc/xray"
 readonly CONFIG_FILE="$CONFIG_DIR/config.json"
 readonly BACKUP_DIR="/var/backups/v2ray-manager"
+readonly LEGACY_MANAGER_BACKUP="$BACKUP_DIR/legacy-v2ray-command"
 readonly SERVICE_FILE="/etc/systemd/system/xray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
@@ -264,6 +265,13 @@ EOF
 install_manager_command() {
   [[ -r "$0" ]] || die "无法读取当前脚本，未能安装 v2ray 管理命令。"
   if [[ "$(readlink -f "$0")" != "$(readlink -f "$MANAGER_BIN" 2>/dev/null || true)" ]]; then
+    if [[ -e "$MANAGER_BIN" ]] && ! grep -q 'APP_NAME="v2ray-manager"' "$MANAGER_BIN" 2>/dev/null; then
+      install -d -m 700 "$BACKUP_DIR"
+      if [[ ! -e "$LEGACY_MANAGER_BACKUP" ]]; then
+        cp -a "$MANAGER_BIN" "$LEGACY_MANAGER_BACKUP"
+        yellow "已保存现有 v2ray 管理命令：$LEGACY_MANAGER_BACKUP"
+      fi
+    fi
     install -m 755 "$0" "$MANAGER_BIN"
   fi
 }
@@ -548,38 +556,71 @@ uninstall_xray() {
   systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
   rm -f "$SERVICE_FILE" "$XRAY_BIN" "$MANAGER_BIN"
   rm -rf "$CONFIG_DIR" "$ASSET_DIR"
+  if [[ -e "$LEGACY_MANAGER_BACKUP" ]]; then
+    install -m 755 "$LEGACY_MANAGER_BACKUP" "$MANAGER_BIN"
+    green "已恢复安装前的 v2ray 管理命令。"
+  fi
   systemctl daemon-reload
   green "已卸载本脚本创建的 Xray 程序与配置。xray 系统账户和 $BACKUP_DIR 中的备份已保留。"
+}
+
+runtime_menu() {
+  printf '\n%s\n' '----- 运行管理 -----'
+  printf '%s\n' '1) 启动服务' '2) 停止服务' '3) 重启服务' '4) 查看状态' '5) 查看日志' '0) 返回'
+  read -r -p '请选择 [0-5]:' choice
+  case "$choice" in
+    1) service_action start ;; 2) service_action stop ;; 3) service_action restart ;;
+    4) show_status ;; 5) show_logs ;; 0) return ;; *) yellow "无效选择。" ;;
+  esac
+}
+
+maintenance_menu() {
+  printf '\n%s\n' '----- 维护工具 -----'
+  printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
+    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '0) 返回'
+  read -r -p '请选择 [0-6]:' choice
+  case "$choice" in
+    1) update_core ;; 2) update_manager ;; 3) doctor || true ;; 4) manual_backup ;;
+    5) restore_latest ;; 6) rotate_reality_keys ;;
+    0) return ;; *) yellow "无效选择。" ;;
+  esac
+}
+
+show_help() {
+  printf '%s\n' \
+    '直接运行 v2ray 打开主菜单。' \
+    'v2ray change   打开配置修改菜单' \
+    'v2ray info     查看连接信息' \
+    'v2ray doctor   运行综合诊断' \
+    'v2ray help     查看完整命令用法'
+}
+
+show_about() {
+  printf '\n%s\n' "----------- ${APP_NAME} -----------"
+  printf '作者: %s\n版本: %s\n内核: %s\n协议: VLESS + REALITY + XTLS Vision\n仓库: https://github.com/0157Martin/v2ray-manager\n\n' \
+    "$AUTHOR" "$MANAGER_VERSION" "$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')"
 }
 
 menu() {
   while :; do
     clear || true
-    printf '%s\n' "===== Xray / VLESS REALITY 管理 ====="
-    printf '作者：%s | 版本：%s\n\n' "$AUTHOR" "$MANAGER_VERSION"
-    printf '%s\n' \
-      "1) 安装 / 重装" "2) 修改配置" "3) 查看连接信息" \
-      "4) 启动服务" "5) 停止服务" "6) 重启服务" \
-      "7) 服务状态" "8) 最近日志" "9) 更新 Xray Core" \
-      "10) 更新管理脚本" "11) 轮换 REALITY 密钥" "12) 备份配置" \
-      "13) 恢复最近备份" "14) 运行诊断" "15) 卸载" "0) 退出"
+    local core_version service_state
+    core_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')
+    if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi
+    printf '%s\n' "---------- ${APP_NAME} v${MANAGER_VERSION} by ${AUTHOR} ----------"
+    printf 'Xray: %s  状态: ' "$core_version"
+    if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
+    printf '\n%s\n' \
+      '1) 安装 / 添加配置' '2) 更改配置' '3) 查看配置' \
+      '4) 服务管理' '5) 维护工具' '6) 卸载' '0) 退出'
     read -r -p "请选择：" choice
     case "$choice" in
       1) install_xray; pause ;;
       2) change_menu; pause ;;
-      3) show_connection; pause ;;
-      4) service_action start; pause ;;
-      5) service_action stop; pause ;;
-      6) service_action restart; pause ;;
-      7) show_status; pause ;;
-      8) show_logs; pause ;;
-      9) update_core; pause ;;
-      10) update_manager; pause ;;
-      11) rotate_reality_keys; pause ;;
-      12) manual_backup; pause ;;
-      13) restore_latest; pause ;;
-      14) doctor || true; pause ;;
-      15) uninstall_xray; pause ;;
+      3) show_info; pause ;;
+      4) runtime_menu; pause ;;
+      5) maintenance_menu; pause ;;
+      6) uninstall_xray; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -605,7 +646,8 @@ main() {
     doctor) doctor ;;
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
-    help|-h|--help) printf '%s\n' "用法：v2ray [install|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|uninstall]" ;;
+    about) show_about ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

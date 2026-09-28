@@ -6,6 +6,7 @@
 - Added `V2M_ADDRESS` for servers whose reachable address differs from their detected outbound IP.
 - Added the classic `v2ray change` submenu and a bilingual, field-oriented connection display.
 - Added timestamped installation stages while retaining the modern VLESS REALITY stack.
+- Preserve a pre-existing `/usr/local/bin/v2ray` manager and restore it on uninstall.
 
 ## 2.1.0
 
