@@ -212,9 +212,7 @@ ask_server_values() {
     fi
     if [[ -n ${V2M_PORT:-} ]]; then
       PORT=$V2M_PORT
-    elif [[ -n ${PORT:-} ]]; then
-      PORT=$PORT
-    else
+    elif [[ -z ${PORT:-} ]]; then
       PORT=$(find_free_port 24443)
     fi
     UUID=${V2M_UUID:-$default_uuid}
