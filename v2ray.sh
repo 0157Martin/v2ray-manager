@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="2.1.0"
+readonly MANAGER_VERSION="2.2.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -116,6 +116,7 @@ ask_server_values() {
     UUID=${V2M_UUID:-$default_uuid}
     SERVER_NAME=${V2M_SERVER_NAME:-$default_server}
     REMARK=${V2M_REMARK:-$default_name}
+    ADDRESS=${V2M_ADDRESS:-${ADDRESS:-}}
     valid_port "$PORT" || die "V2M_PORT 必须是 1 到 65535 的端口。"
     [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "V2M_UUID 格式无效。"
     valid_server_name "$SERVER_NAME" || die "V2M_SERVER_NAME 必须是有效完整域名。"
@@ -146,6 +147,18 @@ ask_server_values() {
   if [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
     generate_reality_credentials
   fi
+}
+
+ensure_port_available() {
+  local listeners
+  listeners=$(ss -H -lntp "sport = :${PORT}" 2>/dev/null || true)
+  [[ -z $listeners ]] && return 0
+  if grep -q 'xray-core' <<<"$listeners"; then
+    return 0
+  fi
+  red "错误：TCP 端口 ${PORT} 已被其他服务占用："
+  printf '%s\n' "$listeners"
+  die "请选择其他端口，不会停止现有服务。"
 }
 
 render_config() {
@@ -202,6 +215,7 @@ write_config() {
   cat > "$STATE_FILE" <<EOF
 PORT=${PORT}
 UUID=${UUID}
+ADDRESS=$(printf %q "${ADDRESS:-}")
 SERVER_NAME=$(printf %q "$SERVER_NAME")
 PRIVATE_KEY=$(printf %q "$PRIVATE_KEY")
 PUBLIC_KEY=$(printf %q "$PUBLIC_KEY")
@@ -265,6 +279,7 @@ install_xray() {
   [[ -x "$XRAY_BIN" ]] && yellow "检测到已有 Xray 安装，将更新内核并重新生成服务端配置。"
   download_core
   ask_server_values
+  ensure_port_available
   write_config
   write_service
   install_manager_command
@@ -355,6 +370,10 @@ restart_or_rollback() {
 
 server_address() {
   local addr
+  if [[ -n ${ADDRESS:-} ]]; then
+    printf '%s' "$ADDRESS"
+    return
+  fi
   addr=$(curl --fail --silent --max-time 4 https://api.ipify.org 2>/dev/null || true)
   printf '%s' "${addr:-YOUR_SERVER_IP}"
 }

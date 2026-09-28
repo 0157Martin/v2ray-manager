@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0
+
+- Added an occupied-port preflight check that never stops an unrelated service.
+- Added `V2M_ADDRESS` for servers whose reachable address differs from their detected outbound IP.
+
 ## 2.1.0
 
 - Added automatic configuration backup and rollback on failed service restarts.

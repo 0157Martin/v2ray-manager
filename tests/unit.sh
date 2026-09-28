@@ -17,6 +17,9 @@ valid_server_name www.microsoft.com || fail "normal hostname should be valid"
 ! valid_server_name localhost || fail "single-label hostname should be invalid"
 ! valid_server_name 'bad..example.com' || fail "hostname with empty label should be invalid"
 
+ADDRESS=23.95.15.200
+[[ $(server_address) == 23.95.15.200 ]] || fail "explicit server address should override public-IP detection"
+
 parse_reality_credentials $'PrivateKey: private-new\nPassword (PublicKey): public-new\nHash32: unused'
 [[ $PRIVATE_KEY == private-new ]] || fail "new private-key output was not parsed"
 [[ $PUBLIC_KEY == public-new ]] || fail "new password output was not parsed"

@@ -64,12 +64,13 @@ v2ray uninstall
 ```bash
 export V2M_NONINTERACTIVE=1
 export V2M_PORT=443
+export V2M_ADDRESS=203.0.113.10
 export V2M_SERVER_NAME=www.microsoft.com
 export V2M_REMARK=my-server
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-`V2M_UUID` 可省略，脚本会自动生成。不要在共享日志中输出 UUID 或生成后的导入链接。
+`V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，应通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
 
 ## 安装提示
 
