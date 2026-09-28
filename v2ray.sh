@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.1.0"
+readonly MANAGER_VERSION="4.1.1"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -335,10 +335,11 @@ write_config() {
   prepare_tls_material
   local temporary="$CONFIG_FILE.new"
   render_config "$temporary"
-  XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary" >/dev/null || {
+  if ! XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary"; then
+    red "Xray 配置校验输出如上。"
     rm -f "$temporary"
     die "新配置未通过 Xray 校验。"
-  }
+  fi
   install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE"
   rm -f "$temporary"
   cat > "$STATE_FILE" <<EOF
@@ -479,13 +480,14 @@ install_xray() {
   [[ -x "$XRAY_BIN" ]] && yellow "检测到已有 Xray 安装，将更新内核并重新生成服务端配置。"
   step "安装依赖并准备 Xray Core"
   download_core
+  # Make the management command available even if a later configuration check fails.
+  install_manager_command
   ask_server_values
   ensure_port_available
   step "生成并校验配置文件"
   write_config
   step "安装 systemd 服务"
   write_service
-  install_manager_command
   stop_legacy_service
   if ! systemctl enable --now "$SERVICE_NAME"; then
     if [[ -n ${LAST_BACKUP:-} ]]; then
