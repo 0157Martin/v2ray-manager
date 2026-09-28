@@ -1,12 +1,13 @@
 # V2Ray 安装与管理脚本
 
-这是一个供**你拥有或获授权管理的 Debian/Ubuntu 服务器**使用的轻量 Bash 脚本。它从 V2Fly 的 GitHub Release 下载 V2Ray Core，并创建一个由 systemd 管理的 VMess/TCP 服务。
+这是一个供**你拥有或获授权管理的 Debian/Ubuntu 服务器**使用的轻量 Bash 脚本。它从 V2Fly 的 GitHub Release 下载 V2Ray Core，并创建一个由 systemd 管理的 VMess/TCP 服务。交互和命令设计受 [233boy/v2ray](https://github.com/233boy/v2ray) 启发；本仓库为独立实现，并未复制其代码。
 
 ## 特点
 
 - 从 `v2fly/v2ray-core` 的最新正式 Release 下载对应架构的程序
 - 每次更新配置先用 `v2ray test` 校验
 - 菜单包括安装、改配置、启动、停止、重启、状态、日志与卸载
+- 安装后提供 `v2ray` 管理命令，包含 `info`、`config`、`link`、`update` 与 `update.sh`
 - 服务使用专用、不可登录的 `v2ray` 系统账户；运行配置仅 root 和该账户可读
 - 不更改防火墙、安全组、DNS 或系统代理，避免意外中断现有网络
 
@@ -16,6 +17,21 @@
 
 ```bash
 sudo bash v2ray-manager.sh
+```
+
+安装完成后可直接管理：
+
+```bash
+v2ray                 # 打开交互菜单
+v2ray info            # 查看版本及连接信息
+v2ray config          # 修改端口、UUID、备注
+v2ray link            # 输出 VMess 导入链接
+v2ray status          # 查看 systemd 状态
+v2ray start|stop|restart
+v2ray log             # 查看最近 100 条服务日志
+v2ray update          # 更新 V2Ray Core，保留现有配置
+v2ray update.sh       # 更新管理脚本
+v2ray uninstall
 ```
 
 也可从本仓库下载再执行。执行前建议先阅读脚本内容：
@@ -40,7 +56,8 @@ sudo bash v2ray-manager.sh uninstall
 
 | 内容 | 位置 |
 | --- | --- |
-| V2Ray 可执行文件 | `/usr/local/bin/v2ray` |
+| V2Ray Core | `/usr/local/bin/v2ray-core` |
+| 管理命令 | `/usr/local/bin/v2ray` |
 | 配置 | `/etc/v2ray/config.json` |
 | systemd 服务 | `/etc/systemd/system/v2ray.service` |
 | 管理状态 | `/etc/v2ray/manager.env` |

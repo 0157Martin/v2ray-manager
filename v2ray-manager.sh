@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # v2ray-manager — small, auditable V2Ray server installer and service manager.
 # Supported hosts: Debian and Ubuntu with systemd. Run as root.
+# SPDX-License-Identifier: GPL-3.0-or-later
 set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
+readonly MANAGER_VERSION="1.1.0"
 readonly BIN_DIR="/usr/local/bin"
-readonly V2RAY_BIN="$BIN_DIR/v2ray"
+readonly MANAGER_BIN="$BIN_DIR/v2ray"
+readonly V2RAY_BIN="$BIN_DIR/v2ray-core"
 readonly CONFIG_DIR="/etc/v2ray"
 readonly CONFIG_FILE="$CONFIG_DIR/config.json"
 readonly SERVICE_FILE="/etc/systemd/system/v2ray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly RELEASE_API="https://api.github.com/repos/v2fly/v2ray-core/releases/latest"
+readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray-manager.sh"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -127,7 +131,7 @@ User=v2ray
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=/usr/local/bin/v2ray run -config /etc/v2ray/config.json
+ExecStart=/usr/local/bin/v2ray-core run -config /etc/v2ray/config.json
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=1048576
@@ -145,9 +149,18 @@ install_v2ray() {
   ask_server_values
   write_config
   write_service
+  install_manager_command
   systemctl enable --now v2ray
   green "安装完成。"
   show_connection
+}
+
+install_manager_command() {
+  # $0 can be a downloaded file, a process-substitution descriptor, or this command itself.
+  [[ -r "$0" ]] || die "无法读取当前脚本，未能安装 v2ray 管理命令。"
+  if [[ "$(readlink -f "$0")" != "$(readlink -f "$MANAGER_BIN" 2>/dev/null || true)" ]]; then
+    install -m 755 "$0" "$MANAGER_BIN"
+  fi
 }
 
 load_state() {
@@ -198,11 +211,40 @@ show_logs() {
   journalctl -u v2ray -n 100 --no-pager
 }
 
+show_info() {
+  load_state
+  printf '管理器版本：%s\n' "$MANAGER_VERSION"
+  printf '内核版本：%s\n' "$($V2RAY_BIN version 2>/dev/null | head -n 1 || printf '不可用')"
+  show_connection
+}
+
+update_core() {
+  [[ -x "$V2RAY_BIN" && -r "$CONFIG_FILE" ]] || die "尚未安装。"
+  download_core
+  write_service
+  systemctl restart v2ray
+  green "V2Ray Core 已更新并重启服务。"
+  "$V2RAY_BIN" version | head -n 1
+}
+
+update_manager() {
+  local temporary
+  temporary=$(mktemp)
+  trap 'rm -f "$temporary"' RETURN
+  green "从本仓库下载管理脚本更新…"
+  curl --fail --show-error --location --retry 3 --output "$temporary" "$MANAGER_URL"
+  bash -n "$temporary" || die "下载的脚本未通过语法检查，未更新。"
+  install -m 755 "$temporary" "$MANAGER_BIN"
+  trap - RETURN
+  rm -f "$temporary"
+  green "管理脚本已更新。重新运行 v2ray 即可使用新版本。"
+}
+
 uninstall_v2ray() {
   read -r -p "将停止服务并删除 V2Ray 程序与 /etc/v2ray 配置。继续？[y/N] " answer
   [[ ${answer,,} == y || ${answer,,} == yes ]] || return
   systemctl disable --now v2ray 2>/dev/null || true
-  rm -f "$SERVICE_FILE" "$V2RAY_BIN" "$BIN_DIR/geoip.dat" "$BIN_DIR/geosite.dat"
+  rm -f "$SERVICE_FILE" "$V2RAY_BIN" "$BIN_DIR/geoip.dat" "$BIN_DIR/geosite.dat" "$MANAGER_BIN"
   rm -rf "$CONFIG_DIR"
   systemctl daemon-reload
   green "已卸载 V2Ray 与本脚本创建的配置。为避免影响其他服务，保留了 v2ray 系统账户。"
@@ -212,7 +254,7 @@ menu() {
   while :; do
     clear || true
     printf '%s\n' "===== V2Ray 安装与管理 ====="
-    printf '%s\n' "1) 安装 / 重装" "2) 修改 VMess 配置" "3) 显示客户端导入链接" "4) 启动服务" "5) 停止服务" "6) 重启服务" "7) 服务状态" "8) 最近日志" "9) 卸载" "0) 退出"
+    printf '%s\n' "1) 安装 / 重装" "2) 修改 VMess 配置" "3) 查看连接信息" "4) 启动服务" "5) 停止服务" "6) 重启服务" "7) 服务状态" "8) 最近日志" "9) 更新 V2Ray Core" "10) 更新管理脚本" "11) 卸载" "0) 退出"
     read -r -p "请选择：" choice
     case "$choice" in
       1) install_v2ray; pause ;;
@@ -223,7 +265,9 @@ menu() {
       6) service_action restart; pause ;;
       7) show_status; pause ;;
       8) show_logs; pause ;;
-      9) uninstall_v2ray; pause ;;
+      9) update_core; pause ;;
+      10) update_manager; pause ;;
+      11) uninstall_v2ray; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -235,10 +279,18 @@ main() {
   case "${1:-menu}" in
     menu) menu ;;
     install) install_v2ray ;;
+    info) show_info ;;
+    config) change_config ;;
     status) show_status ;;
     link) show_connection ;;
+    start|stop|restart) service_action "$1" ;;
+    log) show_logs ;;
+    update) update_core ;;
+    update.sh) update_manager ;;
     uninstall) uninstall_v2ray ;;
-    *) die "用法：$0 [menu|install|status|link|uninstall]" ;;
+    version) printf '%s %s\n' "$APP_NAME" "$MANAGER_VERSION" ;;
+    help|-h|--help) printf '%s\n' "用法：v2ray [install|info|config|link|status|start|stop|restart|log|update|update.sh|uninstall]" ;;
+    *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
 
