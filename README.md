@@ -1,5 +1,7 @@
 # V2Ray 安装与管理脚本
 
+作者：[0157Martin](https://github.com/0157Martin)
+
 这是一个供**你拥有或获授权管理的 Debian/Ubuntu 服务器**使用的轻量 Bash 脚本。它从 V2Fly 的 GitHub Release 下载 V2Ray Core，并创建一个由 systemd 管理的 VMess/TCP 服务。交互和命令设计受 [233boy/v2ray](https://github.com/233boy/v2ray) 启发；本仓库为独立实现，并未复制其代码。
 
 ## 特点

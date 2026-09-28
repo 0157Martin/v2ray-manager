@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Minimal bootstrapper for v2ray-manager.
+# Author: 0157Martin (https://github.com/0157Martin)
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -Eeuo pipefail
 

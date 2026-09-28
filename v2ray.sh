@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # v2ray-manager — small, auditable V2Ray server installer and service manager.
 # Supported hosts: Debian and Ubuntu with systemd. Run as root.
+# Author: 0157Martin (https://github.com/0157Martin)
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
+readonly AUTHOR="0157Martin"
 readonly MANAGER_VERSION="1.1.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -213,6 +215,7 @@ show_logs() {
 
 show_info() {
   load_state
+  printf '作者：%s\n' "$AUTHOR"
   printf '管理器版本：%s\n' "$MANAGER_VERSION"
   printf '内核版本：%s\n' "$($V2RAY_BIN version 2>/dev/null | head -n 1 || printf '不可用')"
   show_connection
@@ -254,6 +257,7 @@ menu() {
   while :; do
     clear || true
     printf '%s\n' "===== V2Ray 安装与管理 ====="
+    printf '作者：%s | 版本：%s\n\n' "$AUTHOR" "$MANAGER_VERSION"
     printf '%s\n' "1) 安装 / 重装" "2) 修改 VMess 配置" "3) 查看连接信息" "4) 启动服务" "5) 停止服务" "6) 重启服务" "7) 服务状态" "8) 最近日志" "9) 更新 V2Ray Core" "10) 更新管理脚本" "11) 卸载" "0) 退出"
     read -r -p "请选择：" choice
     case "$choice" in
@@ -288,7 +292,7 @@ main() {
     update) update_core ;;
     update.sh) update_manager ;;
     uninstall) uninstall_v2ray ;;
-    version) printf '%s %s\n' "$APP_NAME" "$MANAGER_VERSION" ;;
+    version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     help|-h|--help) printf '%s\n' "用法：v2ray [install|info|config|link|status|start|stop|restart|log|update|update.sh|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
