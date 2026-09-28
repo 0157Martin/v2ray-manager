@@ -333,7 +333,8 @@ write_config() {
   install -d -m 755 "$CONFIG_DIR"
   create_backup
   prepare_tls_material
-  local temporary="$CONFIG_FILE.new"
+  # Xray determines the configuration format from the final file extension.
+  local temporary="$CONFIG_DIR/config.pending.json"
   render_config "$temporary"
   if ! XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary"; then
     red "Xray 配置校验输出如上。"
