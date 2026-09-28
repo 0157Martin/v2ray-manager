@@ -1,10 +1,16 @@
 # Changelog
 
+## 3.1.0
+
+- Expanded the selector to eleven modern and legacy-compatible protocol profiles.
+- Added concise characteristics and deployment requirements directly to the protocol menu.
+
 ## 3.0.0
 
 - Added five selectable VLESS profiles across REALITY/TLS and RAW/XHTTP/gRPC/WebSocket transports.
 - Added profile-aware configuration rendering, share links, menus, certificate import, backup, and restore.
 - Validate every generated profile against the latest stable Xray Core in CI.
+- Added VLESS-gRPC-TLS, Trojan-REALITY-RAW, Trojan-WebSocket-TLS, and legacy VMess TCP/WS/gRPC profiles with in-menu guidance.
 
 ## 2.2.0
 

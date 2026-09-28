@@ -37,7 +37,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=example.com' \
 export TLS_CERT_PATH_OVERRIDE="$temporary_dir/cert.pem"
 export TLS_KEY_PATH_OVERRIDE="$temporary_dir/key.pem"
 
-for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-xhttp vless-tls-ws; do
+for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-xhttp vless-tls-ws vless-tls-grpc trojan-reality-raw vmess-tcp vmess-tls-ws vmess-tls-grpc trojan-tls-ws; do
   export PROFILE
   case "$PROFILE" in
     *xhttp*|*ws) export PATH_VALUE=/test-path ;;

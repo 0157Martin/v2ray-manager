@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="3.0.0"
+readonly MANAGER_VERSION="3.1.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -95,9 +95,9 @@ download_core() {
 
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
-valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-xhttp || $1 == vless-tls-ws ]]; }
-profile_uses_tls() { [[ ${PROFILE:-} == vless-tls-* ]]; }
-profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == vless-reality-* ]]; }
+valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
+profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
+profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
 
 profile_name() {
   case ${PROFILE:-vless-reality-raw} in
@@ -106,14 +106,31 @@ profile_name() {
     vless-reality-grpc) printf 'VLESS-REALITY-gRPC' ;;
     vless-tls-xhttp) printf 'VLESS-XHTTP-TLS' ;;
     vless-tls-ws) printf 'VLESS-WebSocket-TLS' ;;
+    vless-tls-grpc) printf 'VLESS-gRPC-TLS' ;;
+    trojan-reality-raw) printf 'Trojan-REALITY-RAW' ;;
+    vmess-tcp) printf 'VMess-TCP-Legacy' ;;
+    vmess-tls-ws) printf 'VMess-WebSocket-TLS-Legacy' ;;
+    vmess-tls-grpc) printf 'VMess-gRPC-TLS-Legacy' ;;
+    trojan-tls-ws) printf 'Trojan-WebSocket-TLS' ;;
   esac
 }
 
 choose_profile() {
   local choice default_path
-  printf '%s\n' '1) VLESS-REALITY-Vision-RAW (推荐)' '2) VLESS-REALITY-XHTTP' '3) VLESS-REALITY-gRPC' \
-    '4) VLESS-XHTTP-TLS (需域名证书)' '5) VLESS-WebSocket-TLS (需域名证书)'
-  read -r -p '请选择协议组合 [1-5]:' choice
+  printf '%s\n' \
+    '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书]' \
+    '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输、内置多路复用]' \
+    '3) VLESS-REALITY-gRPC        [HTTP/2 兼容，新部署更建议 XHTTP]' \
+    '4) VLESS-XHTTP-TLS           [需域名证书，适合 HTTP/CDN 链路]' \
+    '5) VLESS-WebSocket-TLS       [需域名证书，客户端/CDN 兼容广]' \
+    '6) VLESS-gRPC-TLS            [需域名证书，适合现有 HTTP/2 反代]' \
+    '7) Trojan-REALITY-RAW        [Trojan 客户端兼容，无需自有证书]' \
+    '--- 旧版兼容（非默认推荐）---' \
+    '8) VMess-TCP                 [无 TLS/REALITY，仅兼容或可信链路]' \
+    '9) VMess-WebSocket-TLS       [老客户端和 CDN 兼容广]' \
+    '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反代]' \
+    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS 兼容]'
+  read -r -p '请选择协议组合 [1-11]:' choice
   case "$choice" in
     1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
     2)
@@ -132,17 +149,23 @@ choose_profile() {
       PATH_VALUE=${PATH_VALUE:-$default_path}
       PATH_VALUE=${PATH_VALUE#/}
       ;;
-    4|5)
-      if [[ $choice == 4 ]]; then PROFILE=vless-tls-xhttp; else PROFILE=vless-tls-ws; fi
+    4|5|6|9|10|11)
+      case "$choice" in
+        4) PROFILE=vless-tls-xhttp ;; 5) PROFILE=vless-tls-ws ;; 6) PROFILE=vless-tls-grpc ;;
+        9) PROFILE=vmess-tls-ws ;; 10) PROFILE=vmess-tls-grpc ;; 11) PROFILE=trojan-tls-ws ;;
+      esac
       default_path=${PATH_VALUE:-/$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
-      [[ $default_path == /* ]] || default_path="/$default_path"
-      read -r -p "传输路径 [${default_path}]:" PATH_VALUE
-      PATH_VALUE=${PATH_VALUE:-$default_path}
-      [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
+      if [[ $PROFILE == *-tls-grpc ]]; then
+        default_path=${default_path#/}; read -r -p "gRPC serviceName [${default_path}]:" PATH_VALUE; PATH_VALUE=${PATH_VALUE:-$default_path}; PATH_VALUE=${PATH_VALUE#/}
+      else
+        [[ $default_path == /* ]] || default_path="/$default_path"; read -r -p "传输路径 [${default_path}]:" PATH_VALUE; PATH_VALUE=${PATH_VALUE:-$default_path}; [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
+      fi
       read -r -p "TLS 证书文件路径:" CERT_SOURCE
       read -r -p "TLS 私钥文件路径:" KEY_SOURCE
       [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 证书或私钥不可读。"
       ;;
+    7) PROFILE=trojan-reality-raw; PATH_VALUE='' ;;
+    8) PROFILE=vmess-tcp; PATH_VALUE='' ;;
     *) die "协议组合选择无效。" ;;
   esac
 }
@@ -172,10 +195,10 @@ ask_server_values() {
     PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
     PATH_VALUE=${V2M_PATH:-${PATH_VALUE:-}}
     valid_profile "$PROFILE" || die "V2M_PROFILE 无效。"
-    if [[ $PROFILE == vless-reality-xhttp || $PROFILE == vless-tls-xhttp || $PROFILE == vless-tls-ws ]]; then
+    if [[ $PROFILE == *-tls-ws || $PROFILE == vless-reality-xhttp || $PROFILE == vless-tls-xhttp ]]; then
       PATH_VALUE=${PATH_VALUE:-/xhttp}
       [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
-    elif [[ $PROFILE == vless-reality-grpc ]]; then
+    elif [[ $PROFILE == *-tls-grpc || $PROFILE == vless-reality-grpc ]]; then
       PATH_VALUE=${PATH_VALUE:-grpc}
       PATH_VALUE=${PATH_VALUE#/}
     else
@@ -269,25 +292,27 @@ render_config() {
         tag: "vless-reality",
         listen: "0.0.0.0",
         port: $port,
-        protocol: "vless",
-        settings: {
+        protocol: (if ($profile | startswith("trojan-")) then "trojan" elif ($profile | startswith("vmess-")) then "vmess" else "vless" end),
+        settings: (if ($profile | startswith("trojan-")) then {clients: [{password: $id}]}
+        elif ($profile | startswith("vmess-")) then {clients: [{id: $id, alterId: 0}]}
+        else {
           clients: [({id: $id} + (if $profile == "vless-reality-raw" then {flow: "xtls-rprx-vision"} else {} end))],
           decryption: "none"
-        },
+        } end),
         streamSettings: ({
-          network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif $profile == "vless-reality-grpc" then "grpc" elif $profile == "vless-tls-ws" then "ws" else "raw" end),
-          security: (if ($profile | startswith("vless-tls-")) then "tls" else "reality" end)
-        } + (if ($profile | startswith("vless-reality-")) then {realitySettings: {
+          network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif ($profile | endswith("-grpc")) then "grpc" elif ($profile | endswith("-ws")) then "ws" else "raw" end),
+          security: (if ($profile | contains("-tls-")) then "tls" elif ($profile | contains("-reality-")) then "reality" else "none" end)
+        } + (if ($profile | contains("-reality-")) then {realitySettings: {
             show: false,
             target: ($server + ":443"),
             xver: 0,
             serverNames: [$server],
             privateKey: $private,
             shortIds: [$short]
-          }} else {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} end)
+          }} elif ($profile | contains("-tls-")) then {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} else {} end)
           + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
-            elif $profile == "vless-reality-grpc" then {grpcSettings: {serviceName: $path, multiMode: false}}
-            elif $profile == "vless-tls-ws" then {wsSettings: {path: $path}}
+            elif ($profile | endswith("-grpc")) then {grpcSettings: {serviceName: $path, multiMode: false}}
+            elif ($profile | endswith("-ws")) then {wsSettings: {path: $path}}
             else {} end)),
         sniffing: {enabled: true, destOverride: ["http", "tls", "quic"]}
       }],
@@ -502,11 +527,13 @@ server_address() {
 
 show_connection() {
   load_state
-  local address encoded_name encoded_path link transport security flow query display_name
+  local address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
   address=$(server_address)
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
   encoded_path=$(jq -rn --arg value "${PATH_VALUE:-}" '$value|@uri')
   display_name=$(profile_name)
+  protocol=vless
+  link=''
   case "$PROFILE" in
     vless-reality-raw)
       transport=raw; security=reality; flow=xtls-rprx-vision
@@ -528,14 +555,38 @@ show_connection() {
       transport=websocket; security=tls; flow=none
       query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=ws&host=${SERVER_NAME}&path=${encoded_path}"
       ;;
+    vless-tls-grpc)
+      transport=grpc; security=tls; flow=none
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=grpc&serviceName=${encoded_path}"
+      ;;
+    trojan-reality-raw)
+      protocol=trojan; transport=raw; security=reality; flow=none
+      query="security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp"
+      ;;
+    trojan-tls-ws)
+      protocol=trojan; transport=websocket; security=tls; flow=none
+      query="security=tls&sni=${SERVER_NAME}&fp=chrome&type=ws&host=${SERVER_NAME}&path=${encoded_path}"
+      ;;
+    vmess-tcp|vmess-tls-ws|vmess-tls-grpc)
+      protocol=vmess
+      if [[ $PROFILE == vmess-tcp ]]; then transport=tcp; security=none; PATH_VALUE=''; else security=tls; fi
+      [[ $PROFILE == vmess-tls-ws ]] && transport=ws
+      [[ $PROFILE == vmess-tls-grpc ]] && transport=grpc
+      flow=none
+      vmess_payload=$(jq -cn --arg ps "$REMARK" --arg add "$address" --arg port "$PORT" --arg id "$UUID" \
+        --arg net "$transport" --arg host "$SERVER_NAME" --arg path "${PATH_VALUE:-}" --arg tls "${security/none/}" \
+        '{v:"2",ps:$ps,add:$add,port:$port,id:$id,aid:"0",scy:"auto",net:$net,type:"none",host:$host,path:$path,tls:$tls,sni:$host}')
+      link="vmess://$(printf '%s' "$vmess_payload" | base64 -w 0)"
+      ;;
   esac
-  link="vless://${UUID}@${address}:${PORT}?${query}#${encoded_name}"
+  if [[ -z $link ]]; then link="${protocol}://${UUID}@${address}:${PORT}?${query}#${encoded_name}"; fi
   printf '\n使用协议: %s\n' "$display_name"
   printf '%s\n' "-------------- ${display_name} --------------"
-  printf '协议 (protocol)       = '; cyan_value 'vless'; printf '\n'
+  printf '协议 (protocol)       = '; cyan_value "$protocol"; printf '\n'
   printf '地址 (address)        = '; cyan_value "$address"; printf '\n'
   printf '端口 (port)           = '; cyan_value "$PORT"; printf '\n'
-  printf '用户ID (id)           = '; cyan_value "$UUID"; printf '\n'
+  if [[ $protocol == trojan ]]; then printf '密码 (password)        = '; else printf '用户ID (id)           = '; fi
+  cyan_value "$UUID"; printf '\n'
   printf '传输协议 (network)  = '; cyan_value "$transport"; printf '\n'
   printf '传输安全 (security) = '; cyan_value "$security"; printf '\n'
   printf '流控 (flow)           = '; cyan_value "$flow"; printf '\n'
