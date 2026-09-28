@@ -4,7 +4,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -Eeuo pipefail
 
-readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
+# Pin the downloaded manager to a verified revision so a stale main-branch CDN cache
+# cannot pair a new installer with an older manager implementation.
+readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/a916a53036e457d016c115c1145b764cc02ddb5a/v2ray.sh"
 temporary=$(mktemp)
 trap 'rm -f "$temporary"' EXIT
 
