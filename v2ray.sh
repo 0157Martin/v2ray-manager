@@ -590,12 +590,18 @@ restart_or_rollback() {
 }
 
 server_address() {
-  local addr
+  local addr first second
   if [[ -n ${ADDRESS:-} ]]; then
     printf '%s' "$ADDRESS"
     return
   fi
   addr=$(curl --fail --silent --max-time 4 https://api.ipify.org 2>/dev/null || true)
+  IFS=. read -r first second _ <<<"$addr"
+  if [[ $first == 104 && $second =~ ^(1[6-9]|2[0-9]|3[01])$ ]] || \
+     [[ $first == 172 && $second =~ ^(6[4-9]|7[01])$ ]] || [[ $first == 188 && $second == 114 ]]; then
+    printf '%s' 'YOUR_SERVER_IP'
+    return
+  fi
   printf '%s' "${addr:-YOUR_SERVER_IP}"
 }
 
@@ -607,6 +613,9 @@ show_connection() {
 show_connection_loaded() {
   local address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
   address=$(server_address)
+  if [[ $address == YOUR_SERVER_IP ]]; then
+    yellow "检测到 Cloudflare/WARP 出口地址，无法自动确定客户端入口。请运行 v2ray change，选择“更改服务器地址”，填写真实 IP 或域名。"
+  fi
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
   encoded_path=$(jq -rn --arg value "${PATH_VALUE:-}" '$value|@uri')
   display_name=$(profile_name)

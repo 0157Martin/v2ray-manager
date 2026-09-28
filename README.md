@@ -94,7 +94,7 @@ export V2M_REMARK=my-server
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-`V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，应通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
+`V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，必须通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名；脚本检测到 Cloudflare/WARP 出口时不会把该出口 IP 写入链接。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
 
 `V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合还需 `V2M_CERT_FILE` 和 `V2M_KEY_FILE`。
 
