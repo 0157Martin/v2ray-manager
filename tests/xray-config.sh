@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../v2ray.sh
+# shellcheck disable=SC1091
 source "$repo_dir/v2ray.sh"
 
 temporary_dir=$(mktemp -d)
@@ -26,10 +27,11 @@ actual=$(sha256sum "$temporary_dir/xray.zip" | awk '{print $1}')
 unzip -q "$temporary_dir/xray.zip" -d "$temporary_dir/core"
 
 parse_reality_credentials "$("$temporary_dir/core/xray" x25519)"
-PORT=443
+export PORT=443
+export UUID
 UUID=$("$temporary_dir/core/xray" uuid)
-SERVER_NAME=www.microsoft.com
-SHORT_ID=0123456789abcdef
+export SERVER_NAME=www.microsoft.com
+export SHORT_ID=0123456789abcdef
 render_config "$temporary_dir/config.json"
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/config.json"
 

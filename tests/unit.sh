@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=../v2ray.sh
+# shellcheck disable=SC1091
 source "$repo_dir/v2ray.sh"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -24,11 +25,11 @@ parse_reality_credentials $'Private key: private-old\nPublic key: public-old'
 [[ $PRIVATE_KEY == private-old ]] || fail "legacy private-key output was not parsed"
 [[ $PUBLIC_KEY == public-old ]] || fail "legacy public-key output was not parsed"
 
-PORT=443
-UUID=11111111-1111-4111-8111-111111111111
-SERVER_NAME=www.microsoft.com
+export PORT=443
+export UUID=11111111-1111-4111-8111-111111111111
+export SERVER_NAME=www.microsoft.com
 PRIVATE_KEY=test-private-key
-SHORT_ID=0123456789abcdef
+export SHORT_ID=0123456789abcdef
 temporary=$(mktemp)
 trap 'rm -f "$temporary"' EXIT
 render_config "$temporary"
