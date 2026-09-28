@@ -18,10 +18,10 @@
 sudo bash v2ray-manager.sh
 ```
 
-发布到 GitHub 后，也可用下面的形式下载再执行；请将 `<GitHub用户名>` 和 `<仓库名>` 替换为你的实际信息，并在执行前阅读脚本内容：
+也可从本仓库下载再执行。执行前建议先阅读脚本内容：
 
 ```bash
-curl -fL -o v2ray-manager.sh https://raw.githubusercontent.com/<GitHub用户名>/<仓库名>/main/v2ray-manager.sh
+curl -fL -o v2ray-manager.sh https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray-manager.sh
 sudo bash v2ray-manager.sh
 ```
 
