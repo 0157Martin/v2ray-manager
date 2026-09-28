@@ -8,13 +8,13 @@ labels: bug
 ## Environment
 
 - OS and version:
-- V2Ray Core version (`v2ray info`):
+- Xray Core version (`v2ray info`):
 - Manager version (`v2ray version`):
 
 ## Steps to reproduce
 
-Describe the exact commands and inputs. Remove IP addresses, UUIDs, domains,
-and other credentials before posting.
+Describe the exact commands and inputs. Remove IP addresses, UUIDs, REALITY
+keys, complete import links, domains, and other credentials before posting.
 
 ## Actual and expected behavior
 

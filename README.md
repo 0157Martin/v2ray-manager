@@ -1,89 +1,92 @@
-# V2Ray 安装与管理脚本
+# Xray / VLESS REALITY 安装与管理脚本
 
 作者：[0157Martin](https://github.com/0157Martin)
 
-这是一个供**你拥有或获授权管理的 Debian/Ubuntu 服务器**使用的轻量 Bash 脚本。它从 V2Fly 的 GitHub Release 下载 V2Ray Core，并创建一个由 systemd 管理的 VMess/TCP 服务。
+面向**你拥有或获授权管理的 Debian/Ubuntu 服务器**的一键安装与管理脚本。项目保留熟悉的 `v2ray` 管理命令，但底层已升级为 Xray Core，默认部署 VLESS + REALITY + XTLS Vision。
 
-## 特点
+## 当前技术方案
 
-- 从 `v2fly/v2ray-core` 的最新正式 Release 下载对应架构的程序
-- 每次更新配置先用 `v2ray test` 校验
-- 菜单包括安装、改配置、启动、停止、重启、状态、日志与卸载
-- 安装后提供 `v2ray` 管理命令，包含 `info`、`config`、`link`、`update` 与 `update.sh`
-- 服务使用专用、不可登录的 `v2ray` 系统账户；运行配置仅 root 和该账户可读
-- 不更改防火墙、安全组、DNS 或系统代理，避免意外中断现有网络
+- Xray Core 最新稳定 Release
+- VLESS 协议与 REALITY 传输安全
+- XTLS Vision 流控及 RAW/TCP 传输
+- 下载官方发布包及其 `.dgst`，安装前验证 SHA-256
+- 独立的 `xray` 低权限系统账户和 systemd 安全加固
+- 自动生成 UUID、X25519 密钥对与 Short ID
+- 输出主流客户端可导入的 `vless://` 链接
 
-## 使用
+## 一行安装
 
-把 `v2ray.sh` 上传至服务器后运行：
-
-```bash
-sudo bash v2ray.sh
-```
-
-安装完成后可直接管理：
-
-```bash
-v2ray                 # 打开交互菜单
-v2ray info            # 查看版本及连接信息
-v2ray config          # 修改端口、UUID、备注
-v2ray link            # 输出 VMess 导入链接
-v2ray status          # 查看 systemd 状态
-v2ray start|stop|restart
-v2ray log             # 查看最近 100 条服务日志
-v2ray update          # 更新 V2Ray Core，保留现有配置
-v2ray update.sh       # 更新管理脚本
-v2ray uninstall
-```
-
-也可使用与原脚本相同风格的一行安装命令：
+请使用 root 用户运行：
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-如果服务器只安装了 `wget`，可改用：
+只有 `wget` 时：
 
 ```bash
 bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-引导脚本会先下载主脚本到临时文件再执行，以便可靠安装后续的 `v2ray` 管理命令。对于生产服务器，建议先打开并审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 与 [主脚本](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray.sh)。
+生产服务器建议先审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 和 [v2ray.sh](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray.sh)。
 
-也可使用非交互入口：
+## 管理命令
 
 ```bash
-sudo bash v2ray.sh install
-sudo bash v2ray.sh status
-sudo bash v2ray.sh link
-sudo bash v2ray.sh uninstall
+v2ray                  # 打开菜单
+v2ray info             # 查看版本和连接信息
+v2ray config           # 修改端口、UUID、SNI 和备注
+v2ray link             # 重新显示 VLESS 导入链接
+v2ray status           # 查看服务状态
+v2ray start
+v2ray stop
+v2ray restart
+v2ray log              # 查看最近 100 条日志
+v2ray update           # 更新 Xray Core，保留配置
+v2ray update.sh        # 更新管理脚本
+v2ray rotate           # 轮换 REALITY 密钥和 Short ID
+v2ray uninstall
 ```
 
-安装完成后，按脚本输出在云安全组与服务器防火墙放行所选 TCP 端口。默认配置为 **VMess over TCP，未启用 TLS**；对于敏感业务，应在受信任的网络环境中使用，或在反向代理/传输层中另行部署 TLS。
+执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
+
+## 安装提示
+
+安装时需要选择：
+
+1. 监听端口，默认 `443`。
+2. 客户端 UUID，可使用自动生成值。
+3. REALITY 目标域名，默认 `www.microsoft.com`。应选择服务器可以稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
+4. 节点备注。
+
+安装后需要在云服务商安全组及服务器防火墙中放行所选 TCP 端口。本脚本不会自动修改防火墙、DNS 或系统代理。
+
+## 从 1.x 升级
+
+重新运行一行安装命令即可。检测到本项目旧版 `/etc/v2ray/manager.env` 和旧服务定义时，脚本会停用旧的 `v2ray.service`，但保留旧文件便于人工回退。2.x 使用新的 `xray.service` 和 `/etc/xray` 配置，不会静默删除旧配置。
 
 ## 文件位置
 
 | 内容 | 位置 |
 | --- | --- |
-| V2Ray Core | `/usr/local/bin/v2ray-core` |
+| Xray Core | `/usr/local/bin/xray-core` |
 | 管理命令 | `/usr/local/bin/v2ray` |
-| 配置 | `/etc/v2ray/config.json` |
-| systemd 服务 | `/etc/systemd/system/v2ray.service` |
-| 管理状态 | `/etc/v2ray/manager.env` |
+| GeoData | `/usr/local/share/xray/` |
+| 配置 | `/etc/xray/config.json` |
+| 管理状态 | `/etc/xray/manager.env` |
+| systemd 服务 | `/etc/systemd/system/xray.service` |
 
-卸载仅移除上表中由本脚本创建的内容。专用 `v2ray` 系统账户会保留，以免误影响同名的其他服务。
+卸载仅删除 2.x 脚本创建的 Xray 文件；专用 `xray` 系统账户和旧版回退文件会保留。
 
 ## 仓库结构
 
-本仓库采用便于安装、维护和扩展的入口与目录布局：
-
 ```text
 .
-├── install.sh              # 一行安装命令使用的下载引导脚本
-├── v2ray.sh                # 主安装器和 v2ray 管理命令
-├── config/                 # 默认值和项目元数据
-├── src/                    # 源码组织说明与开发约定
-├── templates/              # 配置模板参考
-├── tools/                  # 本地检查工具
-└── .github/                # Issue 模板
+├── install.sh
+├── v2ray.sh
+├── config/
+├── src/
+├── templates/
+├── tools/
+└── .github/
 ```
