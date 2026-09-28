@@ -271,24 +271,24 @@ render_config() {
         port: $port,
         protocol: "vless",
         settings: {
-          clients: [({id: $id} + if $profile == "vless-reality-raw" then {flow: "xtls-rprx-vision"} else {} end)],
+          clients: [({id: $id} + (if $profile == "vless-reality-raw" then {flow: "xtls-rprx-vision"} else {} end))],
           decryption: "none"
         },
-        streamSettings: {
+        streamSettings: ({
           network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif $profile == "vless-reality-grpc" then "grpc" elif $profile == "vless-tls-ws" then "ws" else "raw" end),
           security: (if ($profile | startswith("vless-tls-")) then "tls" else "reality" end)
-        } + if ($profile | startswith("vless-reality-")) then {realitySettings: {
+        } + (if ($profile | startswith("vless-reality-")) then {realitySettings: {
             show: false,
             target: ($server + ":443"),
             xver: 0,
             serverNames: [$server],
             privateKey: $private,
             shortIds: [$short]
-          }} else {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} end
-          + if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
+          }} else {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} end)
+          + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
             elif $profile == "vless-reality-grpc" then {grpcSettings: {serviceName: $path, multiMode: false}}
             elif $profile == "vless-tls-ws" then {wsSettings: {path: $path}}
-            else {} end
+            else {} end))
         },
         sniffing: {enabled: true, destOverride: ["http", "tls", "quic"]}
       }],
