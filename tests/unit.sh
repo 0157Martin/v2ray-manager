@@ -33,11 +33,19 @@ export UUID=11111111-1111-4111-8111-111111111111
 export SERVER_NAME=www.microsoft.com
 PRIVATE_KEY=test-private-key
 export SHORT_ID=0123456789abcdef
+export PROFILE=vless-reality-raw
+export PATH_VALUE=
 temporary=$(mktemp)
 trap 'rm -f "$temporary"' EXIT
 render_config "$temporary"
 jq -e '.inbounds[0].protocol == "vless"' "$temporary" >/dev/null || fail "protocol mismatch"
 jq -e '.inbounds[0].streamSettings.security == "reality"' "$temporary" >/dev/null || fail "security mismatch"
 jq -e '.inbounds[0].settings.clients[0].flow == "xtls-rprx-vision"' "$temporary" >/dev/null || fail "flow mismatch"
+
+PROFILE=vless-reality-xhttp
+PATH_VALUE=/test-path
+render_config "$temporary"
+jq -e '.inbounds[0].streamSettings.network == "xhttp"' "$temporary" >/dev/null || fail "xhttp network mismatch"
+jq -e '.inbounds[0].streamSettings.xhttpSettings.path == "/test-path"' "$temporary" >/dev/null || fail "xhttp path mismatch"
 
 printf '%s\n' 'Unit tests passed.'

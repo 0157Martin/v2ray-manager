@@ -4,6 +4,16 @@
 
 面向**你拥有或获授权管理的 Debian/Ubuntu 服务器**的一键安装与管理脚本。项目保留熟悉的 `v2ray` 管理命令，但底层已升级为 Xray Core，默认部署 VLESS + REALITY + XTLS Vision。
 
+## 协议组合
+
+1. VLESS + REALITY + XTLS Vision + RAW（默认推荐）
+2. VLESS + REALITY + XHTTP
+3. VLESS + REALITY + gRPC（兼容用途）
+4. VLESS + TLS + XHTTP（需自有域名和证书）
+5. VLESS + TLS + WebSocket（需自有域名和证书）
+
+TLS 组合不会自动修改 DNS、Caddy 或 Nginx，需提供现有 PEM 证书和私钥路径。
+
 ## 当前技术方案
 
 - Xray Core 最新稳定 Release
@@ -65,6 +75,7 @@ v2ray uninstall
 ```bash
 export V2M_NONINTERACTIVE=1
 export V2M_PORT=443
+export V2M_PROFILE=vless-reality-raw
 export V2M_ADDRESS=203.0.113.10
 export V2M_SERVER_NAME=www.microsoft.com
 export V2M_REMARK=my-server
@@ -72,6 +83,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 ```
 
 `V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，应通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
+
+`V2M_PROFILE` 可选 `vless-reality-raw`、`vless-reality-xhttp`、`vless-reality-grpc`、`vless-tls-xhttp` 或 `vless-tls-ws`。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合还需 `V2M_CERT_FILE` 和 `V2M_KEY_FILE`。
 
 ## 安装提示
 

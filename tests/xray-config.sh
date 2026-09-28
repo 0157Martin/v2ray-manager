@@ -32,7 +32,20 @@ export UUID
 UUID=$("$temporary_dir/core/xray" uuid)
 export SERVER_NAME=www.microsoft.com
 export SHORT_ID=0123456789abcdef
-render_config "$temporary_dir/config.json"
-XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/config.json"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=example.com' \
+  -keyout "$temporary_dir/key.pem" -out "$temporary_dir/cert.pem" >/dev/null 2>&1
+export TLS_CERT_PATH_OVERRIDE="$temporary_dir/cert.pem"
+export TLS_KEY_PATH_OVERRIDE="$temporary_dir/key.pem"
 
-printf 'Xray %s accepted the generated VLESS REALITY configuration.\n' "$tag"
+for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-xhttp vless-tls-ws; do
+  export PROFILE
+  case "$PROFILE" in
+    *xhttp*|*ws) export PATH_VALUE=/test-path ;;
+    *grpc) export PATH_VALUE=grpc-test ;;
+    *) export PATH_VALUE= ;;
+  esac
+  render_config "$temporary_dir/config.json"
+  XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/config.json"
+done
+
+printf 'Xray %s accepted all generated protocol profiles.\n' "$tag"

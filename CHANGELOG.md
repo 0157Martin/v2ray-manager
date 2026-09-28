@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0
+
+- Added five selectable VLESS profiles across REALITY/TLS and RAW/XHTTP/gRPC/WebSocket transports.
+- Added profile-aware configuration rendering, share links, menus, certificate import, backup, and restore.
+- Validate every generated profile against the latest stable Xray Core in CI.
+
 ## 2.2.0
 
 - Added an occupied-port preflight check that never stops an unrelated service.

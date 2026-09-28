@@ -7,13 +7,16 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="2.2.0"
+readonly MANAGER_VERSION="3.0.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
 readonly ASSET_DIR="/usr/local/share/xray"
 readonly CONFIG_DIR="/etc/xray"
 readonly CONFIG_FILE="$CONFIG_DIR/config.json"
+readonly TLS_DIR="$CONFIG_DIR/tls"
+readonly TLS_CERT_FILE="$TLS_DIR/cert.pem"
+readonly TLS_KEY_FILE="$TLS_DIR/key.pem"
 readonly BACKUP_DIR="/var/backups/v2ray-manager"
 readonly LEGACY_MANAGER_BACKUP="$BACKUP_DIR/legacy-v2ray-command"
 readonly SERVICE_FILE="/etc/systemd/system/xray.service"
@@ -92,6 +95,57 @@ download_core() {
 
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
+valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-xhttp || $1 == vless-tls-ws ]]; }
+profile_uses_tls() { [[ ${PROFILE:-} == vless-tls-* ]]; }
+profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == vless-reality-* ]]; }
+
+profile_name() {
+  case ${PROFILE:-vless-reality-raw} in
+    vless-reality-raw) printf 'VLESS-REALITY-Vision-RAW' ;;
+    vless-reality-xhttp) printf 'VLESS-REALITY-XHTTP' ;;
+    vless-reality-grpc) printf 'VLESS-REALITY-gRPC' ;;
+    vless-tls-xhttp) printf 'VLESS-XHTTP-TLS' ;;
+    vless-tls-ws) printf 'VLESS-WebSocket-TLS' ;;
+  esac
+}
+
+choose_profile() {
+  local choice default_path
+  printf '%s\n' '1) VLESS-REALITY-Vision-RAW (推荐)' '2) VLESS-REALITY-XHTTP' '3) VLESS-REALITY-gRPC' \
+    '4) VLESS-XHTTP-TLS (需域名证书)' '5) VLESS-WebSocket-TLS (需域名证书)'
+  read -r -p '请选择协议组合 [1-5]:' choice
+  case "$choice" in
+    1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
+    2)
+      PROFILE=vless-reality-xhttp
+      default_path=${PATH_VALUE:-/$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
+      [[ $default_path == /* ]] || default_path="/$default_path"
+      read -r -p "XHTTP 路径 [${default_path}]:" PATH_VALUE
+      PATH_VALUE=${PATH_VALUE:-$default_path}
+      [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
+      ;;
+    3)
+      PROFILE=vless-reality-grpc
+      default_path=${PATH_VALUE:-grpc-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
+      default_path=${default_path#/}
+      read -r -p "gRPC serviceName [${default_path}]:" PATH_VALUE
+      PATH_VALUE=${PATH_VALUE:-$default_path}
+      PATH_VALUE=${PATH_VALUE#/}
+      ;;
+    4|5)
+      if [[ $choice == 4 ]]; then PROFILE=vless-tls-xhttp; else PROFILE=vless-tls-ws; fi
+      default_path=${PATH_VALUE:-/$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
+      [[ $default_path == /* ]] || default_path="/$default_path"
+      read -r -p "传输路径 [${default_path}]:" PATH_VALUE
+      PATH_VALUE=${PATH_VALUE:-$default_path}
+      [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
+      read -r -p "TLS 证书文件路径:" CERT_SOURCE
+      read -r -p "TLS 私钥文件路径:" KEY_SOURCE
+      [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 证书或私钥不可读。"
+      ;;
+    *) die "协议组合选择无效。" ;;
+  esac
+}
 
 generate_reality_credentials() {
   local output
@@ -115,6 +169,23 @@ ask_server_values() {
   default_server=${SERVER_NAME:-www.microsoft.com}
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
+    PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
+    PATH_VALUE=${V2M_PATH:-${PATH_VALUE:-}}
+    valid_profile "$PROFILE" || die "V2M_PROFILE 无效。"
+    if [[ $PROFILE == vless-reality-xhttp || $PROFILE == vless-tls-xhttp || $PROFILE == vless-tls-ws ]]; then
+      PATH_VALUE=${PATH_VALUE:-/xhttp}
+      [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
+    elif [[ $PROFILE == vless-reality-grpc ]]; then
+      PATH_VALUE=${PATH_VALUE:-grpc}
+      PATH_VALUE=${PATH_VALUE#/}
+    else
+      PATH_VALUE=''
+    fi
+    if profile_uses_tls; then
+      CERT_SOURCE=${V2M_CERT_FILE:-${CERT_SOURCE:-}}
+      KEY_SOURCE=${V2M_KEY_FILE:-${KEY_SOURCE:-}}
+      [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 组合需要 V2M_CERT_FILE 和 V2M_KEY_FILE。"
+    fi
     PORT=${V2M_PORT:-$default_port}
     UUID=${V2M_UUID:-$default_uuid}
     SERVER_NAME=${V2M_SERVER_NAME:-$default_server}
@@ -123,11 +194,13 @@ ask_server_values() {
     valid_port "$PORT" || die "V2M_PORT 必须是 1 到 65535 的端口。"
     [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "V2M_UUID 格式无效。"
     valid_server_name "$SERVER_NAME" || die "V2M_SERVER_NAME 必须是有效完整域名。"
-    if [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
+    if profile_uses_reality && [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
       generate_reality_credentials
     fi
     return
   fi
+
+  choose_profile
 
   while :; do
     read -r -p "监听端口 [${default_port}]：" PORT
@@ -139,7 +212,11 @@ ask_server_values() {
   UUID=${UUID:-$default_uuid}
   [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "UUID 格式无效。"
   while :; do
-    read -r -p "REALITY 目标域名 [${default_server}]：" SERVER_NAME
+    if profile_uses_tls; then
+      read -r -p "TLS 证书域名 [${default_server}]：" SERVER_NAME
+    else
+      read -r -p "REALITY 目标域名 [${default_server}]：" SERVER_NAME
+    fi
     SERVER_NAME=${SERVER_NAME:-$default_server}
     valid_server_name "$SERVER_NAME" && break
     yellow "请输入有效的完整域名，例如 www.microsoft.com。"
@@ -147,9 +224,20 @@ ask_server_values() {
   read -r -p "备注名称 [${default_name}]：" REMARK
   REMARK=${REMARK:-$default_name}
 
-  if [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
+  if profile_uses_reality && [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
     generate_reality_credentials
   fi
+}
+
+prepare_tls_material() {
+  profile_uses_tls || return 0
+  [[ -r ${CERT_SOURCE:-} && -r ${KEY_SOURCE:-} ]] || {
+    [[ -r $TLS_CERT_FILE && -r $TLS_KEY_FILE ]] && return 0
+    die "TLS 证书或私钥不可读。"
+  }
+  install -d -m 750 -o root -g xray "$TLS_DIR"
+  [[ "$(readlink -f "$CERT_SOURCE")" == "$(readlink -f "$TLS_CERT_FILE" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$CERT_SOURCE" "$TLS_CERT_FILE"
+  [[ "$(readlink -f "$KEY_SOURCE")" == "$(readlink -f "$TLS_KEY_FILE" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$KEY_SOURCE" "$TLS_KEY_FILE"
 }
 
 ensure_port_available() {
@@ -170,8 +258,12 @@ render_config() {
     --argjson port "$PORT" \
     --arg id "$UUID" \
     --arg server "$SERVER_NAME" \
-    --arg private "$PRIVATE_KEY" \
-    --arg short "$SHORT_ID" '{
+    --arg private "${PRIVATE_KEY:-}" \
+    --arg short "${SHORT_ID:-}" \
+    --arg profile "${PROFILE:-vless-reality-raw}" \
+    --arg path "${PATH_VALUE:-}" \
+    --arg cert "${TLS_CERT_PATH_OVERRIDE:-$TLS_CERT_FILE}" \
+    --arg key "${TLS_KEY_PATH_OVERRIDE:-$TLS_KEY_FILE}" '{
       log: {loglevel: "warning"},
       inbounds: [{
         tag: "vless-reality",
@@ -179,20 +271,24 @@ render_config() {
         port: $port,
         protocol: "vless",
         settings: {
-          clients: [{id: $id, flow: "xtls-rprx-vision"}],
+          clients: [({id: $id} + if $profile == "vless-reality-raw" then {flow: "xtls-rprx-vision"} else {} end)],
           decryption: "none"
         },
         streamSettings: {
-          network: "raw",
-          security: "reality",
-          realitySettings: {
+          network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif $profile == "vless-reality-grpc" then "grpc" elif $profile == "vless-tls-ws" then "ws" else "raw" end),
+          security: (if ($profile | startswith("vless-tls-")) then "tls" else "reality" end)
+        } + if ($profile | startswith("vless-reality-")) then {realitySettings: {
             show: false,
             target: ($server + ":443"),
             xver: 0,
             serverNames: [$server],
             privateKey: $private,
             shortIds: [$short]
-          }
+          }} else {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} end
+          + if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
+            elif $profile == "vless-reality-grpc" then {grpcSettings: {serviceName: $path, multiMode: false}}
+            elif $profile == "vless-tls-ws" then {wsSettings: {path: $path}}
+            else {} end
         },
         sniffing: {enabled: true, destOverride: ["http", "tls", "quic"]}
       }],
@@ -206,6 +302,7 @@ render_config() {
 write_config() {
   ensure_service_user
   install -d -m 755 "$CONFIG_DIR"
+  prepare_tls_material
   create_backup
   local temporary="$CONFIG_FILE.new"
   render_config "$temporary"
@@ -219,6 +316,10 @@ write_config() {
 PORT=${PORT}
 UUID=${UUID}
 ADDRESS=$(printf %q "${ADDRESS:-}")
+PROFILE=$(printf %q "${PROFILE:-vless-reality-raw}")
+PATH_VALUE=$(printf %q "${PATH_VALUE:-}")
+CERT_SOURCE=$(printf %q "${CERT_SOURCE:-}")
+KEY_SOURCE=$(printf %q "${KEY_SOURCE:-}")
 SERVER_NAME=$(printf %q "$SERVER_NAME")
 PRIVATE_KEY=$(printf %q "$PRIVATE_KEY")
 PUBLIC_KEY=$(printf %q "$PUBLIC_KEY")
@@ -315,6 +416,8 @@ load_state() {
   # This file is created by this script with mode 0600.
   # shellcheck disable=SC1090
   . "$STATE_FILE"
+  PROFILE=${PROFILE:-vless-reality-raw}
+  PATH_VALUE=${PATH_VALUE:-}
 }
 
 create_backup() {
@@ -324,7 +427,9 @@ create_backup() {
   local timestamp archive
   timestamp=$(date -u +%Y%m%dT%H%M%SZ)
   archive="$BACKUP_DIR/config-${timestamp}.tar.gz"
-  tar -czf "$archive" -C "$CONFIG_DIR" config.json manager.env
+  local -a backup_items=(config.json manager.env)
+  [[ -d $TLS_DIR ]] && backup_items+=(tls)
+  tar -czf "$archive" -C "$CONFIG_DIR" "${backup_items[@]}"
   chmod 600 "$archive"
   LAST_BACKUP=$archive
 
@@ -346,6 +451,11 @@ restore_archive() {
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temp_dir/config.json" >/dev/null || die "备份配置未通过 Xray 校验。"
   install -m 640 -o root -g xray "$temp_dir/config.json" "$CONFIG_FILE"
   install -m 600 -o root -g root "$temp_dir/manager.env" "$STATE_FILE"
+  if [[ -d $temp_dir/tls ]]; then
+    install -d -m 750 -o root -g xray "$TLS_DIR"
+    install -m 640 -o root -g xray "$temp_dir/tls/cert.pem" "$TLS_CERT_FILE"
+    install -m 640 -o root -g xray "$temp_dir/tls/key.pem" "$TLS_KEY_FILE"
+  fi
   trap - RETURN
   rm -rf "$temp_dir"
 }
@@ -393,22 +503,49 @@ server_address() {
 
 show_connection() {
   load_state
-  local address encoded_name link
+  local address encoded_name encoded_path link transport security flow query display_name
   address=$(server_address)
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
-  link="vless://${UUID}@${address}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}"
-  printf '\n使用协议: VLESS-REALITY-Vision\n'
-  printf '%s\n' '-------------- VLESS-REALITY-Vision --------------'
+  encoded_path=$(jq -rn --arg value "${PATH_VALUE:-}" '$value|@uri')
+  display_name=$(profile_name)
+  case "$PROFILE" in
+    vless-reality-raw)
+      transport=raw; security=reality; flow=xtls-rprx-vision
+      query="encryption=none&flow=${flow}&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp"
+      ;;
+    vless-reality-xhttp)
+      transport=xhttp; security=reality; flow=none
+      query="encryption=none&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${encoded_path}&mode=auto"
+      ;;
+    vless-reality-grpc)
+      transport=grpc; security=reality; flow=none
+      query="encryption=none&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=grpc&serviceName=${encoded_path}"
+      ;;
+    vless-tls-xhttp)
+      transport=xhttp; security=tls; flow=none
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=xhttp&path=${encoded_path}&mode=auto"
+      ;;
+    vless-tls-ws)
+      transport=websocket; security=tls; flow=none
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=ws&host=${SERVER_NAME}&path=${encoded_path}"
+      ;;
+  esac
+  link="vless://${UUID}@${address}:${PORT}?${query}#${encoded_name}"
+  printf '\n使用协议: %s\n' "$display_name"
+  printf '%s\n' "-------------- ${display_name} --------------"
   printf '协议 (protocol)       = '; cyan_value 'vless'; printf '\n'
   printf '地址 (address)        = '; cyan_value "$address"; printf '\n'
   printf '端口 (port)           = '; cyan_value "$PORT"; printf '\n'
   printf '用户ID (id)           = '; cyan_value "$UUID"; printf '\n'
-  printf '传输协议 (network)  = '; cyan_value 'tcp/raw'; printf '\n'
-  printf '传输安全 (security) = '; cyan_value 'reality'; printf '\n'
-  printf '流控 (flow)           = '; cyan_value 'xtls-rprx-vision'; printf '\n'
+  printf '传输协议 (network)  = '; cyan_value "$transport"; printf '\n'
+  printf '传输安全 (security) = '; cyan_value "$security"; printf '\n'
+  printf '流控 (flow)           = '; cyan_value "$flow"; printf '\n'
   printf 'SNI                   = '; cyan_value "$SERVER_NAME"; printf '\n'
-  printf '公钥 (public key)     = '; cyan_value "$PUBLIC_KEY"; printf '\n'
-  printf 'Short ID              = '; cyan_value "$SHORT_ID"; printf '\n'
+  [[ -n ${PATH_VALUE:-} ]] && { printf '路径 (path/service)   = '; cyan_value "$PATH_VALUE"; printf '\n'; }
+  if profile_uses_reality; then
+    printf '公钥 (public key)     = '; cyan_value "$PUBLIC_KEY"; printf '\n'
+    printf 'Short ID              = '; cyan_value "$SHORT_ID"; printf '\n'
+  fi
   printf '%s\n' '------------------- 链接 (URL) -------------------'
   cyan_value "$link"; printf '\n'
   printf '%s\n\n' '---------------------- END ----------------------'
@@ -428,39 +565,43 @@ change_config() {
 change_menu() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
   load_state
-  printf '\n当前选择: VLESS-REALITY-Vision\n\n'
+  printf '\n当前选择: %s\n\n' "$(profile_name)"
   printf '%s\n' '请选择更改:' \
-    '1) 更改端口' '2) 更改服务器地址' '3) 更改 REALITY 目标域名 / SNI' \
-    '4) 更改 UUID' '5) 更改备注' '6) 轮换 REALITY 密钥' \
-    '7) 重新输入全部配置' '0) 返回'
-  read -r -p '请选择 [0-7]:' choice
+    '1) 更改协议组合' '2) 更改端口' '3) 更改服务器地址' '4) 更改目标域名 / SNI' \
+    '5) 更改 UUID' '6) 更改备注' '7) 轮换 REALITY 密钥' \
+    '8) 重新输入全部配置' '0) 返回'
+  read -r -p '请选择 [0-8]:' choice
   case "$choice" in
-    1)
+    1) choose_profile ;;
+    2)
       read -r -p "新端口 [${PORT}]:" value
       PORT=${value:-$PORT}
       valid_port "$PORT" || die "端口无效。"
       ensure_port_available
       ;;
-    2)
+    3)
       read -r -p "客户端连接的 IP/域名 [${ADDRESS:-自动检测}]:" value
       ADDRESS=$value
       ;;
-    3)
+    4)
       read -r -p "新 SNI [${SERVER_NAME}]:" value
       SERVER_NAME=${value:-$SERVER_NAME}
       valid_server_name "$SERVER_NAME" || die "域名无效。"
       ;;
-    4)
+    5)
       read -r -p "新 UUID [回车自动生成]:" value
       UUID=${value:-$("$XRAY_BIN" uuid)}
       [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "UUID 格式无效。"
       ;;
-    5)
+    6)
       read -r -p "新备注 [${REMARK}]:" value
       REMARK=${value:-$REMARK}
       ;;
-    6) rotate_reality_keys; return ;;
-    7) change_config; return ;;
+    7)
+      profile_uses_reality || die "TLS 组合不使用 REALITY 密钥。"
+      rotate_reality_keys; return
+      ;;
+    8) change_config; return ;;
     0) return ;;
     *) die "无效选择。" ;;
   esac
@@ -473,6 +614,7 @@ change_menu() {
 rotate_reality_keys() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
   load_state
+  profile_uses_reality || die "当前 TLS 组合不使用 REALITY 密钥。"
   generate_reality_credentials
   write_config
   restart_or_rollback
@@ -597,7 +739,7 @@ show_help() {
 
 show_about() {
   printf '\n%s\n' "----------- ${APP_NAME} -----------"
-  printf '作者: %s\n版本: %s\n内核: %s\n协议: VLESS + REALITY + XTLS Vision\n仓库: https://github.com/0157Martin/v2ray-manager\n\n' \
+  printf '作者: %s\n版本: %s\n内核: %s\n协议: VLESS + REALITY/TLS + RAW/XHTTP/gRPC/WebSocket\n仓库: https://github.com/0157Martin/v2ray-manager\n\n' \
     "$AUTHOR" "$MANAGER_VERSION" "$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')"
 }
 
