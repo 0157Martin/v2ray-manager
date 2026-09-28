@@ -33,6 +33,9 @@ TLS 组合不会自动修改 DNS、Caddy 或 Nginx，需提供现有 PEM 证书�
 - 自动保留最近 10 份配置备份，支持手动备份和恢复
 - 提供运行状态、配置、DNS 与监听端口综合诊断
 - 支持环境变量驱动的非交互安装
+- 支持单个 Xray 进程同时运行多个独立入站
+- 支持添加、修改、停用、启用和删除单个入站
+- `v2ray links` 一次输出全部启用入站的有效链接
 
 ## 一行安装
 
@@ -54,6 +57,9 @@ bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main
 
 ```bash
 v2ray                  # 打开菜单
+v2ray add              # 添加独立入站
+v2ray inbounds         # 查看入站列表
+v2ray links            # 输出全部启用入站链接
 v2ray info             # 查看版本和连接信息
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
@@ -116,6 +122,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 | GeoData | `/usr/local/share/xray/` |
 | 配置 | `/etc/xray/config.json` |
 | 管理状态 | `/etc/xray/manager.env` |
+| 入站状态 | `/etc/xray/nodes/*.env` |
 | systemd 服务 | `/etc/systemd/system/xray.service` |
 | 配置备份 | `/var/backups/v2ray-manager/` |
 

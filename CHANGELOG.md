@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.0
+
+- Replaced the single-inbound model with a multi-inbound registry under `/etc/xray/nodes`.
+- Added independent add, modify, enable, disable, delete, list, and link-output operations.
+- Existing installations migrate automatically to a `primary` inbound.
+- All active inbounds are merged into one validated Xray configuration with transactional backup and rollback.
+
 ## 3.1.0
 
 - Expanded the selector to eleven modern and legacy-compatible protocol profiles.

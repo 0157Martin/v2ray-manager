@@ -48,4 +48,22 @@ for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tl
   XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/config.json"
 done
 
-printf 'Xray %s accepted all generated protocol profiles.\n' "$tag"
+# Validate that independently generated inbounds can run together in one Xray process.
+multi_files=()
+index=0
+for PROFILE in vless-reality-raw vless-reality-xhttp trojan-reality-raw; do
+  export PROFILE
+  export PORT=$((24443 + index))
+  export UUID
+  UUID=$("$temporary_dir/core/xray" uuid)
+  export SHORT_ID
+  SHORT_ID=$(printf '%016x' "$((index + 1))")
+  [[ $PROFILE == vless-reality-xhttp ]] && export PATH_VALUE=/multi-test || export PATH_VALUE=
+  render_config "$temporary_dir/multi-$index.json"
+  multi_files+=("$temporary_dir/multi-$index.json")
+  ((index+=1))
+done
+jq -s '{log:{loglevel:"warning"},inbounds:map(.inbounds[0]),outbounds:.[0].outbounds}' "\${multi_files[@]}" > "$temporary_dir/multi.json"
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/multi.json"
+
+printf 'Xray %s accepted all protocol profiles and the combined multi-inbound configuration.\n' "$tag"
