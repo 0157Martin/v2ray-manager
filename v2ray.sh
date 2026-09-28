@@ -614,7 +614,7 @@ show_connection_loaded() {
   local address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
   address=$(server_address)
   if [[ $address == YOUR_SERVER_IP ]]; then
-    yellow "检测到 Cloudflare/WARP 出口地址，无法自动确定客户端入口。请运行 v2ray change，选择“更改服务器地址”，填写真实 IP 或域名。"
+    yellow "检测到 Cloudflare/WARP 出口地址，无法自动确定客户端入口。请运行 v2ray change，选择 3，然后填写真实 IP 或域名。"
   fi
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
   encoded_path=$(jq -rn --arg value "${PATH_VALUE:-}" '$value|@uri')
