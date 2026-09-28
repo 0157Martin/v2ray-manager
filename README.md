@@ -34,12 +34,13 @@ v2ray update.sh       # 更新管理脚本
 v2ray uninstall
 ```
 
-也可从本仓库下载再执行。执行前建议先阅读脚本内容：
+也可使用与原脚本相同风格的一行安装命令：
 
 ```bash
-curl -fL -o v2ray-manager.sh https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray-manager.sh
-sudo bash v2ray-manager.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
+
+引导脚本会先下载主脚本到临时文件再执行，以便可靠安装后续的 `v2ray` 管理命令。对于生产服务器，建议先打开并审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 与 [主脚本](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray-manager.sh)。
 
 也可使用非交互入口：
 
