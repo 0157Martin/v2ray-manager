@@ -60,6 +60,7 @@ v2ray                  # 打开菜单
 v2ray add              # 添加独立入站
 v2ray inbounds         # 查看入站列表
 v2ray links            # 输出全部启用入站链接
+v2ray firewall         # 放行已启用入站的本机 UFW/firewalld TCP 端口
 v2ray info             # 查看版本和连接信息
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
@@ -109,7 +110,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 3. REALITY 目标域名，默认 `www.microsoft.com`。应选择服务器可以稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
 4. 节点备注。
 
-安装后需要在云服务商安全组及服务器防火墙中放行所选 TCP 端口。本脚本不会自动修改防火墙、DNS 或系统代理。
+安装或新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
+
+云服务商安全组仍需在控制台手动放行所选 TCP 端口——它属于云账户权限，脚本没有也不应保存该账户的 API 凭据。本脚本不会自动修改 DNS 或系统代理。
 
 ## 从 1.x 升级
 

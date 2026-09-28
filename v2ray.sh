@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.1.1"
+readonly MANAGER_VERSION="4.1.2"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -50,6 +50,44 @@ install_dependencies() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get install -y ca-certificates curl unzip jq coreutils iproute2 tar
+}
+
+# Only modify a firewall that is already explicitly active.  We deliberately do
+# not insert raw iptables/nftables rules: their persistence and policy are owned
+# by the server administrator.
+open_local_firewall_port() {
+  local port=${1:?missing port}
+  valid_port "$port" || die "端口无效：$port"
+
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    ufw allow "${port}/tcp" >/dev/null
+    green "本机 UFW 已放行 TCP ${port}。"
+    return
+  fi
+
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null
+    firewall-cmd --reload >/dev/null
+    green "本机 firewalld 已放行 TCP ${port}。"
+    return
+  fi
+
+  yellow "未检测到已启用的 UFW/firewalld；未修改本机防火墙规则。"
+}
+
+open_enabled_inbound_ports() {
+  local node_file node_port seen=' '
+  [[ -d $NODES_DIR ]] || { yellow "尚无入站配置可放行。"; return; }
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -e $node_file ]] || continue
+    # shellcheck disable=SC1090
+    . "$node_file"
+    node_port=$PORT
+    [[ $seen == *" ${node_port} "* ]] && continue
+    seen+="${node_port} "
+    open_local_firewall_port "$node_port"
+  done
+  yellow "云服务商安全组不会由脚本自动修改；请确认已放行上述 TCP 端口。"
 }
 
 ensure_service_user() {
@@ -500,6 +538,7 @@ install_xray() {
     die "服务启动失败，请运行 journalctl -u xray 查看原因。"
   fi
   green "Xray、VLESS + REALITY 安装完成。"
+  open_enabled_inbound_ports
   show_connection
 }
 
@@ -686,7 +725,7 @@ show_connection_loaded() {
   printf '%s\n' '------------------- 链接 (URL) -------------------'
   cyan_value "$link"; printf '\n'
   printf '%s\n\n' '---------------------- END ----------------------'
-  yellow "请在云服务商安全组和本机防火墙中放行 TCP ${PORT}。私钥仅保存在服务器，不要公开。"
+  yellow "请确认云服务商安全组已放行 TCP ${PORT}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
 }
 
 change_config() {
@@ -696,6 +735,7 @@ change_config() {
   write_config
   restart_or_rollback
   green "配置已更新并重启服务。"
+  open_enabled_inbound_ports
   show_connection
 }
 
@@ -745,6 +785,7 @@ change_menu() {
   write_config
   restart_or_rollback
   green "配置已更新并重启服务。"
+  open_enabled_inbound_ports
   show_connection
 }
 
@@ -787,6 +828,7 @@ add_inbound() {
   rebuild_or_restore
   restart_or_rollback
   green "已添加入站：$node_id"
+  open_enabled_inbound_ports
   show_connection_loaded
 }
 
@@ -836,6 +878,7 @@ modify_inbound() {
   rebuild_or_restore
   restart_or_rollback
   green "入站已更新。"
+  open_enabled_inbound_ports
   show_connection_loaded
 }
 
@@ -993,6 +1036,7 @@ show_help() {
     'v2ray add      添加新入站' \
     'v2ray inbounds 查看入站列表' \
     'v2ray links    输出全部启用入站链接' \
+    'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray doctor   运行综合诊断' \
     'v2ray help     查看完整命令用法'
 }
@@ -1038,6 +1082,7 @@ main() {
     add) add_inbound ;;
     inbounds) list_inbounds ;;
     links) show_all_links ;;
+    firewall) open_enabled_inbound_ports ;;
     info) show_info ;;
     config|change) change_menu ;;
     link) show_connection ;;
@@ -1053,7 +1098,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
