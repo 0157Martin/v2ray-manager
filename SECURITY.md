@@ -5,6 +5,7 @@
 以下信息可安全用于排查：操作系统版本、`v2ray version` 输出、经过脱敏的
 `v2ray status` 与 `v2ray log` 输出。REALITY 私钥只应保存在服务器的
 `/etc/xray/config.json` 和 `/etc/xray/manager.env` 中。
+自动备份保存在 `/var/backups/v2ray-manager/`，权限为仅 root 可读，也应按敏感凭据处理。
 
 如果私钥或完整导入链接已经泄露，请运行：
 

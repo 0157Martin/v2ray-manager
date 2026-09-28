@@ -13,6 +13,10 @@
 - 独立的 `xray` 低权限系统账户和 systemd 安全加固
 - 自动生成 UUID、X25519 密钥对与 Short ID
 - 输出主流客户端可导入的 `vless://` 链接
+- 修改配置或轮换密钥失败时自动恢复上一份可用配置
+- 自动保留最近 10 份配置备份，支持手动备份和恢复
+- 提供运行状态、配置、DNS 与监听端口综合诊断
+- 支持环境变量驱动的非交互安装
 
 ## 一行安装
 
@@ -45,10 +49,27 @@ v2ray log              # 查看最近 100 条日志
 v2ray update           # 更新 Xray Core，保留配置
 v2ray update.sh        # 更新管理脚本
 v2ray rotate           # 轮换 REALITY 密钥和 Short ID
+v2ray backup           # 创建配置备份
+v2ray restore          # 恢复最近一份备份
+v2ray doctor           # 运行综合诊断
 v2ray uninstall
 ```
 
 执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
+
+## 非交互安装
+
+自动化部署时可以传入环境变量：
+
+```bash
+export V2M_NONINTERACTIVE=1
+export V2M_PORT=443
+export V2M_SERVER_NAME=www.microsoft.com
+export V2M_REMARK=my-server
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
+```
+
+`V2M_UUID` 可省略，脚本会自动生成。不要在共享日志中输出 UUID 或生成后的导入链接。
 
 ## 安装提示
 
@@ -75,6 +96,7 @@ v2ray uninstall
 | 配置 | `/etc/xray/config.json` |
 | 管理状态 | `/etc/xray/manager.env` |
 | systemd 服务 | `/etc/systemd/system/xray.service` |
+| 配置备份 | `/var/backups/v2ray-manager/` |
 
 卸载仅删除 2.x 脚本创建的 Xray 文件；专用 `xray` 系统账户和旧版回退文件会保留。
 
@@ -84,9 +106,14 @@ v2ray uninstall
 .
 ├── install.sh
 ├── v2ray.sh
+├── CHANGELOG.md
 ├── config/
 ├── src/
 ├── templates/
+├── tests/
 ├── tools/
+├── docs/
 └── .github/
 ```
+
+每次推送都会在 Ubuntu 24.04 上运行 Bash 语法检查、ShellCheck、单元测试，并下载 Xray 最新稳定版验证生成的 VLESS REALITY 配置。

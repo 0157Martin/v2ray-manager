@@ -18,4 +18,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          shellcheck install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh
+          shellcheck install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh tests/*.sh
+      - name: Run unit tests
+        run: bash tests/unit.sh
+
+  xray-config:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y curl jq unzip
+      - name: Validate generated configuration with latest stable Xray
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash tests/xray-config.sh

@@ -18,4 +18,4 @@ keys, complete import links, domains, and other credentials before posting.
 
 ## Actual and expected behavior
 
-Include the relevant redacted log output from `v2ray log`.
+Include the relevant redacted output from `v2ray doctor` and `v2ray log`.

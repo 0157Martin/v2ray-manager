@@ -3,11 +3,12 @@
 set -Eeuo pipefail
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-required=(install.sh v2ray.sh README.md LICENSE config/defaults.sh templates/vless-reality.json.tmpl)
+required=(install.sh v2ray.sh README.md LICENSE config/defaults.sh templates/vless-reality.json.tmpl tests/unit.sh tests/xray-config.sh)
 
 for path in "${required[@]}"; do
   [[ -f "$root_dir/$path" ]] || { printf 'missing: %s\n' "$path" >&2; exit 1; }
 done
 
-bash -n "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/defaults.sh"
+bash -n "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/defaults.sh" \
+  "$root_dir/tests/unit.sh" "$root_dir/tests/xray-config.sh"
 printf '%s\n' 'Repository layout and Bash syntax checks passed.'
