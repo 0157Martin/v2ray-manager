@@ -24,6 +24,8 @@ readonly SERVICE_NAME="xray"
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+cyan_value() { printf '\033[36m%s\033[0m' "$*"; }
+step() { printf '\033[33m%s\033[0m  %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { red "错误：$*"; exit 1; }
 pause() { read -r -p "按 Enter 键返回菜单…" _; }
 
@@ -70,7 +72,7 @@ download_core() {
   temp_dir=$(mktemp -d)
   trap 'rm -rf "$temp_dir"' RETURN
 
-  green "下载 Xray Core ${tag}（${arch}）…"
+  step "下载 Xray Core > ${tag} (${arch})"
   curl --fail --show-error --location --retry 3 --output "$temp_dir/xray.zip" "$url"
   curl --fail --show-error --location --retry 3 --output "$temp_dir/xray.zip.dgst" "${url}.dgst"
   expected=$(awk -F '= ' '/256=/ {print $2; exit}' "$temp_dir/xray.zip.dgst")
@@ -277,10 +279,13 @@ stop_legacy_service() {
 install_xray() {
   require_supported_os
   [[ -x "$XRAY_BIN" ]] && yellow "检测到已有 Xray 安装，将更新内核并重新生成服务端配置。"
+  step "安装依赖并准备 Xray Core"
   download_core
   ask_server_values
   ensure_port_available
+  step "生成并校验配置文件"
   write_config
+  step "安装 systemd 服务"
   write_service
   install_manager_command
   stop_legacy_service
@@ -384,8 +389,21 @@ show_connection() {
   address=$(server_address)
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
   link="vless://${UUID}@${address}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp#${encoded_name}"
-  printf '\n服务器：%s\n端口：%s\nUUID：%s\n协议：VLESS\n传输安全：REALITY\n流控：XTLS Vision\nSNI：%s\n公钥/Password：%s\nShort ID：%s\n\n导入链接：\n%s\n\n' \
-    "$address" "$PORT" "$UUID" "$SERVER_NAME" "$PUBLIC_KEY" "$SHORT_ID" "$link"
+  printf '\n使用协议: VLESS-REALITY-Vision\n'
+  printf '%s\n' '-------------- VLESS-REALITY-Vision --------------'
+  printf '协议 (protocol)       = '; cyan_value 'vless'; printf '\n'
+  printf '地址 (address)        = '; cyan_value "$address"; printf '\n'
+  printf '端口 (port)           = '; cyan_value "$PORT"; printf '\n'
+  printf '用户ID (id)           = '; cyan_value "$UUID"; printf '\n'
+  printf '传输协议 (network)  = '; cyan_value 'tcp/raw'; printf '\n'
+  printf '传输安全 (security) = '; cyan_value 'reality'; printf '\n'
+  printf '流控 (flow)           = '; cyan_value 'xtls-rprx-vision'; printf '\n'
+  printf 'SNI                   = '; cyan_value "$SERVER_NAME"; printf '\n'
+  printf '公钥 (public key)     = '; cyan_value "$PUBLIC_KEY"; printf '\n'
+  printf 'Short ID              = '; cyan_value "$SHORT_ID"; printf '\n'
+  printf '%s\n' '------------------- 链接 (URL) -------------------'
+  cyan_value "$link"; printf '\n'
+  printf '%s\n\n' '---------------------- END ----------------------'
   yellow "请在云服务商安全组和本机防火墙中放行 TCP ${PORT}。私钥仅保存在服务器，不要公开。"
 }
 
@@ -393,6 +411,51 @@ change_config() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
   load_state
   ask_server_values
+  write_config
+  restart_or_rollback
+  green "配置已更新并重启服务。"
+  show_connection
+}
+
+change_menu() {
+  [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
+  load_state
+  printf '\n当前选择: VLESS-REALITY-Vision\n\n'
+  printf '%s\n' '请选择更改:' \
+    '1) 更改端口' '2) 更改服务器地址' '3) 更改 REALITY 目标域名 / SNI' \
+    '4) 更改 UUID' '5) 更改备注' '6) 轮换 REALITY 密钥' \
+    '7) 重新输入全部配置' '0) 返回'
+  read -r -p '请选择 [0-7]:' choice
+  case "$choice" in
+    1)
+      read -r -p "新端口 [${PORT}]:" value
+      PORT=${value:-$PORT}
+      valid_port "$PORT" || die "端口无效。"
+      ensure_port_available
+      ;;
+    2)
+      read -r -p "客户端连接的 IP/域名 [${ADDRESS:-自动检测}]:" value
+      ADDRESS=$value
+      ;;
+    3)
+      read -r -p "新 SNI [${SERVER_NAME}]:" value
+      SERVER_NAME=${value:-$SERVER_NAME}
+      valid_server_name "$SERVER_NAME" || die "域名无效。"
+      ;;
+    4)
+      read -r -p "新 UUID [回车自动生成]:" value
+      UUID=${value:-$("$XRAY_BIN" uuid)}
+      [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "UUID 格式无效。"
+      ;;
+    5)
+      read -r -p "新备注 [${REMARK}]:" value
+      REMARK=${value:-$REMARK}
+      ;;
+    6) rotate_reality_keys; return ;;
+    7) change_config; return ;;
+    0) return ;;
+    *) die "无效选择。" ;;
+  esac
   write_config
   restart_or_rollback
   green "配置已更新并重启服务。"
@@ -503,7 +566,7 @@ menu() {
     read -r -p "请选择：" choice
     case "$choice" in
       1) install_xray; pause ;;
-      2) change_config; pause ;;
+      2) change_menu; pause ;;
       3) show_connection; pause ;;
       4) service_action start; pause ;;
       5) service_action stop; pause ;;
@@ -529,7 +592,7 @@ main() {
     menu) menu ;;
     install) install_xray ;;
     info) show_info ;;
-    config) change_config ;;
+    config|change) change_menu ;;
     link) show_connection ;;
     status) show_status ;;
     start|stop|restart) service_action "$1" ;;
@@ -542,7 +605,7 @@ main() {
     doctor) doctor ;;
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
-    help|-h|--help) printf '%s\n' "用法：v2ray [install|info|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|uninstall]" ;;
+    help|-h|--help) printf '%s\n' "用法：v2ray [install|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

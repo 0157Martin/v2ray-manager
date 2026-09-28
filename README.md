@@ -39,7 +39,8 @@ bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main
 ```bash
 v2ray                  # 打开菜单
 v2ray info             # 查看版本和连接信息
-v2ray config           # 修改端口、UUID、SNI 和备注
+v2ray change           # 打开分级修改菜单
+v2ray config           # change 的兼容别名
 v2ray link             # 重新显示 VLESS 导入链接
 v2ray status           # 查看服务状态
 v2ray start

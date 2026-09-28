@@ -4,6 +4,8 @@
 
 - Added an occupied-port preflight check that never stops an unrelated service.
 - Added `V2M_ADDRESS` for servers whose reachable address differs from their detected outbound IP.
+- Added the classic `v2ray change` submenu and a bilingual, field-oriented connection display.
+- Added timestamped installation stages while retaining the modern VLESS REALITY stack.
 
 ## 2.1.0
 
