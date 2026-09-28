@@ -64,6 +64,8 @@ for PROFILE in vless-reality-raw vless-reality-xhttp trojan-reality-raw; do
     export PATH_VALUE=
   fi
   render_config "$temporary_dir/multi-$index.json"
+  jq --arg tag "multi-$index" '.inbounds[0].tag=$tag' "$temporary_dir/multi-$index.json" > "$temporary_dir/tagged-$index.json"
+  mv "$temporary_dir/tagged-$index.json" "$temporary_dir/multi-$index.json"
   multi_files+=("$temporary_dir/multi-$index.json")
   ((index+=1))
 done
