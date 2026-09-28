@@ -17,4 +17,4 @@ else
   exit 1
 fi
 
-bash "$temporary" install
+bash "$temporary" bootstrap

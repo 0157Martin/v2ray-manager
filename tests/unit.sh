@@ -17,21 +17,6 @@ valid_server_name www.microsoft.com || fail "normal hostname should be valid"
 ! valid_server_name localhost || fail "single-label hostname should be invalid"
 ! valid_server_name 'bad..example.com' || fail "hostname with empty label should be invalid"
 
-# shellcheck disable=SC2030,SC2031
-(
-  export V2M_NONINTERACTIVE=1
-  export V2M_MENU_TOKEN=v2ray
-  require_protocol_menu_token
-) || fail "the configured protocol menu token should be accepted"
-# shellcheck disable=SC2030,SC2031
-if (
-  export V2M_NONINTERACTIVE=1
-  export V2M_MENU_TOKEN=wrong
-  require_protocol_menu_token
-); then
-  fail "an incorrect protocol menu token should be rejected"
-fi
-
 export ADDRESS=23.95.15.200
 [[ $(server_address) == 23.95.15.200 ]] || fail "explicit server address should override public-IP detection"
 

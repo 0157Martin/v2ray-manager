@@ -86,7 +86,6 @@ v2ray uninstall
 
 ```bash
 export V2M_NONINTERACTIVE=1
-export V2M_MENU_TOKEN=v2ray
 export V2M_PORT=443
 export V2M_PROFILE=vless-reality-raw
 export V2M_ADDRESS=203.0.113.10
@@ -101,15 +100,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 ## 安装提示
 
-交互安装不会直接展示协议列表，而是先要求输入协议菜单口令：`v2ray`。验证通过后，才会继续选择协议组合。这个口令用于避免误操作，不是安全认证机制（项目源码公开可见）。
+一行安装命令只会部署（或修复）`v2ray` 管理命令，不会直接安装内核或弹出协议选择。完成后输入 `v2ray` 进入菜单，再选择“安装 / 添加第一个入站”开始实际部署。
 
-自动化部署请额外设置：
-
-```bash
-export V2M_MENU_TOKEN=v2ray
-```
-
-安装时需要选择：
+从管理菜单开始安装时需要选择：
 
 1. 监听端口，默认 `443`。
 2. 客户端 UUID，可使用自动生成值。

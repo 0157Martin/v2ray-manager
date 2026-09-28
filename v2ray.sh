@@ -25,8 +25,6 @@ readonly NODES_DIR="$CONFIG_DIR/nodes"
 readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
 readonly SERVICE_NAME="xray"
-# This is an interaction gate, not an authentication mechanism: the repository is public.
-readonly PROTOCOL_MENU_TOKEN="v2ray"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -102,20 +100,6 @@ valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
 
-require_protocol_menu_token() {
-  local token
-  if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
-    token=${V2M_MENU_TOKEN:-}
-    [[ $token == "$PROTOCOL_MENU_TOKEN" ]] || die "非交互安装需要设置 V2M_MENU_TOKEN。"
-    return
-  fi
-
-  printf '\n请输入协议菜单口令：'
-  read -r -s token
-  printf '\n'
-  [[ $token == "$PROTOCOL_MENU_TOKEN" ]] || die "口令错误，未进入协议选择。"
-}
-
 profile_name() {
   case ${PROFILE:-vless-reality-raw} in
     vless-reality-raw) printf 'VLESS-REALITY-Vision-RAW' ;;
@@ -134,8 +118,6 @@ profile_name() {
 
 choose_profile() {
   local choice default_path
-  require_protocol_menu_token
-  printf '\n%s\n' '口令验证成功，以下是可选协议组合：'
   printf '%s\n' \
     '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书]' \
     '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输、内置多路复用]' \
@@ -464,6 +446,10 @@ EOF
 
 install_manager_command() {
   [[ -r "$0" ]] || die "无法读取当前脚本，未能安装 v2ray 管理命令。"
+  if [[ -L "$MANAGER_BIN" && ! -e "$MANAGER_BIN" ]]; then
+    yellow "检测到失效的 v2ray 命令链接，正在修复。"
+    rm -f -- "$MANAGER_BIN"
+  fi
   if [[ "$(readlink -f "$0")" != "$(readlink -f "$MANAGER_BIN" 2>/dev/null || true)" ]]; then
     if [[ -e "$MANAGER_BIN" ]] && ! grep -q 'APP_NAME="v2ray-manager"' "$MANAGER_BIN" 2>/dev/null; then
       install -d -m 700 "$BACKUP_DIR"
@@ -474,6 +460,12 @@ install_manager_command() {
     fi
     install -m 755 "$0" "$MANAGER_BIN"
   fi
+}
+
+bootstrap_manager() {
+  require_supported_os
+  install_manager_command
+  green "管理命令安装完成。现在输入 v2ray 即可进入菜单。"
 }
 
 stop_legacy_service() {
@@ -1032,6 +1024,7 @@ main() {
   require_root
   case "${1:-menu}" in
     menu) menu ;;
+    bootstrap) bootstrap_manager ;;
     install) install_xray ;;
     add) add_inbound ;;
     inbounds) list_inbounds ;;
@@ -1051,7 +1044,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [bootstrap|install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
