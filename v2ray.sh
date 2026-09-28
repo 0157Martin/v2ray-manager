@@ -288,8 +288,7 @@ render_config() {
           + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
             elif $profile == "vless-reality-grpc" then {grpcSettings: {serviceName: $path, multiMode: false}}
             elif $profile == "vless-tls-ws" then {wsSettings: {path: $path}}
-            else {} end))
-        },
+            else {} end)),
         sniffing: {enabled: true, destOverride: ["http", "tls", "quic"]}
       }],
       outbounds: [
