@@ -28,7 +28,14 @@ jobs:
             exit "$status"
           fi
       - name: Run unit tests
-        run: bash tests/unit.sh
+        run: |
+          status=0
+          bash tests/unit.sh > unit-test.log 2>&1 || status=$?
+          cat unit-test.log
+          if (( status != 0 )); then
+            while IFS= read -r line; do printf '::error::%s\n' "$line"; done < unit-test.log
+            exit "$status"
+          fi
       - name: Run update and recovery regression tests
         run: |
           bash tests/recovery.sh
