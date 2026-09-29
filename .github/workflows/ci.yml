@@ -21,7 +21,12 @@ jobs:
       - name: Run ShellCheck
         run: |
           shellcheck --version
-          shellcheck install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh tests/*.sh
+          status=0
+          shellcheck -f json1 install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh tests/*.sh > shellcheck.json || status=$?
+          if (( status != 0 )); then
+            jq -r '.comments[] | "::error file=\(.file),line=\(.line),col=\(.column)::SC\(.code): \(.message)"' shellcheck.json
+            exit "$status"
+          fi
       - name: Run unit tests
         run: bash tests/unit.sh
       - name: Run update and recovery regression tests
