@@ -73,6 +73,7 @@ v2ray start
 v2ray stop
 v2ray restart
 v2ray log              # 查看最近 100 条日志
+v2ray speedtest        # 测试服务器下载、上传速度和延迟
 v2ray update           # 更新 Xray Core，保留配置
     v2ray update.sh        # 更新管理脚本
     v2ray rollback.sh      # 恢复上一次更新前的管理脚本
@@ -84,6 +85,10 @@ v2ray uninstall
 ```
 
 执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
+
+`v2ray speedtest` 也可从“维护工具 → Speedtest 服务器测速”运行。脚本优先使用已安装的
+Ookla `speedtest` 或 `speedtest-cli`；均不存在时安装系统仓库的 `speedtest-cli`。测速会
+连接外部 Speedtest 服务器、暴露服务器公网 IP，并消耗一定流量，但不会修改或重启 Xray。
 
 ## 按官方教程部署与导出
 

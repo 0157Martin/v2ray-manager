@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.3.1"
+readonly MANAGER_VERSION="4.4.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -1269,6 +1269,35 @@ service_action() {
 show_status() { systemctl --no-pager --full status "$SERVICE_NAME" || true; }
 show_logs() { journalctl -u "$SERVICE_NAME" -n 100 --no-pager; }
 
+run_speedtest() {
+  local version
+  printf '%s\n' '===== 服务器网络测速 ====='
+  yellow "测速会连接外部 Speedtest 服务器，并消耗服务器流量。"
+
+  if command -v speedtest >/dev/null 2>&1; then
+    version=$(speedtest --version 2>&1 | head -n 1 || true)
+    if [[ $version == *Ookla* ]]; then
+      speedtest --accept-license --accept-gdpr || {
+        red "Speedtest 测速失败；请检查服务器出站网络和 DNS。" >&2
+        return 1
+      }
+      return
+    fi
+  fi
+
+  if ! command -v speedtest-cli >/dev/null 2>&1; then
+    step "安装 speedtest-cli"
+    if ! apt-get update || ! DEBIAN_FRONTEND=noninteractive apt-get install -y speedtest-cli; then
+      red "无法安装 speedtest-cli。" >&2
+      return 1
+    fi
+  fi
+  speedtest-cli --secure || {
+    red "Speedtest 测速失败；请检查服务器出站网络和 DNS。" >&2
+    return 1
+  }
+}
+
 doctor() {
   local failures=0 port security target node_file node_count=0 handshake
   printf '%s\n' "===== v2ray-manager 诊断 ====="
@@ -1461,11 +1490,13 @@ runtime_menu() {
 maintenance_menu() {
   printf '\n%s\n' '----- 维护工具 -----'
   printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
-    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '7) 恢复上一版管理脚本' '0) 返回'
-  read -r -p '请选择 [0-7]:' choice
+    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '7) 恢复上一版管理脚本' \
+    '8) Speedtest 服务器测速' '0) 返回'
+  read -r -p '请选择 [0-8]:' choice
   case "$choice" in
     1) update_core ;; 2) update_manager ;; 3) doctor || true ;; 4) manual_backup ;;
     5) restore_latest ;; 6) rotate_reality_keys ;; 7) rollback_manager ;;
+    8) run_speedtest || true ;;
     0) return ;; *) yellow "无效选择。" ;;
   esac
 }
@@ -1477,6 +1508,7 @@ show_help() {
     'v2ray inbounds 查看入站列表' \
     'v2ray links    输出全部启用入站链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
+    'v2ray speedtest 运行服务器网络测速' \
     'v2ray doctor   运行综合诊断' \
     'v2ray help     查看完整命令用法'
 }
@@ -1531,6 +1563,7 @@ main() {
     status) show_status ;;
     start|stop|restart) service_action "$1" ;;
     log) show_logs ;;
+    speedtest|speettest) run_speedtest ;;
     update) update_core ;;
     update.sh) update_manager ;;
     rollback.sh) rollback_manager ;;
@@ -1541,7 +1574,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|speedtest|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

@@ -97,3 +97,11 @@ PUBLIC_KEY=$saved_public
 SHORT_ID=123
 ! reality_pair_valid || fail 'odd-length Short ID accepted'
 printf '%s\n' 'REALITY credential tests passed.'
+
+# The network call itself is mocked; this verifies command selection without
+# consuming traffic or installing packages on the test host.
+# shellcheck disable=SC2329
+speedtest-cli() { printf '%s\n' 'mock-speedtest-ok'; }
+speedtest_output=$(run_speedtest)
+[[ $speedtest_output == *mock-speedtest-ok* ]] || fail 'speedtest-cli was not invoked'
+printf '%s\n' 'Speedtest command-selection test passed.'
