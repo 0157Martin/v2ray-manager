@@ -7,7 +7,8 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.3.0"
+readonly MANAGER_VERSION="4.3.1"
+readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -268,7 +269,7 @@ reality_pair_valid() (
 
 ask_server_values() {
   local default_port default_uuid default_name default_server
-  default_port=${PORT:-443}
+  default_port=${PORT:-$DEFAULT_PORT}
   default_uuid=${UUID:-$("$XRAY_BIN" uuid)}
   default_name=${REMARK:-xray-reality}
   default_server=${SERVER_NAME:-www.microsoft.com}
@@ -297,7 +298,7 @@ ask_server_values() {
     if [[ -n ${V2M_PORT:-} ]]; then
       PORT=$V2M_PORT
     elif [[ -z ${PORT:-} ]]; then
-      PORT=$(find_free_port 24443)
+      PORT=$(find_free_port "$DEFAULT_PORT")
     fi
     UUID=${V2M_UUID:-$default_uuid}
     SERVER_NAME=${V2M_SERVER_NAME:-$default_server}

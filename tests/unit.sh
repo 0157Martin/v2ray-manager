@@ -23,6 +23,21 @@ valid_server_name www.microsoft.com || fail "normal hostname should be valid"
 export ADDRESS=23.95.15.200
 [[ $(server_address) == 23.95.15.200 ]] || fail "explicit server address should override public-IP detection"
 
+unset PORT V2M_PORT
+export V2M_NONINTERACTIVE=1 PROFILE=vless-reality-raw
+export UUID=11111111-1111-4111-8111-111111111111
+export SERVER_NAME=www.microsoft.com REMARK=default-port-test
+export PRIVATE_KEY=test-private PUBLIC_KEY=test-public SHORT_ID=0123456789abcdef
+# Called indirectly by ask_server_values.
+# shellcheck disable=SC2329
+find_free_port() {
+  [[ $1 == 443 ]] || fail "automatic installation did not start at port 443"
+  printf '443'
+}
+ask_server_values
+[[ $PORT == 443 ]] || fail "automatic installation did not select port 443"
+unset V2M_NONINTERACTIVE
+
 parse_reality_credentials $'PrivateKey: private-new\nPassword (PublicKey): public-new\nHash32: unused'
 [[ $PRIVATE_KEY == private-new ]] || fail "new private-key output was not parsed"
 [[ $PUBLIC_KEY == public-new ]] || fail "new password output was not parsed"

@@ -132,7 +132,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 ## 安装提示
 
-一行安装命令会自动完成首次部署，但不会直接弹出协议选择菜单。首次默认使用推荐的 `VLESS-REALITY-Vision-RAW`，并从 `24443` 起自动寻找空闲端口，避免占用常见的 Web 服务端口。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以直接输入 `v2ray` 重试或查看诊断。完成后输入 `v2ray` 进入菜单，再按需要添加或管理其他协议组合。
+一行安装命令会自动完成首次部署，但不会直接弹出协议选择菜单。首次默认使用推荐的 `VLESS-REALITY-Vision-RAW`，并从 `443` 开始选择空闲端口：443 空闲时直接使用 443；已被 Caddy、Nginx 或其他服务占用时，不会停止现有服务，而会选择后续空闲端口。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以直接输入 `v2ray` 重试或查看诊断。完成后输入 `v2ray` 进入菜单，再按需要添加或管理其他协议组合。
 
 从管理菜单开始安装时需要选择：
 
@@ -151,7 +151,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 - 修改入站后，用 `v2ray links` 重新导出并重新导入客户端；4.2.1 起，单条链接也读取最新的启用入站状态。
 - 地址必须是客户端能访问的服务器公网 IP 或直连域名。NAT/WARP 的出口 IP 不一定是入口地址；NAT 环境还需核对外部端口映射。
-- `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**，自动安装的默认端口从 `24443` 起。
+- `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**。自动安装优先使用 443；如果 443 已被占用，以实际导出链接中的端口为准。
 - 从客户端网络检查 TCP 可达性，例如 Windows PowerShell 的 `Test-NetConnection <服务器地址> -Port <节点端口>`。TCP 成功仍不代表 REALITY/TLS 握手成功。
 - 核对客户端及内核是否支持所选协议组合。RAW 服务端在分享链接中使用 `type=tcp`，这是分享格式的兼容写法，无须手动改成 `raw`。
 
