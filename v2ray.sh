@@ -347,7 +347,10 @@ tls_pair_valid() {
   local cert=$1 key=$2 cert_public key_public not_before starts now
   [[ -r $cert && -r $key ]] || return 1
   openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || return 1
-  openssl x509 -in "$cert" -noout -checkhost "$SERVER_NAME" >/dev/null 2>&1 || return 1
+  # Some OpenSSL releases print a mismatch but still return status 0 for
+  # -checkhost, so require its explicit positive result as well.
+  openssl x509 -in "$cert" -noout -checkhost "$SERVER_NAME" 2>/dev/null |
+    grep -Fqx "Hostname $SERVER_NAME does match certificate" || return 1
   not_before=$(openssl x509 -in "$cert" -noout -startdate 2>/dev/null) || return 1
   starts=$(date -u -d "${not_before#notBefore=}" +%s 2>/dev/null) || return 1
   now=$(date -u +%s) || return 1
