@@ -17,17 +17,21 @@ jobs:
       - name: Run ShellCheck
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          sudo apt-get install -y shellcheck jq openssl
           shellcheck install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh tests/*.sh
       - name: Run unit tests
         run: bash tests/unit.sh
+      - name: Run update and recovery regression tests
+        run: |
+          bash tests/recovery.sh
+          bash tests/bootstrap.sh
 
   xray-config:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - name: Install test dependencies
-        run: sudo apt-get update && sudo apt-get install -y curl jq unzip
+        run: sudo apt-get update && sudo apt-get install -y curl jq unzip openssl python3
       - name: Validate generated configuration with latest stable Xray
         env:
           GITHUB_TOKEN: ${{ github.token }}

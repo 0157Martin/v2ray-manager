@@ -9,6 +9,8 @@ for path in "${required[@]}"; do
   [[ -f "$root_dir/$path" ]] || { printf 'missing: %s\n' "$path" >&2; exit 1; }
 done
 
-bash -n "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/defaults.sh" \
-  "$root_dir/tests/unit.sh" "$root_dir/tests/xray-config.sh"
+for path in "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/"*.sh \
+  "$root_dir/tools/"*.sh "$root_dir/tests/"*.sh; do
+  bash -n "$path"
+done
 printf '%s\n' 'Repository layout and Bash syntax checks passed.'

@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.1.2"
+readonly MANAGER_VERSION="4.3.0"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -24,6 +24,7 @@ readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly NODES_DIR="$CONFIG_DIR/nodes"
 readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
+readonly MANAGER_API="https://api.github.com/repos/0157Martin/v2ray-manager/commits/main"
 readonly SERVICE_NAME="xray"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
@@ -49,7 +50,7 @@ require_supported_os() {
 install_dependencies() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y ca-certificates curl unzip jq coreutils iproute2 tar
+  apt-get install -y ca-certificates curl unzip jq coreutils iproute2 tar openssl
 }
 
 # Only modify a firewall that is already explicitly active.  We deliberately do
@@ -75,7 +76,7 @@ open_local_firewall_port() {
   yellow "未检测到已启用的 UFW/firewalld；未修改本机防火墙规则。"
 }
 
-open_enabled_inbound_ports() {
+open_enabled_inbound_ports() (
   local node_file node_port seen=' '
   [[ -d $NODES_DIR ]] || { yellow "尚无入站配置可放行。"; return; }
   for node_file in "$NODES_DIR"/*.env; do
@@ -88,7 +89,7 @@ open_enabled_inbound_ports() {
     open_local_firewall_port "$node_port"
   done
   yellow "云服务商安全组不会由脚本自动修改；请确认已放行上述 TCP 端口。"
-}
+)
 
 ensure_service_user() {
   if ! getent passwd xray >/dev/null; then
@@ -105,36 +106,60 @@ arch_name() {
   esac
 }
 
-download_core() {
-  install_dependencies
-  local arch tag url temp_dir expected actual
-  arch=$(arch_name)
-  tag=$(curl --fail --silent --show-error --location -H 'Accept: application/vnd.github+json' "$RELEASE_API" | jq -r '.tag_name')
+fetch_core() {
+  local temp_dir=$1 arch tag url expected actual
+  arch=$(arch_name) || return 1
+  tag=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+    --max-time 60 -H 'Accept: application/vnd.github+json' "$RELEASE_API" | jq -r '.tag_name') || return 1
   [[ -n "$tag" && "$tag" != "null" ]] || die "无法读取 Xray Core 最新稳定版本。"
   url="https://github.com/XTLS/Xray-core/releases/download/${tag}/Xray-linux-${arch}.zip"
-  temp_dir=$(mktemp -d)
-  trap 'rm -rf "$temp_dir"' RETURN
-
   step "下载 Xray Core > ${tag} (${arch})"
-  curl --fail --show-error --location --retry 3 --output "$temp_dir/xray.zip" "$url"
-  curl --fail --show-error --location --retry 3 --output "$temp_dir/xray.zip.dgst" "${url}.dgst"
-  expected=$(awk -F '= ' '/256=/ {print $2; exit}' "$temp_dir/xray.zip.dgst")
-  actual=$(sha256sum "$temp_dir/xray.zip" | awk '{print $1}')
+  curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 600 \
+    --output "$temp_dir/xray.zip" "$url" || return 1
+  curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 60 \
+    --output "$temp_dir/xray.zip.dgst" "${url}.dgst" || return 1
+  expected=$(awk -F '= ' '/256=/ {gsub(/\r/, "", $2); print $2; exit}' "$temp_dir/xray.zip.dgst") || return 1
+  actual=$(sha256sum "$temp_dir/xray.zip" | awk '{print $1}') || return 1
   [[ -n "$expected" && "${expected,,}" == "$actual" ]] || die "Xray 发布包 SHA-256 校验失败。"
 
-  unzip -q "$temp_dir/xray.zip" -d "$temp_dir/core"
+  unzip -q "$temp_dir/xray.zip" -d "$temp_dir/core" || return 1
   [[ -x "$temp_dir/core/xray" ]] || die "发布包内没有 xray 可执行文件。"
-  install -d -m 755 "$BIN_DIR" "$ASSET_DIR" "$CONFIG_DIR"
-  install -m 755 "$temp_dir/core/xray" "$XRAY_BIN"
-  install -m 644 "$temp_dir/core/geoip.dat" "$ASSET_DIR/geoip.dat"
-  install -m 644 "$temp_dir/core/geosite.dat" "$ASSET_DIR/geosite.dat"
-  trap - RETURN
-  rm -rf "$temp_dir"
+  [[ -s "$temp_dir/core/geoip.dat" && -s "$temp_dir/core/geosite.dat" ]] || die "发布包缺少 GeoData。"
 }
 
+# Replace through a same-directory temporary file, including a running executable.
+atomic_install() {
+  local source=$1 target=$2 mode=$3 temporary
+  temporary=$(mktemp "${target}.XXXXXX") || return 1
+  if install -m "$mode" "$source" "$temporary" && mv -f -- "$temporary" "$target"; then
+    return 0
+  fi
+  rm -f -- "$temporary"
+  return 1
+}
+
+install_core_files() {
+  local source=$1
+  atomic_install "$source/xray" "$XRAY_BIN" 755 || return 1
+  atomic_install "$source/geoip.dat" "$ASSET_DIR/geoip.dat" 644 || return 1
+  atomic_install "$source/geosite.dat" "$ASSET_DIR/geosite.dat" 644
+}
+
+download_core() (
+  set -Eeuo pipefail
+  install_dependencies
+  local temp_dir
+  temp_dir=$(mktemp -d)
+  trap 'rm -rf -- "$temp_dir"' EXIT
+  fetch_core "$temp_dir"
+  install -d -m 755 "$BIN_DIR" "$ASSET_DIR" "$CONFIG_DIR"
+  install_core_files "$temp_dir/core"
+)
+
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
+valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
-valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
+valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
 
@@ -146,6 +171,7 @@ profile_name() {
     vless-tls-xhttp) printf 'VLESS-XHTTP-TLS' ;;
     vless-tls-ws) printf 'VLESS-WebSocket-TLS' ;;
     vless-tls-grpc) printf 'VLESS-gRPC-TLS' ;;
+    vless-tls-raw) printf 'VLESS-TLS-Vision-RAW' ;;
     trojan-reality-raw) printf 'Trojan-REALITY-RAW' ;;
     vmess-tcp) printf 'VMess-TCP-Legacy' ;;
     vmess-tls-ws) printf 'VMess-WebSocket-TLS-Legacy' ;;
@@ -160,16 +186,17 @@ choose_profile() {
     '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书]' \
     '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输、内置多路复用]' \
     '3) VLESS-REALITY-gRPC        [HTTP/2 兼容，新部署更建议 XHTTP]' \
-    '4) VLESS-XHTTP-TLS           [需域名证书，适合 HTTP/CDN 链路]' \
-    '5) VLESS-WebSocket-TLS       [需域名证书，客户端/CDN 兼容广]' \
-    '6) VLESS-gRPC-TLS            [需域名证书，适合现有 HTTP/2 反代]' \
+    '4) VLESS-XHTTP-TLS           [自动匹配/申请证书，适合 HTTP/CDN 链路]' \
+    '5) VLESS-WebSocket-TLS       [自动匹配/申请证书，客户端/CDN 兼容广]' \
+    '6) VLESS-gRPC-TLS            [自动匹配/申请证书，适合现有 HTTP/2 反代]' \
     '7) Trojan-REALITY-RAW        [Trojan 客户端兼容，无需自有证书]' \
     '--- 旧版兼容（非默认推荐）---' \
     '8) VMess-TCP                 [无 TLS/REALITY，仅兼容或可信链路]' \
     '9) VMess-WebSocket-TLS       [老客户端和 CDN 兼容广]' \
     '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反代]' \
-    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS 兼容]'
-  read -r -p '请选择协议组合 [1-11]:' choice
+    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS 兼容]' \
+    '12) VLESS-TLS-Vision-RAW      [官方教程组合，需要自有域名及证书]'
+  read -r -p '请选择协议组合 [1-12]:' choice
   case "$choice" in
     1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
     2)
@@ -199,12 +226,13 @@ choose_profile() {
       else
         [[ $default_path == /* ]] || default_path="/$default_path"; read -r -p "传输路径 [${default_path}]:" PATH_VALUE; PATH_VALUE=${PATH_VALUE:-$default_path}; [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
       fi
-      read -r -p "TLS 证书文件路径:" CERT_SOURCE
-      read -r -p "TLS 私钥文件路径:" KEY_SOURCE
-      [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 证书或私钥不可读。"
+      # Resolve certificates after SERVER_NAME has been collected.
+      CERT_SOURCE=
+      KEY_SOURCE=
       ;;
     7) PROFILE=trojan-reality-raw; PATH_VALUE='' ;;
     8) PROFILE=vmess-tcp; PATH_VALUE='' ;;
+    12) PROFILE=vless-tls-raw; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
     *) die "协议组合选择无效。" ;;
   esac
 }
@@ -215,13 +243,28 @@ generate_reality_credentials() {
   parse_reality_credentials "$output"
   SHORT_ID=$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')
   [[ -n "$PRIVATE_KEY" && -n "$PUBLIC_KEY" && ${#SHORT_ID} -eq 16 ]] || die "无法生成 REALITY 凭据。"
+  reality_pair_valid || die "生成的 REALITY 凭据未通过校验。"
 }
 
 parse_reality_credentials() {
-  local output=$1
+  local output=${1//$'\r'/}
   PRIVATE_KEY=$(awk -F ': *' '/^PrivateKey:|^Private key:/ {print $2; exit}' <<<"$output")
   PUBLIC_KEY=$(awk -F ': *' '/^Password \(PublicKey\):|^Password:|^Public key:/ {print $2; exit}' <<<"$output")
 }
+
+reality_pair_valid() (
+  local expected_public=${PUBLIC_KEY:-} derived_public
+  [[ ${PRIVATE_KEY:-} =~ ^[A-Za-z0-9_-]{43}$ && $expected_public =~ ^[A-Za-z0-9_-]{43}$ ]] || return 1
+  [[ ${SHORT_ID:-} =~ ^([0-9a-fA-F]{2}){0,8}$ ]] || return 1
+  # RFC 8410 PKCS#8 X25519 prefix followed by the 32 private bytes. Feed the
+  # private key over stdin so it never appears in another process's argv.
+  derived_public=$({
+    printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'
+    printf '%s=' "$PRIVATE_KEY" | tr '_-' '/+' | base64 -d
+  } | openssl pkey -inform DER -pubout -outform DER 2>/dev/null |
+    tail -c 32 | base64 -w 0 | tr '/+' '_-' | tr -d '=') || return 1
+  [[ $derived_public == "$expected_public" ]]
+)
 
 ask_server_values() {
   local default_port default_uuid default_name default_server
@@ -229,6 +272,7 @@ ask_server_values() {
   default_uuid=${UUID:-$("$XRAY_BIN" uuid)}
   default_name=${REMARK:-xray-reality}
   default_server=${SERVER_NAME:-www.microsoft.com}
+  local previous_profile=${PROFILE:-vless-reality-raw}
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
     PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
@@ -246,7 +290,9 @@ ask_server_values() {
     if profile_uses_tls; then
       CERT_SOURCE=${V2M_CERT_FILE:-${CERT_SOURCE:-}}
       KEY_SOURCE=${V2M_KEY_FILE:-${KEY_SOURCE:-}}
-      [[ -r $CERT_SOURCE && -r $KEY_SOURCE ]] || die "TLS 组合需要 V2M_CERT_FILE 和 V2M_KEY_FILE。"
+      if [[ $previous_profile != *-tls-* && -z ${V2M_SERVER_NAME:-} ]]; then
+        die "TLS 自动证书需要 V2M_SERVER_NAME 指定你拥有的域名。"
+      fi
     fi
     if [[ -n ${V2M_PORT:-} ]]; then
       PORT=$V2M_PORT
@@ -258,7 +304,7 @@ ask_server_values() {
     REMARK=${V2M_REMARK:-$default_name}
     ADDRESS=${V2M_ADDRESS:-${ADDRESS:-}}
     valid_port "$PORT" || die "V2M_PORT 必须是 1 到 65535 的端口。"
-    [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "V2M_UUID 格式无效。"
+    valid_uuid "$UUID" || die "V2M_UUID 格式无效。"
     valid_server_name "$SERVER_NAME" || die "V2M_SERVER_NAME 必须是有效完整域名。"
     if profile_uses_reality && [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
       generate_reality_credentials
@@ -267,6 +313,7 @@ ask_server_values() {
   fi
 
   choose_profile
+  if profile_uses_tls && [[ $previous_profile != *-tls-* ]]; then default_server=; fi
 
   while :; do
     read -r -p "监听端口 [${default_port}]：" PORT
@@ -274,12 +321,12 @@ ask_server_values() {
     valid_port "$PORT" && break
     yellow "请输入 1 到 65535 的端口。"
   done
-  read -r -p "客户端 UUID [${default_uuid}]：" UUID
-  UUID=${UUID:-$default_uuid}
-  [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "UUID 格式无效。"
+  UUID=$default_uuid
+  valid_uuid "$UUID" || die "UUID 格式无效。"
+  green "UUID 已自动生成或沿用现有值；需要手动修改时可使用 v2ray change。"
   while :; do
     if profile_uses_tls; then
-      read -r -p "TLS 证书域名 [${default_server}]：" SERVER_NAME
+      read -r -p "你拥有的 TLS 域名（自动匹配或申请证书）[${default_server}]：" SERVER_NAME
     else
       read -r -p "REALITY 目标域名 [${default_server}]：" SERVER_NAME
     fi
@@ -295,15 +342,158 @@ ask_server_values() {
   fi
 }
 
+# Require a current certificate for this hostname and a matching private key.
+tls_pair_valid() {
+  local cert=$1 key=$2 cert_public key_public not_before starts now
+  [[ -r $cert && -r $key ]] || return 1
+  openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || return 1
+  openssl x509 -in "$cert" -noout -checkhost "$SERVER_NAME" >/dev/null 2>&1 || return 1
+  not_before=$(openssl x509 -in "$cert" -noout -startdate 2>/dev/null) || return 1
+  starts=$(date -u -d "${not_before#notBefore=}" +%s 2>/dev/null) || return 1
+  now=$(date -u +%s) || return 1
+  (( starts <= now )) || return 1
+  cert_public=$(openssl x509 -in "$cert" -pubkey -noout 2>/dev/null) || return 1
+  key_public=$(openssl pkey -in "$key" -passin pass: -pubout 2>/dev/null) || return 1
+  [[ $cert_public == "$key_public" ]]
+}
+
+tls_chain_valid() {
+  openssl verify -purpose sslserver -verify_hostname "$SERVER_NAME" -untrusted "$1" "$1" >/dev/null 2>&1
+}
+
+find_tls_material() {
+  local cert key
+  # Prefer renewable sources to the installed copy. Never read private-key contents into logs.
+  for cert in /etc/letsencrypt/live/*/fullchain.pem; do
+    key="${cert%/*}/privkey.pem"
+    if tls_pair_valid "$cert" "$key" && tls_chain_valid "$cert"; then
+      CERT_SOURCE=$cert; KEY_SOURCE=$key; return 0
+    fi
+  done
+  # acme.sh internal files are not deployment paths; use --install-cert first.
+  for cert in "$TLS_DIR/$SERVER_NAME/cert.pem" "$TLS_CERT_FILE"; do
+    key="${cert%/*}/key.pem"
+    if tls_pair_valid "$cert" "$key" && tls_chain_valid "$cert"; then
+      CERT_SOURCE=$cert; KEY_SOURCE=$key; return 0
+    fi
+  done
+  return 1
+}
+
+install_tls_renew_hook() {
+  local hook=/etc/letsencrypt/renewal-hooks/deploy/v2ray-manager
+  install -d -m 755 "${hook%/*}"
+  cat > "$hook" <<'HOOK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec /usr/local/bin/v2ray cert-refresh "${RENEWED_LINEAGE:?Missing renewed lineage}"
+HOOK
+  chmod 750 "$hook"
+}
+
+refresh_tls_domain() (
+  local target=$1 lineage=$2 backup active=0 changed=0 committed=0
+  valid_server_name "${target##*/}" || return 1
+  if ! SERVER_NAME=${target##*/} tls_pair_valid "$lineage/fullchain.pem" "$lineage/privkey.pem" ||
+    ! SERVER_NAME=${target##*/} tls_chain_valid "$lineage/fullchain.pem"; then
+      red "拒绝部署 ${target##*/}：续期证书、私钥、域名或 CA 信任校验失败。" >&2; return 1;
+  fi
+  backup=$(mktemp -d "$target/.renewal.XXXXXX") || return 1
+  chmod 700 "$backup" || return 1
+  cp -p "$target/cert.pem" "$backup/cert.pem" || return 1
+  cp -p "$target/key.pem" "$backup/key.pem" || return 1
+  systemctl is-active --quiet "$SERVICE_NAME" && active=1
+  trap '
+    status=$?
+    if (( changed && ! committed )); then
+      if cp -p "$backup/cert.pem" "$target/cert.pem" && cp -p "$backup/key.pem" "$target/key.pem"; then
+        if (( active )); then restart_checked || red "旧证书已恢复，但服务恢复失败。" >&2; fi
+      else
+        red "证书回滚失败，请从备份恢复。" >&2
+      fi
+      red "续期部署失败，备份保留在 $backup" >&2
+    fi
+    exit "$status"
+  ' EXIT
+  install -m 640 -o root -g xray "$lineage/fullchain.pem" "$backup/new-cert.pem" || return 1
+  install -m 640 -o root -g xray "$lineage/privkey.pem" "$backup/new-key.pem" || return 1
+  changed=1
+  mv -f "$backup/new-cert.pem" "$target/cert.pem" || return 1
+  mv -f "$backup/new-key.pem" "$target/key.pem" || return 1
+  "$XRAY_BIN" run -test -config "$CONFIG_FILE" || return 1
+  if (( active )); then restart_checked || return 1; fi
+  committed=1
+  rm -f -- "$backup/cert.pem" "$backup/key.pem"
+  rmdir -- "$backup"
+)
+
+refresh_tls_certificates() (
+  local lineage=${1:-} target failures=0
+  [[ $lineage == /* && -d $lineage ]] || { red "请指定续期证书目录的绝对路径。" >&2; return 1; }
+  for target in "$TLS_DIR"/*; do
+    [[ -d $target && -r $target/source ]] || continue
+    [[ $(cat "$target/source") == "$lineage" ]] || continue
+    refresh_tls_domain "$target" "$lineage" || failures=1
+  done
+  return "$failures"
+)
+
+issue_tls_material() {
+  local -a challenge_args=(--standalone)
+  if [[ -n ${V2M_ACME_WEBROOT:-} ]]; then
+    [[ $V2M_ACME_WEBROOT == /* && -d $V2M_ACME_WEBROOT ]] || die "V2M_ACME_WEBROOT 必须是已有网站根目录的绝对路径。"
+    challenge_args=(--webroot --webroot-path "$V2M_ACME_WEBROOT")
+  else
+    [[ -z $(ss -H -lnt 'sport = :80') ]] || die "TCP 80 已占用；设置 V2M_ACME_WEBROOT 使用现有网站根目录申请证书，或提供已有证书。"
+  fi
+  getent ahosts "$SERVER_NAME" >/dev/null || die "域名无法解析，请先将 $SERVER_NAME 解析到本服务器。"
+  if ! command -v certbot >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y certbot
+  fi
+  open_local_firewall_port 80
+  yellow "正在向 Let's Encrypt 申请 $SERVER_NAME 的证书（接受其服务条款）。域名须指向本服务器，公网 TCP 80 须可访问。"
+  local -a account_args=(--register-unsafely-without-email)
+  [[ -z ${V2M_ACME_EMAIL:-} ]] || account_args=(--email "$V2M_ACME_EMAIL")
+  certbot certonly "${challenge_args[@]}" --non-interactive --agree-tos "${account_args[@]}" \
+    --preferred-challenges http --cert-name "$SERVER_NAME" -d "$SERVER_NAME" || \
+    die "证书申请失败；检查域名 A/AAAA 记录、公网 TCP 80 和网站 challenge 路径后重试。"
+  CERT_SOURCE="/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem"
+  KEY_SOURCE="/etc/letsencrypt/live/$SERVER_NAME/privkey.pem"
+  systemctl enable --now certbot.timer
+}
+
 prepare_tls_material() {
   profile_uses_tls || return 0
-  [[ -r ${CERT_SOURCE:-} && -r ${KEY_SOURCE:-} ]] || {
-    [[ -r $TLS_CERT_FILE && -r $TLS_KEY_FILE ]] && return 0
-    die "TLS 证书或私钥不可读。"
-  }
-  install -d -m 750 -o root -g xray "$TLS_DIR"
-  [[ "$(readlink -f "$CERT_SOURCE")" == "$(readlink -f "$TLS_CERT_FILE" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$CERT_SOURCE" "$TLS_CERT_FILE"
-  [[ "$(readlink -f "$KEY_SOURCE")" == "$(readlink -f "$TLS_KEY_FILE" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$KEY_SOURCE" "$TLS_KEY_FILE"
+  valid_server_name "$SERVER_NAME" || die "TLS 需要有效域名。"
+  command -v openssl >/dev/null || { apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y openssl; }
+  if [[ -n ${CERT_SOURCE:-} || -n ${KEY_SOURCE:-} ]]; then
+    tls_pair_valid "${CERT_SOURCE:-}" "${KEY_SOURCE:-}" || die "指定的 TLS 证书/私钥无效、过期、不匹配或不属于 $SERVER_NAME。"
+  elif ! find_tls_material; then
+    issue_tls_material
+  fi
+  tls_pair_valid "$CERT_SOURCE" "$KEY_SOURCE" || die "未取得有效的 TLS 证书和私钥。"
+  if ! tls_chain_valid "$CERT_SOURCE"; then
+    yellow "指定证书未通过本机系统 CA 信任校验；使用自建 CA 时，客户端需安装对应 CA，否则会拒绝连接。"
+  fi
+  local target="$TLS_DIR/$SERVER_NAME"
+  install -d -m 750 -o root -g xray "$TLS_DIR" "$target"
+  [[ $(readlink -f "$CERT_SOURCE") == "$(readlink -f "$target/cert.pem" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$CERT_SOURCE" "$target/cert.pem"
+  [[ $(readlink -f "$KEY_SOURCE") == "$(readlink -f "$target/key.pem" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$KEY_SOURCE" "$target/key.pem"
+  if [[ $CERT_SOURCE == /etc/letsencrypt/live/*/fullchain.pem ]]; then
+    printf '%s\n' "${CERT_SOURCE%/*}" > "$target/source"
+    chmod 600 "$target/source"
+    install_tls_renew_hook
+  fi
+  green "TLS 证书路径已自动填充：$target/cert.pem"
+}
+
+# Existing nodes still using the shared certificate keep their previous paths.
+tls_cert_path() {
+  if [[ -r $TLS_DIR/$SERVER_NAME/cert.pem ]]; then printf '%s' "$TLS_DIR/$SERVER_NAME/cert.pem"; else printf '%s' "$TLS_CERT_FILE"; fi
+}
+tls_key_path() {
+  if [[ -r $TLS_DIR/$SERVER_NAME/key.pem ]]; then printf '%s' "$TLS_DIR/$SERVER_NAME/key.pem"; else printf '%s' "$TLS_KEY_FILE"; fi
 }
 
 ensure_port_available() {
@@ -328,18 +518,19 @@ render_config() {
     --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-vless-reality-raw}" \
     --arg path "${PATH_VALUE:-}" \
-    --arg cert "${TLS_CERT_PATH_OVERRIDE:-$TLS_CERT_FILE}" \
-    --arg key "${TLS_KEY_PATH_OVERRIDE:-$TLS_KEY_FILE}" '{
+    --arg listen "$(if [[ ${ADDRESS:-} == *:* ]]; then printf '::'; else printf '0.0.0.0'; fi)" \
+    --arg cert "${TLS_CERT_PATH_OVERRIDE:-$(tls_cert_path)}" \
+    --arg key "${TLS_KEY_PATH_OVERRIDE:-$(tls_key_path)}" '{
       log: {loglevel: "warning"},
       inbounds: [{
         tag: "vless-reality",
-        listen: "0.0.0.0",
+        listen: $listen,
         port: $port,
         protocol: (if ($profile | startswith("trojan-")) then "trojan" elif ($profile | startswith("vmess-")) then "vmess" else "vless" end),
         settings: (if ($profile | startswith("trojan-")) then {clients: [{password: $id}]}
         elif ($profile | startswith("vmess-")) then {clients: [{id: $id, alterId: 0}]}
         else {
-          clients: [({id: $id} + (if $profile == "vless-reality-raw" then {flow: "xtls-rprx-vision"} else {} end))],
+          clients: [({id: $id} + (if ($profile == "vless-reality-raw" or $profile == "vless-tls-raw") then {flow: "xtls-rprx-vision"} else {} end))],
           decryption: "none"
         } end),
         streamSettings: ({
@@ -420,30 +611,30 @@ EOF
   chmod 600 "$destination"
 }
 
-rebuild_config_from_nodes() {
-  install -d -m 700 "$NODES_DIR"
+rebuild_config_from_nodes() (
+  install -d -m 700 "$NODES_DIR" || return 1
   local work_dir combined node_file node_id rendered
-  work_dir=$(mktemp -d)
+  work_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$work_dir"' EXIT
   combined="$work_dir/inbounds.json"
-  printf '[]\n' > "$combined"
+  printf '[]\n' > "$combined" || return 1
   for node_file in "$NODES_DIR"/*.env; do
     [[ -e $node_file ]] || continue
     # Node files are generated by this script with mode 0600.
     # shellcheck disable=SC1090
-    . "$node_file"
+    . "$node_file" || return 1
     node_id=$(basename "$node_file" .env)
     rendered="$work_dir/${node_id}.json"
-    render_config "$rendered"
-    jq --arg tag "$node_id" '.inbounds[0].tag=$tag | .inbounds[0]' "$rendered" > "$work_dir/inbound.json"
-    jq --slurpfile inbound "$work_dir/inbound.json" '. + $inbound' "$combined" > "$work_dir/next.json"
-    mv "$work_dir/next.json" "$combined"
+    render_config "$rendered" || return 1
+    jq --arg tag "$node_id" '.inbounds[0].tag=$tag | .inbounds[0]' "$rendered" > "$work_dir/inbound.json" || return 1
+    jq --slurpfile inbound "$work_dir/inbound.json" '. + $inbound' "$combined" > "$work_dir/next.json" || return 1
+    mv "$work_dir/next.json" "$combined" || return 1
   done
   [[ $(jq 'length' "$combined") -gt 0 ]] || { rm -rf "$work_dir"; red "至少需要一个启用的入站。"; return 1; }
-  jq -n --slurpfile inbounds "$combined" '{log:{loglevel:"warning"},inbounds:$inbounds[0],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$work_dir/config.json"
+  jq -n --slurpfile inbounds "$combined" '{log:{loglevel:"warning"},inbounds:$inbounds[0],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$work_dir/config.json" || return 1
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$work_dir/config.json" >/dev/null || { rm -rf "$work_dir"; red "多入站配置未通过 Xray 校验。"; return 1; }
   install -m 640 -o root -g xray "$work_dir/config.json" "$CONFIG_FILE"
-  rm -rf "$work_dir"
-}
+)
 
 rebuild_or_restore() {
   rebuild_config_from_nodes && return 0
@@ -518,9 +709,13 @@ install_xray() {
   require_supported_os
   # Install the manager first so users retain a recovery path if download or validation fails.
   install_manager_command
-  [[ -x "$XRAY_BIN" ]] && yellow "检测到已有 Xray 安装，将更新内核并重新生成服务端配置。"
-  step "安装依赖并准备 Xray Core"
-  download_core
+  if [[ -x "$XRAY_BIN" ]]; then
+    yellow "检测到已有 Xray，将保留当前内核；内核升级请使用 v2ray update。"
+    install_dependencies
+  else
+    step "安装依赖并准备 Xray Core"
+    download_core
+  fi
   ask_server_values
   ensure_port_available
   step "生成并校验配置文件"
@@ -528,15 +723,8 @@ install_xray() {
   step "安装 systemd 服务"
   write_service
   stop_legacy_service
-  if ! systemctl enable --now "$SERVICE_NAME"; then
-    if [[ -n ${LAST_BACKUP:-} ]]; then
-      yellow "新安装配置启动失败，正在恢复上一份配置…"
-      restore_archive "$LAST_BACKUP"
-      systemctl enable --now "$SERVICE_NAME" || die "回滚后服务仍无法启动，请运行 v2ray log。"
-      die "新配置已回滚，服务已恢复。"
-    fi
-    die "服务启动失败，请运行 journalctl -u xray 查看原因。"
-  fi
+  systemctl enable "$SERVICE_NAME"
+  restart_or_rollback
   green "Xray、VLESS + REALITY 安装完成。"
   open_enabled_inbound_ports
   show_connection
@@ -557,53 +745,69 @@ create_backup() {
   install -d -m 700 "$BACKUP_DIR"
   local timestamp archive
   timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-  archive="$BACKUP_DIR/config-${timestamp}.tar.gz"
+  archive=$(mktemp "$BACKUP_DIR/config-${timestamp}-XXXXXX.tar.gz")
   local -a backup_items=(config.json manager.env)
   [[ -d $TLS_DIR ]] && backup_items+=(tls)
   [[ -d $NODES_DIR ]] && backup_items+=(nodes)
-  tar -czf "$archive" -C "$CONFIG_DIR" "${backup_items[@]}"
+  if ! tar -czf "$archive" -C "$CONFIG_DIR" "${backup_items[@]}"; then
+    rm -f -- "$archive"
+    die "配置备份失败，未修改现有配置。"
+  fi
   chmod 600 "$archive"
   LAST_BACKUP=$archive
 
   local -a archives
-  mapfile -t archives < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'config-*.tar.gz' -print | sort -r)
+  mapfile -t archives < <(list_backups)
   local index
   for ((index=10; index<${#archives[@]}; index++)); do
     rm -f -- "${archives[$index]}"
   done
 }
 
-restore_archive() {
+list_backups() {
+  # Random suffixes avoid collisions; modification time determines recency.
+  find "$BACKUP_DIR" -maxdepth 1 -type f -name 'config-*.tar.gz' -printf '%T@ %p\n' |
+    sort -nr | cut -d ' ' -f 2-
+}
+
+restore_archive() (
+  set -Eeuo pipefail
   local archive=$1 temp_dir
   [[ -r "$archive" ]] || die "备份文件不可读：$archive"
   temp_dir=$(mktemp -d)
-  trap 'rm -rf "$temp_dir"' RETURN
+  trap 'rm -rf -- "$temp_dir"' EXIT
   tar -xzf "$archive" -C "$temp_dir"
   [[ -r "$temp_dir/config.json" && -r "$temp_dir/manager.env" ]] || die "备份内容不完整。"
-  XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temp_dir/config.json" >/dev/null || die "备份配置未通过 Xray 校验。"
+  # Validate against the archived certificates, not the possibly broken live ones.
+  jq --arg live "$TLS_DIR/" --arg staged "$temp_dir/tls/" \
+    'walk(if type == "string" then if startswith($live) then $staged + .[($live|length):] else . end else . end)' \
+    "$temp_dir/config.json" > "$temp_dir/validation.json"
+  XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temp_dir/validation.json" >/dev/null || die "备份配置未通过 Xray 校验。"
+  if [[ -d $temp_dir/tls ]]; then
+    # Retain both legacy shared certificates and all per-domain directories.
+    chown -R root:xray "$temp_dir/tls"
+    find "$temp_dir/tls" -type d -exec chmod 750 {} +
+    find "$temp_dir/tls" -type f -exec chmod 640 {} +
+    find "$temp_dir/tls" -type f -name source -exec chmod 600 {} +
+    install -d -m 750 -o root -g xray "$TLS_DIR"
+    cp -a "$temp_dir/tls/." "$TLS_DIR/"
+  fi
   install -m 640 -o root -g xray "$temp_dir/config.json" "$CONFIG_FILE"
   install -m 600 -o root -g root "$temp_dir/manager.env" "$STATE_FILE"
-  if [[ -d $temp_dir/tls ]]; then
-    install -d -m 750 -o root -g xray "$TLS_DIR"
-    install -m 640 -o root -g xray "$temp_dir/tls/cert.pem" "$TLS_CERT_FILE"
-    install -m 640 -o root -g xray "$temp_dir/tls/key.pem" "$TLS_KEY_FILE"
-  fi
   if [[ -d $temp_dir/nodes ]]; then
     rm -rf "$NODES_DIR"
     install -d -m 700 "$NODES_DIR"
     cp -a "$temp_dir/nodes/." "$NODES_DIR/"
   fi
-  trap - RETURN
-  rm -rf "$temp_dir"
-}
+)
 
 restore_latest() {
   [[ -d "$BACKUP_DIR" ]] || die "没有可恢复的配置备份。"
   local archive
-  archive=$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'config-*.tar.gz' -print | sort -r | head -n 1)
+  archive=$(list_backups | sed -n '1p')
   [[ -n "$archive" ]] || die "没有可恢复的配置备份。"
   restore_archive "$archive"
-  systemctl restart "$SERVICE_NAME"
+  restart_checked || die "备份已恢复，但服务未通过健康检查，请运行 v2ray log。"
   green "已恢复备份：$(basename "$archive")"
   show_connection
 }
@@ -614,15 +818,35 @@ manual_backup() {
   green "配置已备份：$LAST_BACKUP"
 }
 
+# Observe one stable process for five seconds; a successful systemctl job alone
+# cannot detect a crash immediately after Type=simple has started the process.
+service_healthy() {
+  local initial_pid initial_restarts current_pid current_restarts attempt
+  initial_pid=$(systemctl show --property=MainPID --value "$SERVICE_NAME") || return 1
+  initial_restarts=$(systemctl show --property=NRestarts --value "$SERVICE_NAME") || return 1
+  [[ $initial_pid =~ ^[1-9][0-9]*$ && $initial_restarts =~ ^[0-9]+$ ]] || return 1
+  for ((attempt=0; attempt<5; attempt++)); do
+    sleep 1
+    systemctl is-active --quiet "$SERVICE_NAME" || return 1
+    current_pid=$(systemctl show --property=MainPID --value "$SERVICE_NAME") || return 1
+    current_restarts=$(systemctl show --property=NRestarts --value "$SERVICE_NAME") || return 1
+    [[ $current_pid == "$initial_pid" && $current_restarts == "$initial_restarts" ]] || return 1
+  done
+}
+
+restart_checked() {
+  systemctl restart "$SERVICE_NAME" && service_healthy
+}
+
 restart_or_rollback() {
-  if systemctl restart "$SERVICE_NAME"; then
+  if restart_checked; then
     return 0
   fi
   red "新配置启动失败。"
   if [[ -n ${LAST_BACKUP:-} ]]; then
     yellow "正在恢复上一份配置…"
     restore_archive "$LAST_BACKUP"
-    systemctl restart "$SERVICE_NAME" || die "回滚后服务仍无法启动，请运行 v2ray log。"
+    restart_checked || die "回滚后服务仍无法启动，请运行 v2ray log。"
     die "新配置已回滚，服务已恢复。"
   fi
   die "服务启动失败，请运行 v2ray log 查看原因。"
@@ -644,16 +868,115 @@ server_address() {
   printf '%s' "${addr:-YOUR_SERVER_IP}"
 }
 
-show_connection() {
-  load_state
-  show_connection_loaded
+# The node registry is authoritative after add/modify/disable operations.
+load_connection_state() {
+  local node_file
+  if [[ -d $NODES_DIR ]]; then
+    if [[ -f $NODES_DIR/primary.env ]]; then
+      node_file="$NODES_DIR/primary.env"
+    else
+      for node_file in "$NODES_DIR"/*.env; do
+        [[ -f $node_file ]] && break
+      done
+    fi
+    [[ -f $node_file ]] || { red "没有启用的入站，无法导出链接。" >&2; return 1; }
+    # shellcheck disable=SC1090
+    . "$node_file"
+  else
+    load_state
+  fi
 }
 
-show_connection_loaded() {
-  local address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
+show_connection() (
+  load_connection_state || return 1
+  show_connection_loaded
+)
+
+# Build client transport from the same profile as the server; never export
+# server certificates, private keys or REALITY target settings.
+render_client_config() {
+  render_config /dev/stdout | jq --arg address "$(server_address)" \
+    --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" '
+    .inbounds[0] as $in |
+    $in.settings.clients[0] as $user |
+    ($in.streamSettings | del(.tlsSettings, .realitySettings) |
+      if .security == "reality" then .realitySettings = {
+        serverName: $server, fingerprint: "chrome", password: $public, shortId: $short
+      } elif .security == "tls" then .tlsSettings = {
+        serverName: $server, fingerprint: "chrome"
+      } else . end) as $stream |
+    {
+      log: {loglevel: "warning"},
+      inbounds: [
+        {tag: "socks", listen: "127.0.0.1", port: 10800, protocol: "socks", settings: {auth: "noauth", udp: true}},
+        {tag: "http", listen: "127.0.0.1", port: 10801, protocol: "http", settings: {}}
+      ],
+      outbounds: [{tag: "proxy", protocol: $in.protocol,
+        settings: (if $in.protocol == "trojan" then {
+          servers: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $in.port, password: $user.password}]
+        } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $in.port,
+          users: [($user + (if $in.protocol == "vless" then {encryption: "none"} else {security: "auto"} end))]}]} end),
+        streamSettings: $stream
+      }]
+    }'
+}
+
+export_client() (
+  if [[ -n ${1:-} ]]; then
+    [[ $1 =~ ^[A-Za-z0-9_-]+$ && -f $NODES_DIR/$1.env ]] || { red "找不到启用的入站：$1" >&2; return 1; }
+    # shellcheck disable=SC1090
+    source "$NODES_DIR/$1.env"
+  else
+    load_connection_state || return 1
+  fi
+  show_connection_loaded >/dev/null || return 1
+  render_client_config
+)
+
+connection_matches_config() {
+  local config_file=${1:-$CONFIG_FILE}
+  [[ -r $config_file ]] || return 1
+  render_config /dev/stdout | jq -e --slurpfile live "$config_file" '
+    def signature: {
+      port, protocol, clients: .settings.clients,
+      network: (if .streamSettings.network == "tcp" then "raw" else .streamSettings.network end),
+      security: (.streamSettings.security // "none"),
+      reality: (if .streamSettings.security == "reality" then {
+        key: .streamSettings.realitySettings.privateKey,
+        names: .streamSettings.realitySettings.serverNames,
+        ids: .streamSettings.realitySettings.shortIds
+      } else null end),
+      ws: .streamSettings.wsSettings.path,
+      xhttp: .streamSettings.xhttpSettings.path,
+      grpc: .streamSettings.grpcSettings.serviceName
+    };
+    (.inbounds[0] | signature) as $expected |
+    any($live[0].inbounds[]; signature == $expected)
+  ' >/dev/null
+}
+
+show_connection_loaded() (
+  local address uri_address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
   address=$(server_address)
-  if [[ $address == YOUR_SERVER_IP ]]; then
-    yellow "检测到 Cloudflare/WARP 出口地址，无法自动确定客户端入口。请运行 v2ray change，选择 3，然后填写真实 IP 或域名。"
+  if [[ -z $address || $address == YOUR_SERVER_IP || $address == *[[:space:]/\?#@]* ]]; then
+    red "无法导出链接：客户端入口地址未知或格式无效。请填写服务器真实公网 IP 或直连域名（不要填写 http:// 或端口）。" >&2
+    return 1
+  fi
+  address=${address#[}; address=${address%]}
+  uri_address=$address
+  [[ $address != *:* ]] || uri_address="[$address]"
+  valid_uuid "$UUID" || { red "无法导出链接：UUID 格式无效。" >&2; return 1; }
+  if profile_uses_reality && ! reality_pair_valid; then
+    red "无法导出链接：REALITY 密钥对或 Short ID 无效，请从对应入站菜单修复或重新生成。" >&2
+    return 1
+  fi
+  if profile_uses_tls && ! tls_pair_valid "${TLS_CERT_PATH_OVERRIDE:-$(tls_cert_path)}" "${TLS_KEY_PATH_OVERRIDE:-$(tls_key_path)}"; then
+    red "无法导出链接：TLS 证书无效、过期、域名不符或私钥不匹配。" >&2
+    return 1
+  fi
+  if ! connection_matches_config "${1:-$CONFIG_FILE}"; then
+    red "无法导出链接：入站状态与当前 config.json 不一致。请运行 v2ray doctor，并从入站管理菜单检查对应节点。" >&2
+    return 1
   fi
   encoded_name=$(jq -rn --arg value "$REMARK" '$value|@uri')
   encoded_path=$(jq -rn --arg value "${PATH_VALUE:-}" '$value|@uri')
@@ -661,6 +984,10 @@ show_connection_loaded() {
   protocol=vless
   link=''
   case "$PROFILE" in
+    vless-tls-raw)
+      transport=raw; security=tls; flow=xtls-rprx-vision
+      query="encryption=none&flow=${flow}&security=tls&sni=${SERVER_NAME}&fp=chrome&type=tcp"
+      ;;
     vless-reality-raw)
       transport=raw; security=reality; flow=xtls-rprx-vision
       query="encryption=none&flow=${flow}&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=tcp"
@@ -705,7 +1032,7 @@ show_connection_loaded() {
       link="vmess://$(printf '%s' "$vmess_payload" | base64 -w 0)"
       ;;
   esac
-  if [[ -z $link ]]; then link="${protocol}://${UUID}@${address}:${PORT}?${query}#${encoded_name}"; fi
+  if [[ -z $link ]]; then link="${protocol}://${UUID}@${uri_address}:${PORT}?${query}#${encoded_name}"; fi
   printf '\n使用协议: %s\n' "$display_name"
   printf '%s\n' "-------------- ${display_name} --------------"
   printf '协议 (protocol)       = '; cyan_value "$protocol"; printf '\n'
@@ -726,7 +1053,7 @@ show_connection_loaded() {
   cyan_value "$link"; printf '\n'
   printf '%s\n\n' '---------------------- END ----------------------'
   yellow "请确认云服务商安全组已放行 TCP ${PORT}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
-}
+)
 
 change_config() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
@@ -768,7 +1095,7 @@ change_menu() {
     5)
       read -r -p "新 UUID [回车自动生成]:" value
       UUID=${value:-$("$XRAY_BIN" uuid)}
-      [[ $UUID =~ ^[0-9a-fA-F-]{36}$ ]] || die "UUID 格式无效。"
+      valid_uuid "$UUID" || die "UUID 格式无效。"
       ;;
     6)
       read -r -p "新备注 [${REMARK}]:" value
@@ -795,7 +1122,7 @@ find_free_port() {
   printf '%s' "$candidate"
 }
 
-list_inbounds() {
+list_inbounds() (
   install -d -m 700 "$NODES_DIR"
   local node_file state node_id
   printf '\n%-24s %-9s %-30s %s\n' '入站 ID' '状态' '协议组合' '端口'
@@ -809,7 +1136,7 @@ list_inbounds() {
     printf '%-24s %-9s %-30s %s\n' "$node_id" "$state" "$(profile_name)" "$PORT"
   done
   printf '\n'
-}
+)
 
 add_inbound() {
   [[ -x $XRAY_BIN ]] || die "请先安装 Xray。"
@@ -832,17 +1159,19 @@ add_inbound() {
   show_connection_loaded
 }
 
-show_all_links() {
-  local node_file node_id
+show_all_links() (
+  local node_file node_id failures=0 count=0
   for node_file in "$NODES_DIR"/*.env; do
     [[ -e $node_file ]] || continue
     # shellcheck disable=SC1090
     . "$node_file"
     node_id=$(basename "$node_file" .env)
+    ((count+=1))
     printf '\n================ %s ================\n' "$node_id"
-    show_connection_loaded
+    show_connection_loaded || ((failures+=1))
   done
-}
+  (( count > 0 && failures == 0 ))
+)
 
 select_node_file() {
   local include_disabled=${1:-0} node_id
@@ -927,6 +1256,9 @@ rotate_reality_keys() {
 service_action() {
   local action=$1
   systemctl "$action" "$SERVICE_NAME"
+  if [[ $action == start || $action == restart ]]; then
+    service_healthy || die "服务未通过健康检查，请运行 v2ray log。"
+  fi
   green "已执行：${action}。"
 }
 
@@ -934,7 +1266,7 @@ show_status() { systemctl --no-pager --full status "$SERVICE_NAME" || true; }
 show_logs() { journalctl -u "$SERVICE_NAME" -n 100 --no-pager; }
 
 doctor() {
-  local failures=0
+  local failures=0 port security target node_file node_count=0 handshake
   printf '%s\n' "===== v2ray-manager 诊断 ====="
 
   if [[ -x "$XRAY_BIN" ]]; then green "[通过] Xray Core 可执行文件"; else red "[失败] 缺少 Xray Core"; ((failures+=1)); fi
@@ -949,14 +1281,58 @@ doctor() {
   fi
   if systemctl is-active --quiet "$SERVICE_NAME"; then green "[通过] xray.service 正在运行"; else red "[失败] xray.service 未运行"; ((failures+=1)); fi
 
-  if [[ -r "$STATE_FILE" ]]; then
-    load_state
-    if getent ahosts "$SERVER_NAME" >/dev/null 2>&1; then green "[通过] REALITY 目标域名可解析"; else red "[失败] REALITY 目标域名无法解析"; ((failures+=1)); fi
-    if ss -ltnH | awk -v port=":${PORT}" '$4 ~ (port "$") {found=1} END {exit !found}'; then green "[通过] TCP ${PORT} 正在监听"; else red "[失败] TCP ${PORT} 未监听"; ((failures+=1)); fi
+  if [[ -r $CONFIG_FILE ]]; then
+    while IFS=$'\t' read -r port security target; do
+      if ss -H -lnt "sport = :$port" | grep -q .; then
+        green "[通过] TCP $port 正在监听"
+      else
+        red "[失败] TCP $port 未监听"; ((failures+=1))
+      fi
+      if [[ $security == reality ]]; then
+        if getent ahosts "$target" >/dev/null 2>&1; then
+          green "[通过] TCP $port 的 REALITY 目标可解析"
+        else
+          red "[失败] TCP $port 的 REALITY 目标无法解析"; ((failures+=1)); continue
+        fi
+        if command -v openssl >/dev/null && command -v timeout >/dev/null; then
+          handshake=$(timeout 8 openssl s_client -connect "$target:443" -servername "$target" \
+            -tls1_3 -brief </dev/null 2>&1 || true)
+          if [[ $handshake == *TLSv1.3* ]]; then
+            green "[通过] TCP $port 的 REALITY 目标 TLS 1.3 握手"
+          else
+            red "[失败] TCP $port 的 REALITY 目标 TLS 1.3 握手失败"; ((failures+=1))
+          fi
+        else
+          yellow "[未检查] 缺少 openssl/timeout，无法验证 REALITY 目标握手。"
+        fi
+      fi
+    done < <(jq -r '.inbounds[] | [(.port|tostring), (.streamSettings.security // "none"), (.streamSettings.realitySettings.serverNames[0] // "-")] | @tsv' "$CONFIG_FILE")
   fi
 
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    ((node_count+=1))
+    if (
+      # shellcheck disable=SC1090
+      . "$node_file"
+      show_connection_loaded >/dev/null || exit 1
+      if profile_uses_tls && ! tls_chain_valid "$(tls_cert_path)"; then
+        red "TLS 证书链未通过本机系统 CA 信任校验；检查完整链或客户端自建 CA 配置。" >&2
+        exit 1
+      fi
+    ); then
+      green "[通过] 入站 $(basename "$node_file" .env) 的导出参数与配置一致"
+    else
+      red "[失败] 入站 $(basename "$node_file" .env) 的链接参数或入口地址"; ((failures+=1))
+    fi
+  done
+  if (( node_count == 0 )); then
+    yellow "[未检查] 没有启用的入站状态文件。"
+  fi
+  yellow "本机检查不能验证云安全组、NAT 端口映射或客户端兼容性；请从客户端网络测试节点 TCP 端口。"
+
   if (( failures == 0 )); then
-    green "诊断完成：未发现问题。"
+    green "诊断完成：已执行的本机检查未发现问题。"
     return 0
   fi
   red "诊断完成：发现 ${failures} 项问题。可运行 v2ray log 查看服务日志。"
@@ -971,27 +1347,87 @@ show_info() {
   show_connection
 }
 
-update_core() {
+update_core() (
+  set -Eeuo pipefail
   [[ -x "$XRAY_BIN" && -r "$CONFIG_FILE" ]] || die "尚未安装。"
-  download_core
-  write_service
-  XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$CONFIG_FILE" >/dev/null
-  systemctl restart "$SERVICE_NAME"
-  green "Xray Core 已更新并重启服务。"
+  local transaction changed=0 committed=0 was_active=0
+  install_dependencies
+  install -d -m 700 "$BACKUP_DIR"
+  transaction=$(mktemp -d "$BACKUP_DIR/core-update.XXXXXX")
+  # The EXIT trap covers failed copies and signals as well as failed restarts.
+  trap 'finish_core_update "$?" "$transaction" "$changed" "$committed" "$was_active"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
+  mkdir "$transaction/previous"
+  cp -p "$XRAY_BIN" "$transaction/previous/xray"
+  cp -p "$ASSET_DIR/geoip.dat" "$ASSET_DIR/geosite.dat" "$transaction/previous/"
+  fetch_core "$transaction"
+  XRAY_LOCATION_ASSET="$transaction/core" "$transaction/core/xray" run -test -config "$CONFIG_FILE"
+  changed=1
+  install_core_files "$transaction/core"
+  if (( was_active )); then
+    restart_checked || die "新内核未通过健康检查，正在回退。"
+  fi
+  committed=1
+  green "Xray Core 已更新；原先停止的服务会保持停止。"
   "$XRAY_BIN" version | head -n 1
+)
+
+# Called only by update_core's EXIT trap.
+finish_core_update() {
+  local status=$1 transaction_dir=$2 files_changed=$3 update_committed=$4 service_was_active=$5
+  trap - EXIT INT TERM
+  if (( files_changed && ! update_committed )); then
+    if install_core_files "$transaction_dir/previous" && \
+       { (( ! service_was_active )) || restart_checked; }; then
+      yellow "已恢复升级前的 Xray Core 和 GeoData。"
+    else
+      red "自动回退未完成；旧文件保留在 $transaction_dir/previous，请运行 v2ray log。"
+      exit 1
+    fi
+    status=1
+  fi
+  rm -rf -- "$transaction_dir"
+  exit "$status"
 }
 
-update_manager() {
-  local temporary
+validate_manager() {
+  local script=$1
+  bash -n "$script" &&
+    grep -qx 'readonly APP_NAME="v2ray-manager"' "$script" &&
+    grep -Eq '^readonly MANAGER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$script"
+}
+
+update_manager() (
+  set -Eeuo pipefail
+  local temporary revision url
   temporary=$(mktemp)
-  trap 'rm -f "$temporary"' RETURN
-  green "从本仓库下载管理脚本更新…"
-  curl --fail --show-error --location --retry 3 --output "$temporary" "$MANAGER_URL"
-  bash -n "$temporary" || die "下载的脚本未通过语法检查，未更新。"
-  install -m 755 "$temporary" "$MANAGER_BIN"
-  trap - RETURN
-  rm -f "$temporary"
-  green "管理脚本已更新。重新运行 v2ray 即可使用新版本。"
+  trap 'rm -f -- "$temporary"' EXIT
+  revision=${V2M_MANAGER_REF:-}
+  if [[ -z $revision ]]; then
+    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
+      --max-time 60 "$MANAGER_API" | jq -r '.sha')
+  fi
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || die "管理脚本版本必须是完整的 Git 提交 SHA。"
+  url="${MANAGER_URL%/main/v2ray.sh}/$revision/v2ray.sh"
+  green "下载管理脚本提交：$revision"
+  curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 120 \
+    --output "$temporary" "$url"
+  validate_manager "$temporary" || die "下载的管理脚本未通过语法或项目标识检查，未更新。"
+  [[ -f $MANAGER_BIN ]] || die "找不到当前管理脚本。"
+  install -d -m 700 "$BACKUP_DIR"
+  atomic_install "$MANAGER_BIN" "$BACKUP_DIR/manager.previous.sh" 700
+  atomic_install "$temporary" "$MANAGER_BIN" 755
+  green "管理脚本已更新。旧版本：$BACKUP_DIR/manager.previous.sh；可运行 v2ray rollback.sh 恢复。"
+)
+
+rollback_manager() {
+  local previous="$BACKUP_DIR/manager.previous.sh"
+  [[ -r $previous ]] || die "没有可恢复的管理脚本。"
+  validate_manager "$previous" || die "备份管理脚本未通过校验。"
+  atomic_install "$previous" "$MANAGER_BIN" 755 || die "管理脚本恢复失败。"
+  green "已恢复上一版管理脚本，重新运行 v2ray 即可。"
 }
 
 uninstall_xray() {
@@ -1021,11 +1457,11 @@ runtime_menu() {
 maintenance_menu() {
   printf '\n%s\n' '----- 维护工具 -----'
   printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
-    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '0) 返回'
-  read -r -p '请选择 [0-6]:' choice
+    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '7) 恢复上一版管理脚本' '0) 返回'
+  read -r -p '请选择 [0-7]:' choice
   case "$choice" in
     1) update_core ;; 2) update_manager ;; 3) doctor || true ;; 4) manual_backup ;;
-    5) restore_latest ;; 6) rotate_reality_keys ;;
+    5) restore_latest ;; 6) rotate_reality_keys ;; 7) rollback_manager ;;
     0) return ;; *) yellow "无效选择。" ;;
   esac
 }
@@ -1086,11 +1522,14 @@ main() {
     info) show_info ;;
     config|change) change_menu ;;
     link) show_connection ;;
+    client) export_client "${2:-}" ;;
+    cert-refresh) refresh_tls_certificates "${2:-}" ;;
     status) show_status ;;
     start|stop|restart) service_action "$1" ;;
     log) show_logs ;;
     update) update_core ;;
     update.sh) update_manager ;;
+    rollback.sh) rollback_manager ;;
     rotate) rotate_reality_keys ;;
     backup) manual_backup ;;
     restore) restore_latest ;;
@@ -1098,7 +1537,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|status|start|stop|restart|log|update|update.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

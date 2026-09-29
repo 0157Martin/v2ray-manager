@@ -9,7 +9,7 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repo_dir/v2ray.sh"
 
 temporary_dir=$(mktemp -d)
-trap 'rm -rf "$temporary_dir"' EXIT
+trap 'if [[ ${KEEP_TEST_ARTIFACTS:-0} == 1 ]]; then printf "Test fixtures: %s\n" "$temporary_dir"; else rm -rf "$temporary_dir"; fi' EXIT
 api_headers=(-H 'Accept: application/vnd.github+json')
 if [[ -n ${GITHUB_TOKEN:-} ]]; then
   api_headers+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
@@ -18,26 +18,39 @@ fi
 tag=$(curl --fail --silent --show-error --location "${api_headers[@]}" \
   https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
 [[ -n "$tag" && "$tag" != null ]]
-url="https://github.com/XTLS/Xray-core/releases/download/${tag}/Xray-linux-64.zip"
+case "$(uname -s)" in
+  MINGW*|MSYS*)
+    asset=Xray-windows-64.zip
+    core_name=xray.exe
+    # Native Windows Xray needs native paths inside the generated JSON.
+    temporary_dir=$(cygpath -m "$temporary_dir")
+    ;;
+  Linux*) asset=Xray-linux-64.zip; core_name=xray ;;
+  *) printf 'Unsupported test host: %s\n' "$(uname -s)" >&2; exit 1 ;;
+esac
+url="https://github.com/XTLS/Xray-core/releases/download/${tag}/${asset}"
 curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip" "$url"
 curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip.dgst" "${url}.dgst"
-expected=$(awk -F '= ' '/256=/ {print $2; exit}' "$temporary_dir/xray.zip.dgst")
+expected=$(awk -F '= ' '/256=/ {gsub(/\r/, "", $2); print $2; exit}' "$temporary_dir/xray.zip.dgst")
 actual=$(sha256sum "$temporary_dir/xray.zip" | awk '{print $1}')
 [[ -n "$expected" && "${expected,,}" == "$actual" ]]
 unzip -q "$temporary_dir/xray.zip" -d "$temporary_dir/core"
 
-parse_reality_credentials "$("$temporary_dir/core/xray" x25519)"
+core_binary="$temporary_dir/core/$core_name"
+parse_reality_credentials "$("$core_binary" x25519)"
 export PORT=443
 export UUID
-UUID=$("$temporary_dir/core/xray" uuid)
-export SERVER_NAME=www.microsoft.com
+UUID=$("$core_binary" uuid)
+export SERVER_NAME=example.com
+export ADDRESS=127.0.0.1
+export REMARK='test node & 中文'
 export SHORT_ID=0123456789abcdef
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=example.com' \
+MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=example.com' \
   -keyout "$temporary_dir/key.pem" -out "$temporary_dir/cert.pem" >/dev/null 2>&1
 export TLS_CERT_PATH_OVERRIDE="$temporary_dir/cert.pem"
 export TLS_KEY_PATH_OVERRIDE="$temporary_dir/key.pem"
 
-for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-xhttp vless-tls-ws vless-tls-grpc trojan-reality-raw vmess-tcp vmess-tls-ws vmess-tls-grpc trojan-tls-ws; do
+for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-raw vless-tls-xhttp vless-tls-ws vless-tls-grpc trojan-reality-raw vmess-tcp vmess-tls-ws vmess-tls-grpc trojan-tls-ws; do
   export PROFILE
   case "$PROFILE" in
     *xhttp*|*ws) export PATH_VALUE=/test-path ;;
@@ -45,8 +58,16 @@ for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tl
     *) export PATH_VALUE= ;;
   esac
   render_config "$temporary_dir/config.json"
-  XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/config.json"
+  XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/config.json"
+  cp "$temporary_dir/config.json" "$temporary_dir/$PROFILE.json"
+  show_connection_loaded "$temporary_dir/config.json" > "$temporary_dir/$PROFILE.link"
+  render_client_config > "$temporary_dir/$PROFILE.client.json"
+  XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/$PROFILE.client.json"
 done
+
+roundtrip_args=()
+if [[ ${CONFIGURATION_ONLY:-0} == 1 ]]; then roundtrip_args+=(--configuration-only); fi
+"${PYTHON:-python3}" "$repo_dir/tests/link-roundtrip.py" "$temporary_dir" "$core_binary" "${roundtrip_args[@]}"
 
 # Validate that independently generated inbounds can run together in one Xray process.
 multi_files=()
@@ -55,7 +76,7 @@ for PROFILE in vless-reality-raw vless-reality-xhttp trojan-reality-raw; do
   export PROFILE
   export PORT=$((24443 + index))
   export UUID
-  UUID=$("$temporary_dir/core/xray" uuid)
+  UUID=$("$core_binary" uuid)
   export SHORT_ID
   SHORT_ID=$(printf '%016x' "$((index + 1))")
   if [[ $PROFILE == vless-reality-xhttp ]]; then
@@ -70,6 +91,6 @@ for PROFILE in vless-reality-raw vless-reality-xhttp trojan-reality-raw; do
   ((index+=1))
 done
 jq -s '{log:{loglevel:"warning"},inbounds:map(.inbounds[0]),outbounds:.[0].outbounds}' "${multi_files[@]}" > "$temporary_dir/multi.json"
-XRAY_LOCATION_ASSET="$temporary_dir/core" "$temporary_dir/core/xray" run -test -config "$temporary_dir/multi.json"
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/multi.json"
 
 printf 'Xray %s accepted all protocol profiles and the combined multi-inbound configuration.\n' "$tag"

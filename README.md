@@ -17,8 +17,9 @@
 9. VMess + WebSocket + TLS（旧版兼容）
 10. VMess + gRPC + TLS（旧版兼容）
 11. Trojan + WebSocket + TLS
+12. VLESS + TLS + XTLS Vision + RAW（官方教程组合）
 
-TLS 组合不会自动修改 DNS、Caddy 或 Nginx，需提供现有 PEM 证书和私钥路径。
+TLS 组合不会自动修改 DNS、Caddy 或 Nginx。可通过环境变量提供现有 PEM 证书与私钥；未提供时，脚本先匹配已有证书，找不到才使用 Certbot 申请。自动申请需要你拥有的域名指向本机、公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认使用 standalone，要求本机 80 端口空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html`，由该网站响应 HTTP challenge。证书按域名保存，Certbot 续期后通过部署钩子校验、同步，部署失败回滚。
 
 ## 当前技术方案
 
@@ -65,13 +66,16 @@ v2ray info             # 查看版本和连接信息
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
 v2ray link             # 重新显示 VLESS 导入链接
+v2ray client           # 输出默认启用入站的 Xray 客户端 JSON
+v2ray client primary   # 按入站 ID 导出；ID 见 v2ray inbounds
 v2ray status           # 查看服务状态
 v2ray start
 v2ray stop
 v2ray restart
 v2ray log              # 查看最近 100 条日志
 v2ray update           # 更新 Xray Core，保留配置
-v2ray update.sh        # 更新管理脚本
+    v2ray update.sh        # 更新管理脚本
+    v2ray rollback.sh      # 恢复上一次更新前的管理脚本
 v2ray rotate           # 轮换 REALITY 密钥和 Short ID
 v2ray backup           # 创建配置备份
 v2ray restore          # 恢复最近一份备份
@@ -80,6 +84,25 @@ v2ray uninstall
 ```
 
 执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
+
+## 按官方教程部署与导出
+
+4.3.0 依据 [服务器篇](https://xtls.github.io/document/level-0/ch07-xray-server.html)、[证书篇](https://xtls.github.io/document/level-0/ch06-certificates.html) 和 [客户端篇](https://xtls.github.io/document/level-0/ch08-xray-clients.html) 增加 TLS Vision、webroot 申请和原生客户端配置导出。字段使用实际稳定版 Xray 验证；教程中的网站回落、地区分流、SSH 与内核设置需按服务器用途配置，本脚本不自动照搬。
+
+选择菜单协议 12，或使用 `V2M_PROFILE=vless-tls-raw`，即可部署 TLS + Vision。该组合需要自有域名及有效证书，直接连接 Xray 的 TLS 端口，不能把它当成 WebSocket 节点放到普通 HTTP CDN 后面。
+
+以 root 在服务器上导出：
+
+```bash
+umask 077
+v2ray client primary > client.json
+```
+
+将 `client.json` 安全复制到客户端电脑，用 Xray Core 运行 `xray run -config client.json`，应用连接本机 SOCKS `127.0.0.1:10800` 或 HTTP `127.0.0.1:10801`。此 JSON 供 Xray Core 使用，GUI 客户端是否支持完整 JSON 导入取决于其功能。导出前核对启用入站与运行配置，自动填入 UUID、SNI、流控及传输参数；不导出服务端私钥。TLS 保持正常 CA 校验，自建 CA 需另外配置客户端信任。
+
+Certbot 续期钩子执行 `v2ray cert-refresh "$RENEWED_LINEAGE"`：仅更新登记了该来源的域名，先验证有效期、域名、私钥和 CA 链，再部署并检查 Xray 配置；运行中的服务重启失败会恢复旧证书，停止的服务保持停止。失败时保留备份目录并报错。
+
+使用 acme.sh 时，按官方教程先用 `--install-cert` 将证书部署到稳定路径，再以 `V2M_CERT_FILE` / `V2M_KEY_FILE` 导入；脚本不再自动读取 `.acme.sh` 内部工作文件。外部证书的后续同步需由相应 ACME 客户端配置部署钩子，Certbot 钩子不会自动接管它。
 
 ## 非交互安装
 
@@ -97,7 +120,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 `V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，必须通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名；脚本检测到 Cloudflare/WARP 出口时不会把该出口 IP 写入链接。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
 
-`V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合还需 `V2M_CERT_FILE` 和 `V2M_KEY_FILE`。
+`V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合须设置 `V2M_SERVER_NAME` 为你拥有的域名，可用 `V2M_CERT_FILE` 和 `V2M_KEY_FILE` 指定证书，或让脚本自动查找/申请。`V2M_ACME_EMAIL` 可选，用于 Certbot 账户邮箱。
+
+## 更新与回退
+
+`v2ray update` 在临时目录下载并校验新内核和 GeoData，用新内核检查当前配置后才替换文件。运行中的服务重启后会连续检查 5 秒；文件替换或健康检查失败时自动恢复旧内核与 GeoData。原先停止的服务保持停止。自动回退失败时，会输出保留的恢复文件目录。该检查用于发现启动故障，不代表已验证客户端到服务器的端到端连通性。
+
+`v2ray update.sh` 和安装器默认通过 GitHub API 解析 `main` 的完整提交 SHA，再从该固定提交下载脚本，避免一次操作中版本漂移。可设置 `V2M_MANAGER_REF` 为完整的 40 位提交 SHA，以部署指定版本或绕过提交查询的 API 限流。下载通过 HTTPS，并检查 Bash 语法与项目标识；这不是独立签名验证。
+
+管理脚本更新前会保存 `/var/backups/v2ray-manager/manager.previous.sh`，可用 `v2ray rollback.sh` 恢复。若新管理命令本身无法运行，可用 root 执行 `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`。重新运行安装不会升级已存在的内核；请使用独立的 `v2ray update` 命令。
 
 ## 安装提示
 
@@ -106,13 +137,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 从管理菜单开始安装时需要选择：
 
 1. 监听端口，默认 `443`。
-2. 客户端 UUID，可使用自动生成值。
+2. 客户端 UUID 自动生成或沿用，脚本校验格式，无需手动填写。
 3. REALITY 目标域名，默认 `www.microsoft.com`。应选择服务器可以稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
 4. 节点备注。
 
 安装或新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
 
 云服务商安全组仍需在控制台手动放行所选 TCP 端口——它属于云账户权限，脚本没有也不应保存该账户的 API 凭据。本脚本不会自动修改 DNS 或系统代理。
+
+## 导入后延迟为 -1 / 无法连接
+
+`-1` 表示客户端测试没有成功，单凭这个结果不能区分入口地址、端口阻断、协议兼容或握手问题。先运行 `v2ray version`、`v2ray doctor` 和 `v2ray log`，确认服务器确实已部署修复后的脚本。诊断会检查全部入站端口、REALITY 目标握手和导出参数，但无法从本机证明公网端口可达。
+
+- 修改入站后，用 `v2ray links` 重新导出并重新导入客户端；4.2.1 起，单条链接也读取最新的启用入站状态。
+- 地址必须是客户端能访问的服务器公网 IP 或直连域名。NAT/WARP 的出口 IP 不一定是入口地址；NAT 环境还需核对外部端口映射。
+- `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**，自动安装的默认端口从 `24443` 起。
+- 从客户端网络检查 TCP 可达性，例如 Windows PowerShell 的 `Test-NetConnection <服务器地址> -Port <节点端口>`。TCP 成功仍不代表 REALITY/TLS 握手成功。
+- 核对客户端及内核是否支持所选协议组合。RAW 服务端在分享链接中使用 `type=tcp`，这是分享格式的兼容写法，无须手动改成 `raw`。
+
+导出器遇到未知地址或入站状态与配置不一致时会报错，避免生成可导入却注定失败的链接。排查时不要公开完整链接、UUID、私钥或未脱敏日志。
+
+UUID 默认自动生成并写入服务器配置和链接；TLS 模式自动查找/申请并导入证书，校验域名、有效期和私钥匹配。导出前会再次校验证书或 REALITY 密钥对。REALITY 模式不需要申请普通 TLS 证书；普通 TLS 模式的客户端仍须信任证书颁发机构，脚本不会通过关闭证书验证来绕过失败。
 
 ## 从 1.x 升级
 
@@ -150,4 +195,4 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 └── .github/
 ```
 
-每次推送都会在 Ubuntu 24.04 上运行 Bash 语法检查、ShellCheck、单元测试，并下载 Xray 最新稳定版验证生成的 VLESS REALITY 配置。
+每次推送都会在 Ubuntu 24.04 上运行逐文件 Bash 语法检查、ShellCheck、单元测试、升级/恢复故障模拟和安装引导测试，并下载 Xray 最新稳定版验证全部协议组合及多入站配置。故障模拟不操作真实 systemd 或本机安装目录；真实服务器安装、证书申请和端到端连接仍需要部署环境验证。

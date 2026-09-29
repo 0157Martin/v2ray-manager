@@ -22,3 +22,19 @@ Configuration changes follow this sequence:
 
 Core downloads follow Xray's stable GitHub Release endpoint. Both the archive and its `.dgst`
 file are downloaded, and the SHA-256 digest is verified before extraction.
+
+Core updates use a separate staging directory and validate the existing configuration with the
+candidate binary and candidate GeoData. The current binary and data are copied before replacement;
+an EXIT trap restores them if replacement or the five-second service health check fails. Each file
+replacement uses a same-directory rename. The set of three files is not globally atomic, so the
+transaction backup covers partial replacement. Failed rollback material is retained for recovery.
+Core-only updates preserve the unit file and a deliberately stopped service remains stopped.
+
+Manager updates resolve a Git commit before download, validate syntax and project markers, save
+the installed manager, and replace it through a same-directory rename. The bootstrapper uses the
+same revision selection policy. These checks rely on GitHub over HTTPS and do not verify a separate
+release signature.
+
+Configuration recovery validates against staged archived TLS files before writing live files.
+Both legacy shared certificates and per-domain certificate directories are supported. Backup
+filenames are unique; retention and newest-backup selection use modification time.
