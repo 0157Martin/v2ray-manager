@@ -889,7 +889,7 @@ load_connection_state() {
 
 show_connection() (
   load_connection_state || return 1
-  show_connection_loaded
+  show_connection_loaded "$CONFIG_FILE"
 )
 
 # Build client transport from the same profile as the server; never export
@@ -929,7 +929,7 @@ export_client() (
   else
     load_connection_state || return 1
   fi
-  show_connection_loaded >/dev/null || return 1
+  show_connection_loaded "$CONFIG_FILE" >/dev/null || return 1
   render_client_config
 )
 
@@ -1156,7 +1156,7 @@ add_inbound() {
   restart_or_rollback
   green "已添加入站：$node_id"
   open_enabled_inbound_ports
-  show_connection_loaded
+  show_connection_loaded "$CONFIG_FILE"
 }
 
 show_all_links() (
@@ -1168,7 +1168,7 @@ show_all_links() (
     node_id=$(basename "$node_file" .env)
     ((count+=1))
     printf '\n================ %s ================\n' "$node_id"
-    show_connection_loaded || ((failures+=1))
+    show_connection_loaded "$CONFIG_FILE" || ((failures+=1))
   done
   (( count > 0 && failures == 0 ))
 )
@@ -1208,7 +1208,7 @@ modify_inbound() {
   restart_or_rollback
   green "入站已更新。"
   open_enabled_inbound_ports
-  show_connection_loaded
+  show_connection_loaded "$CONFIG_FILE"
 }
 
 enable_inbound() {
@@ -1315,7 +1315,7 @@ doctor() {
     if (
       # shellcheck disable=SC1090
       . "$node_file"
-      show_connection_loaded >/dev/null || exit 1
+      show_connection_loaded "$CONFIG_FILE" >/dev/null || exit 1
       if profile_uses_tls && ! tls_chain_valid "$(tls_cert_path)"; then
         red "TLS 证书链未通过本机系统 CA 信任校验；检查完整链或客户端自建 CA 配置。" >&2
         exit 1
