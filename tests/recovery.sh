@@ -368,6 +368,23 @@ CORE
         [[ $(tr ',' '\n' <<<"$EXTRA_UUIDS" | wc -l) == 2 ]] || fail 'sub-link credentials not persisted'
         jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'three users not applied to Xray config'
         [[ $(grep -c 'vless://' "$sandbox/output") == 3 ]] || fail 'three sub-links not exported'
+        old_primary=$UUID
+        old_second=$(cut -d, -f1 <<<"$EXTRA_UUIDS")
+        add_sub_links primary 2 > "$sandbox/add-output"
+        jq -e '.inbounds[0].settings.clients | length == 5' "$CONFIG_FILE" >/dev/null || fail 'sub-link add did not preserve and append users'
+        replace_sub_link primary 2 > "$sandbox/replace-output"
+        ! jq -e --arg old "$old_second" '.inbounds[0].settings.clients[] | select(.id == $old)' "$CONFIG_FILE" >/dev/null || fail 'replaced credential remained active'
+        delete_sub_link primary 1 > "$sandbox/delete-output"
+        jq -e '.inbounds[0].settings.clients | length == 4' "$CONFIG_FILE" >/dev/null || fail 'sub-link delete removed wrong number of users'
+        ! jq -e --arg old "$old_primary" '.inbounds[0].settings.clients[] | select(.id == $old)' "$CONFIG_FILE" >/dev/null || fail 'deleted primary credential remained active'
+        # shellcheck disable=SC1090,SC1091
+        . "$NODES_DIR/primary.env"
+        [[ $UUID != "$old_primary" ]] || fail 'deleting first credential did not promote the next user'
+        list_sub_links primary > "$sandbox/list-output"
+        grep -q '链接总数: 4' "$sandbox/list-output" || fail 'sub-link detail did not show link count'
+        list_inbounds > "$sandbox/inbounds-output"
+        grep -q 'REALITY 直连' "$sandbox/inbounds-output" || fail 'inbound list did not show protocol group'
+        grep -Eq 'primary +启用 +VLESS-REALITY-Vision-RAW +4 +24443' "$sandbox/inbounds-output" || fail 'inbound list did not show link count'
         ;;
     esac
     ;;

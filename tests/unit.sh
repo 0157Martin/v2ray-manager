@@ -82,6 +82,7 @@ export EXTRA_UUIDS=''
 
 PROFILE=vless-reality-xhttp
 PATH_VALUE=/test-path
+[[ $(profile_group) == reality ]] || fail 'REALITY protocol group mismatch'
 render_config "$temporary"
 jq -e '.inbounds[0].streamSettings.network == "xhttp"' "$temporary" >/dev/null || fail "xhttp network mismatch"
 jq -e '.inbounds[0].streamSettings.xhttpSettings.path == "/test-path"' "$temporary" >/dev/null || fail "xhttp path mismatch"
@@ -104,6 +105,7 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tls_test_dir
 printf '%s\n' 'TLS certificate tests passed.'
 
 PROFILE=vless-tls-ws
+[[ $(profile_group) == http-tls ]] || fail 'TLS HTTP protocol group mismatch'
 PORT=24443
 PATH_VALUE=/cdn-test
 ADDRESS=example.com

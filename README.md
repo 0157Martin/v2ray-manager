@@ -118,7 +118,14 @@ v2ray                  # 打开菜单
 v2ray add              # 添加独立入站
 v2ray inbounds         # 查看入站列表
 v2ray links            # 输出全部启用入站链接
-v2ray users primary 5  # 为指定入站设置 1-10 条可同时使用的独立子链接
+v2ray users            # 打开子链接用户管理菜单
+v2ray users list       # 按协议分组查看入站及链接数量
+v2ray users list primary          # 查看指定入站的链接用户
+v2ray users add primary 2         # 新增两条链接，保留现有凭据
+v2ray users delete primary 3      # 删除第 3 条链接
+v2ray users replace primary 2     # 重新生成第 2 条链接的凭据
+v2ray users show primary          # 输出该入站的全部分享链接
+v2ray users set primary 5         # 兼容模式：直接设置链接总数
 v2ray firewall         # 放行已启用入站的本机 UFW/firewalld TCP 端口
 v2ray info             # 查看版本和连接信息
 v2ray version          # 查看管理脚本版本
@@ -150,11 +157,16 @@ v2ray uninstall
 Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不会自动输出凭据；需要分享链接
 或客户端 JSON 时，进入“连接与导出”并选择对应入站。子菜单中选择 `0` 返回主菜单。
 
-“连接与导出 → 设置指定协议的子链接数量”可以为一个启用入站生成 `1–10` 个独立凭据。
+“连接与导出 → 子链接用户管理”提供查看、新增、删除、重新生成和输出链接。入站列表按
+REALITY 直连、TLS HTTP/CDN、其他直连与旧版兼容分组，并直接显示每个入站的链接数量。
+用户列表通过序号和脱敏凭据标识区分链接，避免普通查看操作打印完整 UUID。
+
 这些链接共享协议、域名、端口、传输路径和 TLS/REALITY 参数，但 UUID（Trojan 中作为
-密码）不同，可以同时使用。增加数量时保留已有凭据并生成缺少的部分；减少数量时裁剪末尾
-凭据，被裁剪的链接立即失效。`v2ray client <入站ID>` 只导出第一条凭据；使用
-`v2ray link <入站ID>` 查看该入站的全部分享链接。
+密码）不同，可以同时使用。新增操作保留全部已有凭据；删除只移除指定序号；重新生成只让
+指定序号的旧链接失效。删除后序号会重新连续排列。每个入站至少保留 1 条、最多 10 条链接。
+`v2ray client <入站ID>` 只导出第一条凭据；使用 `v2ray users show <入站ID>` 或
+`v2ray link <入站ID>` 查看该入站的全部分享链接。旧命令 `v2ray users <入站ID> <数量>`
+继续可用，等同于 `v2ray users set <入站ID> <数量>`。
 
 “维护与诊断 → 路由、丢包与延迟测试”使用 `ping` 和 10 轮 MTR 报告测试 VPS 到指定客户端
 公网 IP 或域名的回程方向，并显示逐跳丢包和平均延迟。首次使用会从系统仓库安装
