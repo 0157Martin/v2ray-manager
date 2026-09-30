@@ -6,18 +6,23 @@
 
 ## 协议组合
 
-1. VLESS + REALITY + XTLS Vision + RAW（默认推荐）
-2. VLESS + REALITY + XHTTP
-3. VLESS + REALITY + gRPC（兼容用途）
-4. VLESS + TLS + XHTTP（需自有域名和证书）
-5. VLESS + TLS + WebSocket（需自有域名和证书）
-6. VLESS + TLS + gRPC（需自有域名和证书）
-7. Trojan + REALITY + RAW
+1. VLESS + REALITY + XTLS Vision + RAW（默认推荐，直连或 Cloudflare 灰云）
+2. VLESS + REALITY + XHTTP（REALITY 握手仍须直达 Xray，不能走普通橙云）
+3. VLESS + REALITY + gRPC（REALITY 握手仍须直达 Xray，不能走普通橙云）
+4. VLESS + TLS + XHTTP（需自有域名和证书，可用于 Caddy/Cloudflare 橙云）
+5. VLESS + TLS + WebSocket（需自有域名和证书，可用于 Caddy/Cloudflare 橙云）
+6. VLESS + TLS + gRPC（需自有域名和证书，可用于兼容的 HTTP/2 反向代理）
+7. Trojan + REALITY + RAW（直连或 Cloudflare 灰云）
 8. VMess + TCP（旧版兼容，无 TLS/REALITY）
 9. VMess + WebSocket + TLS（旧版兼容）
 10. VMess + gRPC + TLS（旧版兼容）
 11. Trojan + WebSocket + TLS
-12. VLESS + TLS + XTLS Vision + RAW（官方教程组合）
+12. VLESS + TLS + XTLS Vision + RAW（官方教程组合，直连；RAW 不能走普通橙云）
+
+Cloudflare 仅作为 DNS 托管且关闭代理（灰云）时，域名会直接解析到 VPS，REALITY 可以正常
+使用。开启普通代理（橙云）后，Cloudflare 会终止客户端 TLS，因此所有 REALITY 组合都不能
+使用；菜单中的 XHTTP 或 gRPC 只描述传输层，不会改变这一限制。需要橙云、CDN 或优选 IP
+时请选择普通 TLS 的 XHTTP/WebSocket/gRPC 组合，并配置相应的 Caddy 反向代理。
 
 TLS 组合不会自动修改 DNS、Caddy 或 Nginx。可通过环境变量提供现有 PEM 证书与私钥；未提供时，脚本先匹配已有证书，找不到才使用 Certbot 申请。自动申请需要你拥有的域名指向本机、公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认使用 standalone，要求本机 80 端口空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html`，由该网站响应 HTTP challenge。证书按域名保存，Certbot 续期后通过部署钩子校验、同步，部署失败回滚。
 

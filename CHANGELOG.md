@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.8.1
+
+- 协议选择菜单按“直连/灰云”“HTTP/CDN 橙云”“旧版兼容”重新分组，同时保持原编号。
+- 所有 REALITY 组合明确标注必须直达 Xray、不能经过 Cloudflare 普通橙云；XHTTP/gRPC
+  传输名称不再被描述成自动兼容 CDN。
+- 普通 TLS XHTTP/WebSocket/gRPC 明确标注为 Caddy/CDN 方案，RAW 标注为直连方案。
+
 ## 4.8.0
 
 - 维护菜单新增路由与延迟测试，使用 Ping 和 10 轮 MTR 显示 VPS 到目标的回程路径、逐跳

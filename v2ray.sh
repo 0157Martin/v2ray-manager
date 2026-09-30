@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.8.0"
+readonly MANAGER_VERSION="4.8.1"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -189,19 +189,22 @@ profile_name() {
 choose_profile() {
   local choice default_path
   printf '%s\n' \
-    '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书]' \
-    '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输、内置多路复用]' \
-    '3) VLESS-REALITY-gRPC        [HTTP/2 兼容，新部署更建议 XHTTP]' \
-    '4) VLESS-XHTTP-TLS           [自动匹配/申请证书，适合 HTTP/CDN 链路]' \
-    '5) VLESS-WebSocket-TLS       [自动匹配/申请证书，客户端/CDN 兼容广]' \
-    '6) VLESS-gRPC-TLS            [自动匹配/申请证书，适合现有 HTTP/2 反代]' \
-    '7) Trojan-REALITY-RAW        [Trojan 客户端兼容，无需自有证书]' \
+    '--- 直连 / Cloudflare 灰云 DNS（不能经过普通橙云）---' \
+    '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书、直连]' \
+    '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]' \
+    '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]' \
+    '--- HTTP/CDN / Cloudflare 橙云（需要自有域名）---' \
+    '4) VLESS-XHTTP-TLS           [优先推荐：适合 Caddy/CDN]' \
+    '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]' \
+    '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]' \
+    '--- 其他直连协议 ---' \
+    '7) Trojan-REALITY-RAW        [Trojan 兼容；REALITY 仍须直连]' \
     '--- 旧版兼容（非默认推荐）---' \
-    '8) VMess-TCP                 [无 TLS/REALITY，仅兼容或可信链路]' \
-    '9) VMess-WebSocket-TLS       [老客户端和 CDN 兼容广]' \
-    '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反代]' \
-    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS 兼容]' \
-    '12) VLESS-TLS-Vision-RAW      [官方教程组合，需要自有域名及证书]'
+    '8) VMess-TCP                 [无 TLS，仅限兼容或可信链路]' \
+    '9) VMess-WebSocket-TLS       [老客户端及 CDN 兼容]' \
+    '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反向代理]' \
+    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]' \
+    '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
   read -r -p '请选择协议组合 [1-12]:' choice
   case "$choice" in
     1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
