@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.6.1"
+readonly MANAGER_VERSION="4.7.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -1268,9 +1268,50 @@ delete_inbound() {
 }
 
 manage_inbounds_menu() {
-  printf '%s\n' '1) 查看入站列表' '2) 修改入站' '3) 停用入站' '4) 启用入站' '5) 删除入站' '6) 查看全部链接' '0) 返回'
-  read -r -p '请选择 [0-6]:' choice
-  case "$choice" in 1) list_inbounds ;; 2) modify_inbound ;; 3) disable_inbound ;; 4) enable_inbound ;; 5) delete_inbound ;; 6) show_all_links ;; 0) return ;; *) yellow "无效选择。" ;; esac
+  local choice
+  while :; do
+    printf '\n%s\n' '----- 入站管理 -----'
+    printf '%s\n' '1) 查看入站列表' '2) 添加新入站' '3) 修改入站' '4) 停用入站' \
+      '5) 启用入站' '6) 删除入站' '0) 返回主菜单'
+    read -r -p '请选择 [0-6]:' choice
+    case "$choice" in
+      1) list_inbounds; pause ;; 2) add_inbound; pause ;; 3) modify_inbound; pause ;;
+      4) disable_inbound; pause ;; 5) enable_inbound; pause ;; 6) delete_inbound; pause ;;
+      0) return ;; *) yellow "无效选择。"; pause ;;
+    esac
+  done
+}
+
+export_menu() {
+  local choice node_id cdn_address
+  while :; do
+    printf '\n%s\n' '----- 连接与导出 -----'
+    printf '%s\n' '1) 查看入站列表' '2) 输出全部启用链接' '3) 输出指定入站链接' \
+      '4) 输出 Cloudflare/CDN 优选地址链接' '5) 导出 Xray 客户端 JSON' '0) 返回主菜单'
+    read -r -p '请选择 [0-5]:' choice
+    case "$choice" in
+      1) list_inbounds; pause ;;
+      2) show_all_links; pause ;;
+      3)
+        list_inbounds
+        read -r -p '请输入启用的入站 ID：' node_id
+        show_connection "$node_id"; pause
+        ;;
+      4)
+        list_inbounds
+        read -r -p '请输入 TLS XHTTP/WS 入站 ID：' node_id
+        read -r -p '请输入 Cloudflare 优选 IP 或 CDN 域名：' cdn_address
+        show_connection "$node_id" "$cdn_address"; pause
+        ;;
+      5)
+        list_inbounds
+        read -r -p '请输入启用的入站 ID（回车使用默认入站）：' node_id
+        export_client "$node_id"; pause
+        ;;
+      0) return ;;
+      *) yellow "无效选择。"; pause ;;
+    esac
+  done
 }
 
 rotate_reality_keys() {
@@ -1511,29 +1552,31 @@ configure_caddy_site() {
 
 caddy_menu() {
   local choice domain upstream path
-  printf '\n%s\n' '----- Caddy 网站管理 -----'
-  printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-    '4) 创建 Xray XHTTP/WS 路径反代' '5) 查看 Caddy 状态' '6) 查看 Caddy 日志' '0) 返回'
-  read -r -p '请选择 [0-6]:' choice
-  case "$choice" in
-    1) caddy_ports_available && install_caddy && green "Caddy 已安装。" ;;
-    2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain" ;;
-    3)
-      read -r -p '网站域名：' domain
-      read -r -p '本机后端 [127.0.0.1:8080]：' upstream
-      configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}"
-      ;;
-    4)
-      read -r -p 'TLS 域名：' domain
-      read -r -p 'Xray 本机 TLS 后端 [127.0.0.1:24443]：' upstream
-      read -r -p 'XHTTP/WS 路径（例如 /a1b2c3）：' path
-      configure_caddy_site xray "$domain" "${upstream:-127.0.0.1:24443}" "$path"
-      ;;
-    5) systemctl --no-pager --full status caddy || true ;;
-    6) journalctl -u caddy -n 100 --no-pager ;;
-    0) return ;;
-    *) yellow "无效选择。" ;;
-  esac
+  while :; do
+    printf '\n%s\n' '----- Caddy 网站管理 -----'
+    printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
+      '4) 创建 Xray XHTTP/WS 路径反代' '5) 查看 Caddy 状态' '6) 查看 Caddy 日志' '0) 返回主菜单'
+    read -r -p '请选择 [0-6]:' choice
+    case "$choice" in
+      1) caddy_ports_available && install_caddy && green "Caddy 已安装。"; pause ;;
+      2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain"; pause ;;
+      3)
+        read -r -p '网站域名：' domain
+        read -r -p '本机后端 [127.0.0.1:8080]：' upstream
+        configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}"; pause
+        ;;
+      4)
+        read -r -p 'TLS 域名：' domain
+        read -r -p 'Xray 本机 TLS 后端 [127.0.0.1:24443]：' upstream
+        read -r -p 'XHTTP/WS 路径（例如 /a1b2c3）：' path
+        configure_caddy_site xray "$domain" "${upstream:-127.0.0.1:24443}" "$path"; pause
+        ;;
+      5) systemctl --no-pager --full status caddy || true; pause ;;
+      6) journalctl -u caddy -n 100 --no-pager; pause ;;
+      0) return ;;
+      *) yellow "无效选择。"; pause ;;
+    esac
+  done
 }
 
 caddy_command() {
@@ -1730,27 +1773,34 @@ uninstall_xray() {
 }
 
 runtime_menu() {
-  printf '\n%s\n' '----- 运行管理 -----'
-  printf '%s\n' '1) 启动服务' '2) 停止服务' '3) 重启服务' '4) 查看状态' '5) 查看日志' '0) 返回'
-  read -r -p '请选择 [0-5]:' choice
-  case "$choice" in
-    1) service_action start ;; 2) service_action stop ;; 3) service_action restart ;;
-    4) show_status ;; 5) show_logs ;; 0) return ;; *) yellow "无效选择。" ;;
-  esac
+  local choice
+  while :; do
+    printf '\n%s\n' '----- Xray 服务管理 -----'
+    printf '%s\n' '1) 启动服务' '2) 停止服务' '3) 重启服务' '4) 查看状态' '5) 查看日志' '0) 返回主菜单'
+    read -r -p '请选择 [0-5]:' choice
+    case "$choice" in
+      1) service_action start; pause ;; 2) service_action stop; pause ;; 3) service_action restart; pause ;;
+      4) show_status; pause ;; 5) show_logs; pause ;; 0) return ;; *) yellow "无效选择。"; pause ;;
+    esac
+  done
 }
 
 maintenance_menu() {
-  printf '\n%s\n' '----- 维护工具 -----'
-  printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
-    '4) 备份配置' '5) 恢复最近备份' '6) 轮换 REALITY 密钥' '7) 恢复上一版管理脚本' \
-    '8) Speedtest 服务器测速' '0) 返回'
-  read -r -p '请选择 [0-8]:' choice
-  case "$choice" in
-    1) update_core ;; 2) update_manager ;; 3) doctor || true ;; 4) manual_backup ;;
-    5) restore_latest ;; 6) rotate_reality_keys ;; 7) rollback_manager ;;
-    8) run_speedtest || true ;;
-    0) return ;; *) yellow "无效选择。" ;;
-  esac
+  local choice
+  while :; do
+    printf '\n%s\n' '----- 维护与诊断 -----'
+    printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
+      '4) 检查并放行本机防火墙' '5) 备份配置' '6) 恢复最近备份' \
+      '7) 轮换 REALITY 密钥' '8) 恢复上一版管理脚本' '9) Speedtest 服务器测速' \
+      '10) 查看项目信息' '0) 返回主菜单'
+    read -r -p '请选择 [0-10]:' choice
+    case "$choice" in
+      1) update_core; pause ;; 2) update_manager; pause ;; 3) doctor || true; pause ;;
+      4) open_enabled_inbound_ports; pause ;; 5) manual_backup; pause ;; 6) restore_latest; pause ;;
+      7) rotate_reality_keys; pause ;; 8) rollback_manager; pause ;; 9) run_speedtest || true; pause ;;
+      10) show_about; pause ;; 0) return ;; *) yellow "无效选择。"; pause ;;
+    esac
+  done
 }
 
 show_help() {
@@ -1776,25 +1826,34 @@ show_about() {
 menu() {
   while :; do
     clear || true
-    local core_version service_state
+    local core_version service_state caddy_state active_nodes disabled_nodes install_label
     core_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')
     if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi
+    if systemctl is-active --quiet caddy; then caddy_state='running'; else caddy_state='stopped'; fi
+    if [[ -d $NODES_DIR ]]; then
+      active_nodes=$(find "$NODES_DIR" -maxdepth 1 -type f -name '*.env' | wc -l)
+      disabled_nodes=$(find "$NODES_DIR" -maxdepth 1 -type f -name '*.disabled' | wc -l)
+    else
+      active_nodes=0
+      disabled_nodes=0
+    fi
+    if [[ -x $XRAY_BIN ]]; then install_label='重新配置主入站'; else install_label='安装 Xray 并选择协议'; fi
     printf '%s\n' "---------- ${APP_NAME} v${MANAGER_VERSION} by ${AUTHOR} ----------"
-    printf 'Xray: %s  状态: ' "$core_version"
+    printf 'Xray: %s\n服务状态: ' "$core_version"
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
+    printf 'Caddy: %s  入站: %s 启用 / %s 停用\n' "$caddy_state" "$active_nodes" "$disabled_nodes"
     printf '\n%s\n' \
-      '1) 安装 / 添加第一个入站' '2) 添加新入站' '3) 管理入站' \
-      '4) 查看全部链接' '5) 服务管理' '6) 维护工具' '7) Caddy 网站管理' '8) 卸载' '0) 退出'
-    read -r -p "请选择：" choice
+      "1) $install_label" '2) 入站管理' '3) 连接与导出' '4) Xray 服务管理' \
+      '5) Caddy 网站管理' '6) 维护与诊断' '7) 卸载项目' '0) 退出'
+    read -r -p '请选择 [0-7]：' choice
     case "$choice" in
       1) install_xray; pause ;;
-      2) add_inbound; pause ;;
-      3) manage_inbounds_menu; pause ;;
-      4) show_all_links; pause ;;
-      5) runtime_menu; pause ;;
-      6) maintenance_menu; pause ;;
-      7) caddy_menu; pause ;;
-      8) uninstall_xray; pause ;;
+      2) manage_inbounds_menu ;;
+      3) export_menu ;;
+      4) runtime_menu ;;
+      5) caddy_menu ;;
+      6) maintenance_menu ;;
+      7) uninstall_xray; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
