@@ -362,6 +362,18 @@ IPv4/IPv6 策略可通过菜单选择自动双栈、仅 IPv4 或仅 IPv6，也�
 报告成功。`warp-cli connect` 完成较慢时最多等待 30 秒；现有注册无法启动代理时会自动断开
 并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
 
+Local Proxy 会显式使用 MASQUE。如果状态长期停在 `Connecting` 或 `Performing happy eyeballs`，
+脚本不会继续反复删除有效注册，而会运行上游诊断。也可手动执行：
+
+```bash
+v2ray warp diagnose
+```
+
+诊断会显示系统时间同步、IPv4/IPv6 路由、UFW、`warp-cli status` 和 `warp-svc` 日志。
+服务器本机及服务商出站策略需要允许 WARP 的 UDP `443`、`500`、`1701`、`4500`、`4443`、
+`8443`、`8095`，以及 TCP `443` 回退。卡在 Happy Eyeballs 表示 Cloudflare 上游隧道尚未
+建立；此时 `127.0.0.1:40000` 不监听是结果，并不是需要开放公网入站 40000。
+
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，`geoip:private` 始终使用原生直连；这里的“全部”指所有协议产生的
 公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
@@ -375,6 +387,7 @@ WARP 只能改变服务器出站路径和出口 IP，不能替代 REALITY/TLS、
 
 实现依据：[Cloudflare Linux 客户端](https://developers.cloudflare.com/warp-client/get-started/linux/)、
 [Cloudflare WARP Local proxy 模式](https://developers.cloudflare.com/warp-client/warp-modes/)、
+[Cloudflare WARP 防火墙端口](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/deployment/firewall/)、
 [Xray 路由规则](https://xtls.github.io/config/routing.html)。
 
 ## 导入后延迟为 -1 / 无法连接

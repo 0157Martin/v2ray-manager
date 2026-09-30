@@ -204,4 +204,11 @@ export MOCK_WARP_LISTENER=up
 wait_for_warp_proxy || fail 'ready WARP proxy listener was not detected'
 export MOCK_WARP_LISTENER=down
 if wait_for_warp_proxy; then fail 'missing WARP proxy listener was accepted'; fi
+warp_calls=$(mktemp)
+warp_cli() { printf '%s\n' "$*" >> "$warp_calls"; }
+warp_trace() { :; }
+export MOCK_WARP_LISTENER=up
+configure_warp_proxy || fail 'mock WARP proxy configuration failed'
+grep -Fxq 'tunnel protocol set MASQUE' "$warp_calls" || fail 'WARP Local Proxy did not explicitly select MASQUE'
+rm -f -- "$warp_calls"
 printf '%s\n' 'WARP startup wait tests passed.'

@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.5.3
+
+- WARP Local Proxy 现在显式选择 Cloudflare 要求的 MASQUE 隧道协议，再设置本机代理模式。
+- 修复状态卡在 `Connecting / Happy Eyeballs` 时反复删除注册的问题；该状态现在识别为上游
+  网络问题，并保留有效注册。
+- 新增 WARP 上游诊断，显示时间同步、IPv4/IPv6 路由、UFW、客户端状态和服务日志，并列出
+  Cloudflare 官方要求的 MASQUE 出站端口；可运行 `v2ray warp diagnose`。
+
 ## 5.5.2
 
 - 修复 `warp-cli connect` 尚未完成就宣告安装成功的问题；现在等待本机代理端口最多 30 秒，
