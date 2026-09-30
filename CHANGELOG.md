@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README 新增 12 种协议的 Cloudflare 橙云兼容表，说明 REALITY/RAW 必须直连、
+  WebSocket/gRPC 的使用条件、支持端口以及 Spectrum 与普通橙云的区别。
+
 ## 5.0.0
 
 - 一个入站现在支持 1–10 个独立用户凭据和可同时使用的子链接，共享协议、端口及传输配置。

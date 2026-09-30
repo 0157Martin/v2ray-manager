@@ -24,6 +24,44 @@ Cloudflare 仅作为 DNS 托管且关闭代理（灰云）时，域名会直接�
 使用；菜单中的 XHTTP 或 gRPC 只描述传输层，不会改变这一限制。需要橙云、CDN 或优选 IP
 时请选择普通 TLS 的 XHTTP/WebSocket/gRPC 组合，并配置相应的 Caddy 反向代理。
 
+### Cloudflare 使用范围
+
+本项目没有任何协议必须经过 Cloudflare。Cloudflare 可以只负责 DNS，也可以作为可选的
+HTTP/HTTPS 反向代理；是否开启橙云取决于所选协议。使用灰云（DNS only）时，客户端仍然
+直接连接 VPS，Cloudflare 不转发流量。
+
+| 编号 | 协议组合 | 普通橙云 | 建议配置 |
+| --- | --- | --- | --- |
+| 1 | VLESS-REALITY-Vision-RAW | 不支持 | 灰云或不使用 Cloudflare，直接连接 Xray |
+| 2 | VLESS-REALITY-XHTTP | 不支持 | REALITY 握手必须直达 Xray，使用灰云 |
+| 3 | VLESS-REALITY-gRPC | 不支持 | REALITY 握手必须直达 Xray，使用灰云 |
+| 4 | VLESS-XHTTP-TLS | 支持 | 可选橙云/CDN，需要有效域名、证书及 HTTP 反代 |
+| 5 | VLESS-WebSocket-TLS | 支持 | 推荐用于普通橙云，需配置 WebSocket 反代 |
+| 6 | VLESS-gRPC-TLS | 有条件支持 | 入口必须为 443，并在 Cloudflare Network 中开启 gRPC |
+| 7 | Trojan-REALITY-RAW | 不支持 | 灰云或不使用 Cloudflare，直接连接 Xray |
+| 8 | VMess-TCP | 不支持 | 灰云直连；仅建议用于旧客户端或可信链路 |
+| 9 | VMess-WebSocket-TLS | 支持 | 适合普通橙云及旧客户端 |
+| 10 | VMess-gRPC-TLS | 有条件支持 | 入口必须为 443，并在 Cloudflare Network 中开启 gRPC |
+| 11 | Trojan-WebSocket-TLS | 支持 | 适合普通橙云，需配置 WebSocket 反代 |
+| 12 | VLESS-TLS-Vision-RAW | 不支持 | 灰云直连，不能作为普通 HTTP CDN 节点 |
+
+普通橙云只代理 Cloudflare 支持的 HTTP/HTTPS 端口。HTTPS 推荐使用 `443`，也支持
+`2053`、`2083`、`2087`、`2096` 和 `8443`；项目使用 CDN 域名导出时固定生成公网
+`443` 入口。WebSocket 可用于 Cloudflare 各套餐。gRPC 节点还需要 TLS、HTTP/2、ALPN、
+代理状态为橙云、SSL/TLS 模式至少为 Full，并在控制台打开 `Network → gRPC`。
+
+RAW、REALITY、VMess TCP 等任意 TCP 流量不能由普通橙云转发。确需让这类流量经过
+Cloudflare 时，需要单独评估 Cloudflare Spectrum；任意 TCP/UDP 代理通常涉及 Enterprise
+套餐，不能把 Spectrum 能力等同于普通免费橙云。
+
+Cloudflare 官方参考：
+
+- [代理状态与 DNS only](https://developers.cloudflare.com/dns/proxy-status/)
+- [Cloudflare 支持的 HTTP/HTTPS 端口](https://developers.cloudflare.com/fundamentals/reference/network-ports/)
+- [WebSocket 支持及限制](https://developers.cloudflare.com/network/websockets/)
+- [gRPC 要求与开启方式](https://developers.cloudflare.com/network/grpc-connections/)
+- [Spectrum TCP/UDP 代理](https://developers.cloudflare.com/spectrum/)
+
 TLS 组合不会自动修改 DNS、Caddy 或 Nginx。可通过环境变量提供现有 PEM 证书与私钥；未提供时，脚本先匹配已有证书，找不到才使用 Certbot 申请。自动申请需要你拥有的域名指向本机、公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认使用 standalone，要求本机 80 端口空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html`，由该网站响应 HTTP challenge。证书按域名保存，Certbot 续期后通过部署钩子校验、同步，部署失败回滚。
 
 ## 当前技术方案
