@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.6.0
+
+- Caddy 新增按路径代理 Xray TLS XHTTP/WebSocket 入站，并为其他路径提供静态伪装页面。
+- `v2ray link <入站ID> <CDN地址>` 支持 Cloudflare/优选 IP 导出，固定客户端端口为 443，
+  同时保留原域名作为 SNI/Host，避免证书校验失败。
+- 初次安装成功后不再自动输出 UUID 和默认分享链接，改为提示用户按需运行导出命令。
+
 ## 4.5.0
 
 - 主菜单新增 Caddy 网站管理：通过官方稳定仓库和 GPG key 自动安装 Caddy、创建自动 HTTPS

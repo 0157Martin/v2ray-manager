@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.5.0"
+readonly MANAGER_VERSION="4.6.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -163,6 +163,7 @@ download_core() (
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
+valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
@@ -734,7 +735,7 @@ install_xray() {
   restart_or_rollback
   green "Xray、VLESS + REALITY 安装完成。"
   open_enabled_inbound_ports
-  show_connection
+  green "安装完成后不会自动显示节点凭据；需要时运行 v2ray links 或 v2ray link。"
 }
 
 load_state() {
@@ -895,8 +896,25 @@ load_connection_state() {
 }
 
 show_connection() (
-  load_connection_state || return 1
-  show_connection_loaded "$CONFIG_FILE"
+  local node_id=${1:-} address_override=${2:-}
+  if [[ -n $node_id ]]; then
+    [[ $node_id =~ ^[A-Za-z0-9_-]+$ && -f $NODES_DIR/$node_id.env ]] || {
+      red "找不到启用的入站：$node_id" >&2
+      return 1
+    }
+    # shellcheck disable=SC1090
+    . "$NODES_DIR/$node_id.env"
+  else
+    load_connection_state || return 1
+  fi
+  if [[ -n $address_override ]]; then
+    [[ $PROFILE == *-tls-xhttp || $PROFILE == *-tls-ws ]] || {
+      red "自定义 CDN/优选 IP 仅适用于 TLS XHTTP/WebSocket 入站。" >&2
+      return 1
+    }
+    [[ $address_override != *[[:space:]/\?#@]* ]] || { red "CDN/优选 IP 地址格式无效。" >&2; return 1; }
+  fi
+  show_connection_loaded "$CONFIG_FILE" "$address_override"
 )
 
 # Build client transport from the same profile as the server; never export
@@ -911,7 +929,10 @@ render_client_config() {
         serverName: $server, fingerprint: "chrome", password: $public, shortId: $short
       } elif .security == "tls" then .tlsSettings = {
         serverName: $server, fingerprint: "chrome"
-      } else . end) as $stream |
+      } else . end |
+      if .network == "xhttp" and .security == "tls" then .xhttpSettings.host = $server
+      elif .network == "ws" and .security == "tls" then .wsSettings.headers.Host = $server
+      else . end) as $stream |
     {
       log: {loglevel: "warning"},
       inbounds: [
@@ -963,8 +984,11 @@ connection_matches_config() {
 }
 
 show_connection_loaded() (
-  local address uri_address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload
-  address=$(server_address)
+  local address uri_address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload client_port
+  local cdn_address=${2:-}
+  address=${cdn_address:-$(server_address)}
+  client_port=$PORT
+  [[ -z $cdn_address ]] || client_port=443
   if [[ -z $address || $address == YOUR_SERVER_IP || $address == *[[:space:]/\?#@]* ]]; then
     red "无法导出链接：客户端入口地址未知或格式无效。请填写服务器真实公网 IP 或直连域名（不要填写 http:// 或端口）。" >&2
     return 1
@@ -1009,7 +1033,7 @@ show_connection_loaded() (
       ;;
     vless-tls-xhttp)
       transport=xhttp; security=tls; flow=none
-      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=xhttp&path=${encoded_path}&mode=auto"
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=auto"
       ;;
     vless-tls-ws)
       transport=websocket; security=tls; flow=none
@@ -1033,18 +1057,18 @@ show_connection_loaded() (
       [[ $PROFILE == vmess-tls-ws ]] && transport=ws
       [[ $PROFILE == vmess-tls-grpc ]] && transport=grpc
       flow=none
-      vmess_payload=$(jq -cn --arg ps "$REMARK" --arg add "$address" --arg port "$PORT" --arg id "$UUID" \
+      vmess_payload=$(jq -cn --arg ps "$REMARK" --arg add "$address" --arg port "$client_port" --arg id "$UUID" \
         --arg net "$transport" --arg host "$SERVER_NAME" --arg path "${PATH_VALUE:-}" --arg tls "${security/none/}" \
         '{v:"2",ps:$ps,add:$add,port:$port,id:$id,aid:"0",scy:"auto",net:$net,type:"none",host:$host,path:$path,tls:$tls,sni:$host}')
       link="vmess://$(printf '%s' "$vmess_payload" | base64 -w 0)"
       ;;
   esac
-  if [[ -z $link ]]; then link="${protocol}://${UUID}@${uri_address}:${PORT}?${query}#${encoded_name}"; fi
+  if [[ -z $link ]]; then link="${protocol}://${UUID}@${uri_address}:${client_port}?${query}#${encoded_name}"; fi
   printf '\n使用协议: %s\n' "$display_name"
   printf '%s\n' "-------------- ${display_name} --------------"
   printf '协议 (protocol)       = '; cyan_value "$protocol"; printf '\n'
   printf '地址 (address)        = '; cyan_value "$address"; printf '\n'
-  printf '端口 (port)           = '; cyan_value "$PORT"; printf '\n'
+  printf '端口 (port)           = '; cyan_value "$client_port"; printf '\n'
   if [[ $protocol == trojan ]]; then printf '密码 (password)        = '; else printf '用户ID (id)           = '; fi
   cyan_value "$UUID"; printf '\n'
   printf '传输协议 (network)  = '; cyan_value "$transport"; printf '\n'
@@ -1314,7 +1338,7 @@ valid_caddy_upstream() {
 }
 
 render_caddy_site() {
-  local mode=$1 domain=$2 upstream=${3:-} destination=$4
+  local mode=$1 domain=$2 upstream=${3:-} destination=$4 path=${5:-}
   valid_server_name "$domain" || return 1
   case "$mode" in
     static)
@@ -1332,6 +1356,24 @@ EOF
 $domain {
 	encode zstd gzip
 	reverse_proxy $upstream
+}
+EOF
+      ;;
+    xray)
+      valid_caddy_upstream "$upstream" || return 1
+      valid_transport_path "$path" || return 1
+      cat > "$destination" <<EOF
+$domain {
+	@xray path $path $path/*
+	reverse_proxy @xray https://$upstream {
+		flush_interval -1
+		transport http {
+			tls_server_name $domain
+		}
+	}
+	root * $CADDY_WEB_ROOT/$domain
+	encode zstd gzip
+	file_server
 }
 EOF
       ;;
@@ -1417,19 +1459,23 @@ EOF
 }
 
 configure_caddy_site() {
-  local mode=$1 domain=$2 upstream=${3:-} target temporary previous='' had_previous=0
+  local mode=$1 domain=$2 upstream=${3:-} path=${4:-} target temporary previous='' had_previous=0
   valid_server_name "$domain" || { red "请输入有效完整域名。" >&2; return 1; }
   [[ $mode != reverse ]] || valid_caddy_upstream "$upstream" || {
     red "反向代理后端仅支持本机地址，例如 127.0.0.1:8080、localhost:3000 或 [::1]:8080。" >&2
     return 1
   }
+  if [[ $mode == xray ]]; then
+    valid_caddy_upstream "$upstream" || { red "Xray 后端仅支持本机地址。" >&2; return 1; }
+    valid_transport_path "$path" || { red "Xray 传输路径无效，必须以 / 开头且不能包含空格。" >&2; return 1; }
+  fi
   caddy_ports_available || return 1
   install_caddy || return 1
   ensure_caddy_import || { red "无法安全更新 Caddyfile import。" >&2; return 1; }
   getent ahosts "$domain" >/dev/null 2>&1 || yellow "域名当前无法解析；Caddy 自动申请证书前请先配置 DNS。"
   target="$CADDY_SITE_DIR/$domain.caddy"
   temporary=$(mktemp "$CADDY_SITE_DIR/.${domain}.XXXXXX") || return 1
-  render_caddy_site "$mode" "$domain" "$upstream" "$temporary" || { rm -f -- "$temporary"; return 1; }
+  render_caddy_site "$mode" "$domain" "$upstream" "$temporary" "$path" || { rm -f -- "$temporary"; return 1; }
   if [[ -e $target ]]; then
     previous=$(mktemp "$CADDY_SITE_DIR/.previous.XXXXXX") || return 1
     cp -p "$target" "$previous" || return 1
@@ -1442,7 +1488,7 @@ configure_caddy_site() {
     red "Caddy 配置校验失败，已恢复旧站点配置。" >&2
     return 1
   fi
-  if [[ $mode == static ]]; then write_caddy_landing_page "$domain"; fi
+  if [[ $mode == static || $mode == xray ]]; then write_caddy_landing_page "$domain"; fi
   open_local_firewall_port 80
   open_local_firewall_port 443
   if systemctl is-active --quiet caddy; then
@@ -1464,11 +1510,11 @@ configure_caddy_site() {
 }
 
 caddy_menu() {
-  local choice domain upstream
+  local choice domain upstream path
   printf '\n%s\n' '----- Caddy 网站管理 -----'
   printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-    '4) 查看 Caddy 状态' '5) 查看 Caddy 日志' '0) 返回'
-  read -r -p '请选择 [0-5]:' choice
+    '4) 创建 Xray XHTTP/WS 路径反代' '5) 查看 Caddy 状态' '6) 查看 Caddy 日志' '0) 返回'
+  read -r -p '请选择 [0-6]:' choice
   case "$choice" in
     1) caddy_ports_available && install_caddy && green "Caddy 已安装。" ;;
     2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain" ;;
@@ -1477,20 +1523,27 @@ caddy_menu() {
       read -r -p '本机后端 [127.0.0.1:8080]：' upstream
       configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}"
       ;;
-    4) systemctl --no-pager --full status caddy || true ;;
-    5) journalctl -u caddy -n 100 --no-pager ;;
+    4)
+      read -r -p 'TLS 域名：' domain
+      read -r -p 'Xray 本机 TLS 后端 [127.0.0.1:24443]：' upstream
+      read -r -p 'XHTTP/WS 路径（例如 /a1b2c3）：' path
+      configure_caddy_site xray "$domain" "${upstream:-127.0.0.1:24443}" "$path"
+      ;;
+    5) systemctl --no-pager --full status caddy || true ;;
+    6) journalctl -u caddy -n 100 --no-pager ;;
     0) return ;;
     *) yellow "无效选择。" ;;
   esac
 }
 
 caddy_command() {
-  local action=${1:-menu} domain=${2:-} upstream=${3:-}
+  local action=${1:-menu} domain=${2:-} upstream=${3:-} path=${4:-}
   case "$action" in
     menu) caddy_menu ;;
     install) caddy_ports_available && install_caddy ;;
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
+    xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -1706,6 +1759,7 @@ show_help() {
     'v2ray add      添加新入站' \
     'v2ray inbounds 查看入站列表' \
     'v2ray links    输出全部启用入站链接' \
+    'v2ray link <入站ID> <CDN地址> 以 443 导出 TLS XHTTP/WS 优选地址链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray speedtest 运行服务器网络测速' \
     'v2ray caddy    管理 Caddy 伪装网站和本机反向代理' \
@@ -1758,14 +1812,14 @@ main() {
     firewall) open_enabled_inbound_ports ;;
     info) show_info ;;
     config|change) change_menu ;;
-    link) show_connection ;;
+    link) show_connection "${2:-}" "${3:-}" ;;
     client) export_client "${2:-}" ;;
     cert-refresh) refresh_tls_certificates "${2:-}" ;;
     status) show_status ;;
     start|stop|restart) service_action "$1" ;;
     log) show_logs ;;
     speedtest|speettest) run_speedtest ;;
-    caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" ;;
+    caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
     update) update_core ;;
     update.sh) update_manager ;;
     rollback.sh) rollback_manager ;;
@@ -1776,7 +1830,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|speedtest|caddy [install|static|reverse|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link [入站ID] [CDN地址]|client [入站ID]|status|start|stop|restart|log|speedtest|caddy [install|static|reverse|xray|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

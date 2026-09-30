@@ -85,6 +85,19 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tls_test_dir
 ! tls_pair_valid "$tls_test_dir/cert.pem" "$tls_test_dir/wrong.key" || fail 'wrong private key accepted'
 printf '%s\n' 'TLS certificate tests passed.'
 
+PROFILE=vless-tls-ws
+PORT=24443
+PATH_VALUE=/cdn-test
+ADDRESS=example.com
+REMARK=cdn-export-test
+export TLS_CERT_PATH_OVERRIDE="$tls_test_dir/cert.pem"
+export TLS_KEY_PATH_OVERRIDE="$tls_test_dir/key.pem"
+render_config "$temporary"
+cdn_link=$(show_connection_loaded "$temporary" 104.16.1.1)
+[[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@104.16.1.1:443?'* ]] || fail 'CDN export did not use override address and port 443'
+[[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'
+printf '%s\n' 'CDN address export test passed.'
+
 openssl genpkey -algorithm X25519 -out "$tls_test_dir/reality.pem" >/dev/null 2>&1
 PRIVATE_KEY=$(openssl pkey -in "$tls_test_dir/reality.pem" -outform DER | tail -c 32 | base64 -w 0 | tr '/+' '_-' | tr -d '=')
 PUBLIC_KEY=$(openssl pkey -in "$tls_test_dir/reality.pem" -pubout -outform DER | tail -c 32 | base64 -w 0 | tr '/+' '_-' | tr -d '=')
@@ -108,6 +121,7 @@ printf '%s\n' 'Speedtest command-selection test passed.'
 
 caddy_static=$(mktemp)
 caddy_reverse=$(mktemp)
+caddy_xray=$(mktemp)
 render_caddy_site static example.com '' "$caddy_static" || fail 'static Caddy site did not render'
 grep -Fq 'root * /var/www/v2ray-manager/example.com' "$caddy_static" || fail 'static Caddy root mismatch'
 render_caddy_site reverse proxy.example.com 127.0.0.1:8080 "$caddy_reverse" || fail 'reverse Caddy site did not render'
@@ -116,5 +130,11 @@ valid_caddy_upstream '[::1]:3000' || fail 'IPv6 loopback upstream rejected'
 ! valid_caddy_upstream '0.0.0.0:8080' || fail 'non-loopback upstream accepted'
 ! valid_caddy_upstream '127.0.0.1:70000' || fail 'invalid upstream port accepted'
 ! render_caddy_site static localhost '' "$caddy_static" || fail 'invalid Caddy domain accepted'
-rm -f -- "$caddy_static" "$caddy_reverse"
+render_caddy_site xray cdn.example.com 127.0.0.1:24443 "$caddy_xray" /a1b2c3 || fail 'Xray Caddy route did not render'
+grep -Fq '@xray path /a1b2c3 /a1b2c3/*' "$caddy_xray" || fail 'Xray Caddy path matcher mismatch'
+grep -Fq 'tls_server_name cdn.example.com' "$caddy_xray" || fail 'Xray upstream SNI mismatch'
+! render_caddy_site xray cdn.example.com 127.0.0.1:24443 "$caddy_xray" '/bad path' || fail 'invalid transport path accepted'
+valid_transport_path /a1b2c3 || fail 'valid transport path rejected'
+! valid_transport_path //bad || fail 'double-slash transport path accepted'
+rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray"
 printf '%s\n' 'Caddy configuration tests passed.'

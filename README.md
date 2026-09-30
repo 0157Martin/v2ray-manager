@@ -65,7 +65,8 @@ v2ray firewall         # 放行已启用入站的本机 UFW/firewalld TCP 端口
 v2ray info             # 查看版本和连接信息
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
-v2ray link             # 重新显示 VLESS 导入链接
+v2ray link             # 重新显示默认入站链接
+v2ray link primary 104.16.1.1 # 用 CDN/优选 IP 导出，SNI/Host 仍使用原域名
 v2ray client           # 输出默认启用入站的 Xray 客户端 JSON
 v2ray client primary   # 按入站 ID 导出；ID 见 v2ray inbounds
 v2ray status           # 查看服务状态
@@ -106,6 +107,7 @@ Ookla `speedtest` 或 `speedtest-cli`；均不存在时安装系统仓库的 `sp
 v2ray caddy install
 v2ray caddy static www.example.com
 v2ray caddy reverse app.example.com 127.0.0.1:8080
+v2ray caddy xray cdn.example.com 127.0.0.1:24443 /a1b2c3
 v2ray caddy status
 v2ray caddy log
 ```
@@ -117,7 +119,15 @@ v2ray caddy log
 
 标准 Caddy 与 Xray 不能同时监听同一 TCP 80/443。若 Xray 或其他程序已占用其中任一端口，
 管理器会拒绝安装或配置 Caddy，不会停止现有服务。请先把 Xray 入站改到其他端口，再配置
-Caddy。这里的反向代理面向 HTTP Web 应用，不会把 REALITY/RAW 入站转换成 HTTP 流量。
+Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路径反向代理到使用同一
+域名证书的本机 Xray TLS 入站，并让其他路径显示静态伪装页。它不能代理 REALITY/RAW。
+建议 Xray 使用 `24443` 等高位端口，Caddy 独占公网 `80/443`。应用前应确认 Xray 的域名、
+证书和传输路径与 Caddy 参数完全一致。
+
+Cloudflare 橙云或优选 IP 仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
+`v2ray link <入站ID> <优选IP或CDN域名>` 导出时，连接地址和客户端端口会改为指定地址与
+`443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名，避免把优选 IP 错当成证书域名。
+Cloudflare 代理不适用于普通 VLESS RAW、REALITY 或任意 TCP 节点。
 
 ## 按官方教程部署与导出
 
@@ -166,7 +176,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 ## 安装提示
 
-一行安装命令会自动完成首次部署，但不会直接弹出协议选择菜单。首次默认使用推荐的 `VLESS-REALITY-Vision-RAW`，并从 `443` 开始选择空闲端口：443 空闲时直接使用 443；已被 Caddy、Nginx 或其他服务占用时，不会停止现有服务，而会选择后续空闲端口。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以直接输入 `v2ray` 重试或查看诊断。完成后输入 `v2ray` 进入菜单，再按需要添加或管理其他协议组合。
+一行安装命令会自动完成首次部署，但不会直接弹出协议选择菜单，也不会在安装结束时自动输出 UUID 或默认链接。首次默认使用推荐的 `VLESS-REALITY-Vision-RAW`，并从 `443` 开始选择空闲端口：443 空闲时直接使用 443；已被 Caddy、Nginx 或其他服务占用时，不会停止现有服务，而会选择后续空闲端口。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以直接输入 `v2ray` 重试或查看诊断。完成后输入 `v2ray` 进入菜单；需要导出时主动运行 `v2ray links` 或 `v2ray link`。
 
 从管理菜单开始安装时需要选择：
 
