@@ -101,15 +101,18 @@ bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main
 
 生产服务器建议先审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 和 [v2ray.sh](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray.sh)。
 
-安装完成后不会自动显示链接。运行下面三条命令完成检查和导出：
+安装只部署 Xray Core、systemd 服务和管理命令，不会弹出协议选择，也不会创建或显示默认
+链接。先手动添加需要的协议，再检查和导出：
 
 ```bash
+v2ray add                # 手动选择协议并添加第一个入站
 v2ray doctor             # 检查配置、证书、监听端口和服务状态
 v2ray inbounds           # 查看可用的入站 ID
-v2ray link primary       # 按入站 ID 输出分享链接
+v2ray links              # 输出全部启用入站的分享链接
 ```
 
-如果主入站 ID 不是 `primary`，请使用 `v2ray inbounds` 显示的实际 ID。
+也可以运行 `v2ray`，进入“入站管理 → 添加新入站”。如需输出单个入站，先用
+`v2ray inbounds` 查看实际 ID，再运行 `v2ray link <入站ID>`。
 
 ## 管理命令
 
@@ -288,19 +291,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 管理脚本更新前会保存 `/var/backups/v2ray-manager/manager.previous.sh`，可用 `v2ray rollback.sh` 恢复。若新管理命令本身无法运行，可用 root 执行 `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`。重新运行安装不会升级已存在的内核；请使用独立的 `v2ray update` 命令。
 
-## 交互安装行为
+## 安装与手动添加协议
 
-一行安装命令在交互终端中会先显示协议列表，必须由用户自行选择协议组合；安装结束时
-不会自动输出 UUID 或默认链接。直连协议优先使用 `443`，HTTP/CDN 协议优先使用后端端口
-`24443`；端口已被 Caddy、Nginx、Xray 或其他服务占用时自动寻找空闲端口，不会停止现有
-服务。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以
-直接输入 `v2ray` 重试或查看诊断。需要导出时主动运行 `v2ray links` 或 `v2ray link`。
+一行安装命令不会显示协议列表。它先安装 Xray Core、写入可启动的空入站配置并安装
+`v2ray` 管理命令；安装结束时也不会输出 UUID 或分享链接。随后运行 `v2ray add`，或进入
+“入站管理 → 添加新入站”，再自行选择协议。重新运行安装/修复会保留已有入站、凭据和
+链接。
 
-没有交互终端时，安装器不会静默创建默认协议。CI、云初始化等自动化部署必须明确设置
-`V2M_NONINTERACTIVE=1`，并建议同时提供 `V2M_PROFILE` 等参数；未提供的非交互参数才使用
-脚本默认值。
+CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V2M_NONINTERACTIVE=1`，并建议
+同时提供 `V2M_PROFILE` 等参数；未提供的参数才使用脚本默认值。不设置该变量时，即使没有
+交互终端，也只完成核心安装，不会静默创建默认协议。
 
-从管理菜单开始安装时需要确认：
+手动添加入站时需要确认：
 
 1. 协议组合。
 2. 监听端口。直连协议从 `443` 开始寻找空闲端口；HTTP/CDN 协议默认使用本机后端端口
@@ -310,7 +312,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
    服务器能稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
 5. 节点备注。UUID、REALITY 密钥和 Short ID 由脚本生成并验证。
 
-安装或新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
+新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
 
 云服务商安全组仍需在控制台手动放行所选 TCP 端口——它属于云账户权限，脚本没有也不应保存该账户的 API 凭据。本脚本不会自动修改 DNS 或系统代理。
 

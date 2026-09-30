@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.2.0"
+readonly MANAGER_VERSION="5.3.0"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
@@ -638,6 +638,22 @@ EOF
   rebuild_or_restore
 }
 
+write_empty_config() {
+  ensure_service_user
+  install -d -m 755 "$CONFIG_DIR"
+  install -d -m 700 "$NODES_DIR"
+  local temporary="$CONFIG_DIR/config.pending.json"
+  jq -n '{log:{loglevel:"warning"},inbounds:[],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$temporary"
+  if ! XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary"; then
+    rm -f -- "$temporary"
+    die "空入站配置未通过 Xray 校验。"
+  fi
+  install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE"
+  rm -f -- "$temporary"
+  printf 'DATA_SCHEMA=%s\n' "$DATA_SCHEMA_VERSION" > "$STATE_FILE"
+  chmod 600 "$STATE_FILE"
+}
+
 save_current_node() {
   local destination=$1
   cat > "$destination" <<EOF
@@ -680,7 +696,6 @@ rebuild_config_from_nodes() (
     jq --slurpfile inbound "$work_dir/inbound.json" '. + $inbound' "$combined" > "$work_dir/next.json" || return 1
     mv "$work_dir/next.json" "$combined" || return 1
   done
-  [[ $(jq 'length' "$combined") -gt 0 ]] || { rm -rf "$work_dir"; red "至少需要一个启用的入站。"; return 1; }
   jq -n --slurpfile inbounds "$combined" '{log:{loglevel:"warning"},inbounds:$inbounds[0],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$work_dir/config.json" || return 1
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$work_dir/config.json" >/dev/null || { rm -rf "$work_dir"; red "多入站配置未通过 Xray 校验。"; return 1; }
   install -m 640 -o root -g xray "$work_dir/config.json" "$CONFIG_FILE"
@@ -766,18 +781,30 @@ install_xray() {
     step "安装依赖并准备 Xray Core"
     download_core
   fi
-  ask_server_values
-  ensure_port_available
-  step "生成并校验配置文件"
-  write_config
+  if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
+    ask_server_values
+    ensure_port_available
+    step "生成并校验配置文件"
+    write_config
+  elif compgen -G "$NODES_DIR/*.env" >/dev/null; then
+    green "检测到已有入站，安装过程将保留现有协议和链接。"
+    rebuild_config_from_nodes || die "现有入站配置校验失败，未修改服务。"
+  else
+    step "初始化 Xray（暂不添加协议）"
+    write_empty_config
+  fi
   step "安装 systemd 服务"
   write_service
   stop_legacy_service
   systemctl enable "$SERVICE_NAME"
   restart_or_rollback
-  green "Xray、VLESS + REALITY 安装完成。"
+  green "Xray Core 和管理脚本安装完成。"
   open_enabled_inbound_ports
-  green "安装完成后不会自动显示节点凭据；需要时运行 v2ray links 或 v2ray link。"
+  if compgen -G "$NODES_DIR/*.env" >/dev/null; then
+    green "已有协议和链接保持不变；需要时运行 v2ray links 查看。"
+  else
+    green '尚未添加协议。请运行 v2ray add，或进入“入站管理 → 添加新入站”手动选择。'
+  fi
 }
 
 load_state() {
@@ -1249,9 +1276,7 @@ list_inbounds() (
 
 add_inbound() {
   [[ -x $XRAY_BIN ]] || die "请先安装 Xray。"
-  load_state
-  PORT=$(find_free_port 24443)
-  UUID=''; EXTRA_UUIDS=''; PROFILE=''; PATH_VALUE=''; PRIVATE_KEY=''; PUBLIC_KEY=''; SHORT_ID=''; REMARK=''; CERT_SOURCE=''; KEY_SOURCE=''
+  PORT=''; UUID=''; EXTRA_UUIDS=''; ADDRESS=''; PROFILE=''; PATH_VALUE=''; PRIVATE_KEY=''; PUBLIC_KEY=''; SHORT_ID=''; REMARK=''; CERT_SOURCE=''; KEY_SOURCE=''; SERVER_NAME=''
   ask_server_values
   ensure_port_available
   create_backup
@@ -1438,10 +1463,8 @@ select_node_file() {
 }
 
 disable_inbound() {
-  local node_file active_count
+  local node_file
   node_file=$(select_node_file 0)
-  active_count=$(find "$NODES_DIR" -maxdepth 1 -type f -name '*.env' | wc -l)
-  (( active_count > 1 )) || die "至少需保留一个启用的入站。"
   create_backup
   mv "$node_file" "${node_file%.env}.disabled"
   rebuild_or_restore
@@ -1480,12 +1503,10 @@ enable_inbound() {
 }
 
 delete_inbound() {
-  local node_file active_count answer
+  local node_file answer
   node_file=$(select_node_file 1)
   read -r -p "确认删除 $(basename "$node_file")？[y/N] " answer
   [[ ${answer,,} == y || ${answer,,} == yes ]] || return
-  active_count=$(find "$NODES_DIR" -maxdepth 1 -type f -name '*.env' | wc -l)
-  [[ $node_file == *.disabled || $active_count -gt 1 ]] || die "不能删除唯一启用的入站。"
   create_backup
   rm -f "$node_file"
   rebuild_or_restore
@@ -2249,7 +2270,7 @@ menu() {
       active_nodes=0
       disabled_nodes=0
     fi
-    if [[ -x $XRAY_BIN ]]; then install_label='重新配置主入站'; else install_label='安装 Xray 并选择协议'; fi
+    if [[ -x $XRAY_BIN ]]; then install_label='检查/修复 Xray（保留现有入站）'; else install_label='安装 Xray Core（稍后手动添加协议）'; fi
     printf '%s\n' "---------- ${APP_NAME} v${MANAGER_VERSION} by ${AUTHOR} ----------"
     printf 'Xray: %s\n服务状态: ' "$core_version"
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi

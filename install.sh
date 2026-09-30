@@ -32,9 +32,6 @@ grep -Eq '^readonly MANAGER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$temporary"
 
 if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
   V2M_NONINTERACTIVE=1 bash "$temporary" install
-elif [[ -t 0 ]]; then
-  bash "$temporary" install
 else
-  printf '%s\n' '当前没有交互终端，无法选择协议。请在终端使用 bash <(curl -fsSL ...)，或为自动化部署明确设置 V2M_NONINTERACTIVE=1。' >&2
-  exit 1
+  bash "$temporary" install
 fi

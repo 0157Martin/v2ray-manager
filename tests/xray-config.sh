@@ -37,6 +37,8 @@ actual=$(sha256sum "$temporary_dir/xray.zip" | awk '{print $1}')
 unzip -q "$temporary_dir/xray.zip" -d "$temporary_dir/core"
 
 core_binary="$temporary_dir/core/$core_name"
+printf '%s\n' '{"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[{"protocol":"freedom","tag":"direct"},{"protocol":"blackhole","tag":"block"}]}' > "$temporary_dir/empty.json"
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/empty.json"
 parse_reality_credentials "$("$core_binary" x25519)"
 export PORT=443
 export UUID
@@ -106,4 +108,4 @@ done
 jq -s '{log:{loglevel:"warning"},inbounds:map(.inbounds[0]),outbounds:.[0].outbounds}' "${multi_files[@]}" > "$temporary_dir/multi.json"
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/multi.json"
 
-printf 'Xray %s accepted all protocol profiles and the combined multi-inbound configuration.\n' "$tag"
+printf 'Xray %s accepted the empty install state, all protocol profiles, and the combined multi-inbound configuration.\n' "$tag"

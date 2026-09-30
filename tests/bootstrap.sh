@@ -28,10 +28,9 @@ CURL
 chmod +x "$sandbox/bin/curl"
 export PATH="$sandbox/bin:$PATH"
 unset V2M_MANAGER_REF
-if bash "$repo_dir/install.sh" >/dev/null 2>&1; then
-  printf 'Non-terminal bootstrap silently selected a default protocol.\n' >&2; exit 1
-fi
-[[ ! -e $sandbox/executed ]]
+bash "$repo_dir/install.sh"
+[[ $(cat "$sandbox/executed") == '0 install' ]]
+rm "$sandbox/executed"
 V2M_NONINTERACTIVE=1 bash "$repo_dir/install.sh"
 [[ $(cat "$sandbox/executed") == '1 install' ]]
 grep -q '/1111111111111111111111111111111111111111/v2ray.sh$' "$sandbox/requests"
