@@ -333,6 +333,26 @@ v2ray warp status
 v2ray warp test
 ```
 
+完整菜单提供以下操作：
+
+```text
+1) 安装/初始化 WARP
+2) 查看 WARP 状态与出口 IP
+3) 全部协议的公网 TCP 使用 WARP
+4) 指定域名使用 WARP（推荐）
+5) IPv4 / IPv6 出站策略
+6) 流媒体与 ChatGPT 可用性检测
+7) 停用 WARP 策略
+8) 修复/重新生成配置
+9) 卸载 WARP
+0) 返回
+```
+
+IPv4/IPv6 策略可通过菜单选择自动双栈、仅 IPv4 或仅 IPv6，也可分别执行
+`v2ray warp dual`、`v2ray warp ipv4`、`v2ray warp ipv6`。这些设置统一应用到 WARP
+出站，不区分入站协议。`v2ray warp check` 检查 Netflix、Disney+ 和 ChatGPT 当前 HTTP
+可访问性，`v2ray warp repair` 会恢复 WARP 服务、本机代理和 Xray 路由配置。
+
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，`geoip:private` 始终使用原生直连；这里的“全部”指所有协议产生的
 公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
