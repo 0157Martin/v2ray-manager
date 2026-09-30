@@ -28,6 +28,7 @@ fi
 
 scenario=$2
 sandbox=$3
+export sandbox
 trap 'status=$?; printf "ERROR: scenario=%s line=%s status=%s command=%s\n" "$scenario" "$LINENO" "$status" "$BASH_COMMAND" >&2' ERR
 # Redirect only the production path constants; test the actual function bodies.
 sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
