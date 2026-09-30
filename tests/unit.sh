@@ -105,3 +105,16 @@ speedtest-cli() { printf '%s\n' 'mock-speedtest-ok'; }
 speedtest_output=$(run_speedtest)
 [[ $speedtest_output == *mock-speedtest-ok* ]] || fail 'speedtest-cli was not invoked'
 printf '%s\n' 'Speedtest command-selection test passed.'
+
+caddy_static=$(mktemp)
+caddy_reverse=$(mktemp)
+render_caddy_site static example.com '' "$caddy_static" || fail 'static Caddy site did not render'
+grep -Fq 'root * /var/www/v2ray-manager/example.com' "$caddy_static" || fail 'static Caddy root mismatch'
+render_caddy_site reverse proxy.example.com 127.0.0.1:8080 "$caddy_reverse" || fail 'reverse Caddy site did not render'
+grep -Fq 'reverse_proxy 127.0.0.1:8080' "$caddy_reverse" || fail 'Caddy upstream mismatch'
+valid_caddy_upstream '[::1]:3000' || fail 'IPv6 loopback upstream rejected'
+! valid_caddy_upstream '0.0.0.0:8080' || fail 'non-loopback upstream accepted'
+! valid_caddy_upstream '127.0.0.1:70000' || fail 'invalid upstream port accepted'
+! render_caddy_site static localhost '' "$caddy_static" || fail 'invalid Caddy domain accepted'
+rm -f -- "$caddy_static" "$caddy_reverse"
+printf '%s\n' 'Caddy configuration tests passed.'

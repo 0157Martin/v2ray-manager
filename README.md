@@ -74,6 +74,7 @@ v2ray stop
 v2ray restart
 v2ray log              # 查看最近 100 条日志
 v2ray speedtest        # 测试服务器下载、上传速度和延迟
+v2ray caddy            # 打开 Caddy 网站管理菜单
 v2ray update           # 更新 Xray Core，保留配置
     v2ray update.sh        # 更新管理脚本
     v2ray rollback.sh      # 恢复上一次更新前的管理脚本
@@ -89,6 +90,34 @@ v2ray uninstall
 `v2ray speedtest` 也可从“维护工具 → Speedtest 服务器测速”运行。脚本优先使用已安装的
 Ookla `speedtest` 或 `speedtest-cli`；均不存在时安装系统仓库的 `speedtest-cli`。测速会
 连接外部 Speedtest 服务器、暴露服务器公网 IP，并消耗一定流量，但不会修改或重启 Xray。
+
+## Caddy 网站伪装与反向代理
+
+主菜单的“Caddy 网站管理”支持通过 Caddy 官方 Debian/Ubuntu 稳定仓库和 GPG key 自动安装，
+并提供两种站点：
+
+- 静态伪装网站：为域名生成独立站点目录和简单首页，由 Caddy 自动申请及续期 HTTPS 证书。
+- 本机反向代理：把域名代理到 `127.0.0.1:端口`、`localhost:端口` 或 `[::1]:端口`，适合
+  本机面板、API 或 Web 应用。为避免开放代理，不接受公网或局域网后端地址。
+
+也可以使用非交互命令：
+
+```bash
+v2ray caddy install
+v2ray caddy static www.example.com
+v2ray caddy reverse app.example.com 127.0.0.1:8080
+v2ray caddy status
+v2ray caddy log
+```
+
+项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
+`import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，
+新配置必须通过 `caddy validate` 才会 reload；失败时恢复旧站点配置。Caddy 自动 HTTPS
+要求域名 A/AAAA 记录指向服务器，并确保公网 TCP 80 和 443 可达。
+
+标准 Caddy 与 Xray 不能同时监听同一 TCP 80/443。若 Xray 或其他程序已占用其中任一端口，
+管理器会拒绝安装或配置 Caddy，不会停止现有服务。请先把 Xray 入站改到其他端口，再配置
+Caddy。这里的反向代理面向 HTTP Web 应用，不会把 REALITY/RAW 入站转换成 HTTP 流量。
 
 ## 按官方教程部署与导出
 

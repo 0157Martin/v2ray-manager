@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.4.0"
+readonly MANAGER_VERSION="4.5.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -27,6 +27,9 @@ readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/lates
 readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
 readonly MANAGER_API="https://api.github.com/repos/0157Martin/v2ray-manager/commits/main"
 readonly SERVICE_NAME="xray"
+readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
+readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
+readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -1298,6 +1301,202 @@ run_speedtest() {
   }
 }
 
+valid_caddy_upstream() {
+  local port
+  if [[ $1 =~ ^(127\.0\.0\.1|localhost):([0-9]+)$ ]]; then
+    port=${BASH_REMATCH[2]}
+  elif [[ $1 =~ ^\[::1\]:([0-9]+)$ ]]; then
+    port=${BASH_REMATCH[1]}
+  else
+    return 1
+  fi
+  valid_port "$port"
+}
+
+render_caddy_site() {
+  local mode=$1 domain=$2 upstream=${3:-} destination=$4
+  valid_server_name "$domain" || return 1
+  case "$mode" in
+    static)
+      cat > "$destination" <<EOF
+$domain {
+	root * $CADDY_WEB_ROOT/$domain
+	encode zstd gzip
+	file_server
+}
+EOF
+      ;;
+    reverse)
+      valid_caddy_upstream "$upstream" || return 1
+      cat > "$destination" <<EOF
+$domain {
+	encode zstd gzip
+	reverse_proxy $upstream
+}
+EOF
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+caddy_ports_available() {
+  local port listeners
+  if [[ -r $CONFIG_FILE ]] && jq -e 'any(.inbounds[]?; .port == 80 or .port == 443)' "$CONFIG_FILE" >/dev/null; then
+    red "Xray 当前占用 TCP 80 或 443；标准 Caddy 无法与其共享端口。请先修改对应入站端口。" >&2
+    return 1
+  fi
+  for port in 80 443; do
+    listeners=$(ss -H -lntp "sport = :$port" 2>/dev/null || true)
+    [[ -z $listeners || $listeners == *caddy* ]] || {
+      red "TCP $port 已被其他服务占用，不会停止或覆盖该服务：" >&2
+      printf '%s\n' "$listeners" >&2
+      return 1
+    }
+  done
+}
+
+install_caddy() (
+  local temporary
+  command -v caddy >/dev/null 2>&1 && return 0
+  caddy_ports_available || return 1
+  step "安装 Caddy"
+  apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    debian-keyring debian-archive-keyring apt-transport-https curl gnupg || return 1
+  temporary=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$temporary"' EXIT
+  curl --fail --show-error --location --retry 3 \
+    https://dl.cloudsmith.io/public/caddy/stable/gpg.key -o "$temporary/caddy.gpg.key" || return 1
+  curl --fail --show-error --location --retry 3 \
+    https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o "$temporary/caddy-stable.list" || return 1
+  grep -Eq '^deb ' "$temporary/caddy-stable.list" || { red "Caddy 软件源内容无效。" >&2; return 1; }
+  gpg --batch --yes --dearmor --output "$temporary/caddy-stable-archive-keyring.gpg" \
+    "$temporary/caddy.gpg.key" || return 1
+  install -m 644 "$temporary/caddy-stable-archive-keyring.gpg" \
+    /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  install -m 644 "$temporary/caddy-stable.list" /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update || return 1
+  DEBIAN_FRONTEND=noninteractive apt-get install -y caddy || {
+    red "无法从系统软件仓库安装 Caddy。" >&2
+    return 1
+  }
+  command -v caddy >/dev/null 2>&1 || { red "Caddy 安装后仍不可执行。" >&2; return 1; }
+)
+
+ensure_caddy_import() {
+  local temporary backup
+  install -d -m 755 "$CADDY_SITE_DIR"
+  if [[ ! -e $CADDY_CONFIG ]]; then
+    printf 'import %s/*.caddy\n' "$CADDY_SITE_DIR" > "$CADDY_CONFIG"
+    chmod 644 "$CADDY_CONFIG"
+    return
+  fi
+  grep -Fqx "import $CADDY_SITE_DIR/*.caddy" "$CADDY_CONFIG" && return
+  install -d -m 700 "$BACKUP_DIR"
+  backup="$BACKUP_DIR/Caddyfile.$(date -u +%Y%m%dT%H%M%SZ)"
+  cp -p "$CADDY_CONFIG" "$backup" || return 1
+  temporary=$(mktemp "${CADDY_CONFIG}.XXXXXX") || return 1
+  if cp -p "$CADDY_CONFIG" "$temporary" &&
+     printf '\nimport %s/*.caddy\n' "$CADDY_SITE_DIR" >> "$temporary" &&
+     mv -f "$temporary" "$CADDY_CONFIG"; then
+    return
+  fi
+  rm -f -- "$temporary"
+  return 1
+}
+
+write_caddy_landing_page() {
+  local domain=$1 root="$CADDY_WEB_ROOT/$1"
+  install -d -m 755 "$root"
+  cat > "$root/index.html" <<EOF
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$domain</title><style>body{max-width:760px;margin:15vh auto;padding:0 24px;font:16px/1.7 system-ui;color:#243447}h1{font-size:2.2rem}</style></head>
+<body><h1>Welcome</h1><p>This site is online.</p></body></html>
+EOF
+  chown -R caddy:caddy "$root"
+}
+
+configure_caddy_site() {
+  local mode=$1 domain=$2 upstream=${3:-} target temporary previous='' had_previous=0
+  valid_server_name "$domain" || { red "请输入有效完整域名。" >&2; return 1; }
+  [[ $mode != reverse ]] || valid_caddy_upstream "$upstream" || {
+    red "反向代理后端仅支持本机地址，例如 127.0.0.1:8080、localhost:3000 或 [::1]:8080。" >&2
+    return 1
+  }
+  caddy_ports_available || return 1
+  install_caddy || return 1
+  ensure_caddy_import || { red "无法安全更新 Caddyfile import。" >&2; return 1; }
+  getent ahosts "$domain" >/dev/null 2>&1 || yellow "域名当前无法解析；Caddy 自动申请证书前请先配置 DNS。"
+  target="$CADDY_SITE_DIR/$domain.caddy"
+  temporary=$(mktemp "$CADDY_SITE_DIR/.${domain}.XXXXXX") || return 1
+  render_caddy_site "$mode" "$domain" "$upstream" "$temporary" || { rm -f -- "$temporary"; return 1; }
+  if [[ -e $target ]]; then
+    previous=$(mktemp "$CADDY_SITE_DIR/.previous.XXXXXX") || return 1
+    cp -p "$target" "$previous" || return 1
+    had_previous=1
+  fi
+  install -m 644 -o root -g root "$temporary" "$target" || return 1
+  rm -f -- "$temporary"
+  if ! caddy validate --config "$CADDY_CONFIG" --adapter caddyfile; then
+    if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
+    red "Caddy 配置校验失败，已恢复旧站点配置。" >&2
+    return 1
+  fi
+  if [[ $mode == static ]]; then write_caddy_landing_page "$domain"; fi
+  open_local_firewall_port 80
+  open_local_firewall_port 443
+  if systemctl is-active --quiet caddy; then
+    if ! systemctl reload caddy; then
+      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
+      systemctl reload caddy || true
+      red "Caddy reload 失败，已恢复旧站点配置。" >&2
+      return 1
+    fi
+  else
+    if ! systemctl enable --now caddy; then
+      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
+      red "Caddy 启动失败，已恢复旧站点配置。" >&2
+      return 1
+    fi
+  fi
+  [[ -z $previous ]] || rm -f -- "$previous"
+  green "Caddy 站点已启用：https://$domain"
+}
+
+caddy_menu() {
+  local choice domain upstream
+  printf '\n%s\n' '----- Caddy 网站管理 -----'
+  printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
+    '4) 查看 Caddy 状态' '5) 查看 Caddy 日志' '0) 返回'
+  read -r -p '请选择 [0-5]:' choice
+  case "$choice" in
+    1) caddy_ports_available && install_caddy && green "Caddy 已安装。" ;;
+    2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain" ;;
+    3)
+      read -r -p '网站域名：' domain
+      read -r -p '本机后端 [127.0.0.1:8080]：' upstream
+      configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}"
+      ;;
+    4) systemctl --no-pager --full status caddy || true ;;
+    5) journalctl -u caddy -n 100 --no-pager ;;
+    0) return ;;
+    *) yellow "无效选择。" ;;
+  esac
+}
+
+caddy_command() {
+  local action=${1:-menu} domain=${2:-} upstream=${3:-}
+  case "$action" in
+    menu) caddy_menu ;;
+    install) caddy_ports_available && install_caddy ;;
+    static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
+    reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
+    status) systemctl --no-pager --full status caddy || true ;;
+    log) journalctl -u caddy -n 100 --no-pager ;;
+    *) die "未知 Caddy 操作：$action" ;;
+  esac
+}
+
 doctor() {
   local failures=0 port security target node_file node_count=0 handshake
   printf '%s\n' "===== v2ray-manager 诊断 ====="
@@ -1509,6 +1708,7 @@ show_help() {
     'v2ray links    输出全部启用入站链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray speedtest 运行服务器网络测速' \
+    'v2ray caddy    管理 Caddy 伪装网站和本机反向代理' \
     'v2ray doctor   运行综合诊断' \
     'v2ray help     查看完整命令用法'
 }
@@ -1530,7 +1730,7 @@ menu() {
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
     printf '\n%s\n' \
       '1) 安装 / 添加第一个入站' '2) 添加新入站' '3) 管理入站' \
-      '4) 查看全部链接' '5) 服务管理' '6) 维护工具' '7) 卸载' '0) 退出'
+      '4) 查看全部链接' '5) 服务管理' '6) 维护工具' '7) Caddy 网站管理' '8) 卸载' '0) 退出'
     read -r -p "请选择：" choice
     case "$choice" in
       1) install_xray; pause ;;
@@ -1539,7 +1739,8 @@ menu() {
       4) show_all_links; pause ;;
       5) runtime_menu; pause ;;
       6) maintenance_menu; pause ;;
-      7) uninstall_xray; pause ;;
+      7) caddy_menu; pause ;;
+      8) uninstall_xray; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -1564,6 +1765,7 @@ main() {
     start|stop|restart) service_action "$1" ;;
     log) show_logs ;;
     speedtest|speettest) run_speedtest ;;
+    caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" ;;
     update) update_core ;;
     update.sh) update_manager ;;
     rollback.sh) rollback_manager ;;
@@ -1574,7 +1776,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|speedtest|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link|client [入站ID]|status|start|stop|restart|log|speedtest|caddy [install|static|reverse|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

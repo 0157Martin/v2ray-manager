@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.5.0
+
+- 主菜单新增 Caddy 网站管理：通过官方稳定仓库和 GPG key 自动安装 Caddy、创建自动 HTTPS
+  静态伪装网站，以及反向代理到受限的本机后端地址。
+- Caddy 站点使用独立 `conf.d` 配置，保留现有 Caddyfile；应用前校验，reload 失败恢复旧
+  站点配置，并检测 Xray 或其他服务的 TCP 80/443 冲突。
+- 新增 `v2ray caddy install|static|reverse|status|log` 非交互命令和 Caddy 配置单元测试。
+
 ## 4.4.0
 
 - 维护工具菜单新增 Speedtest 服务器测速，并提供 `v2ray speedtest` 命令；自动识别 Ookla

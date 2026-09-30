@@ -14,7 +14,7 @@ if [[ ${1:-} != --case ]]; then
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot \
-    link-client-export link-client-disabled; do
+    link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback; do
     mkdir "$sandbox/$scenario"
     if bash "$0" --case "$scenario" "$sandbox/$scenario"; then
       printf 'PASS: %s\n' "$scenario"
@@ -34,6 +34,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly CONFIG_DIR=.*|readonly CONFIG_DIR=\"$sandbox/config\"|" \
   -e "s|readonly BACKUP_DIR=.*|readonly BACKUP_DIR=\"$sandbox/backups\"|" \
   -e "s|readonly SERVICE_FILE=.*|readonly SERVICE_FILE=\"$sandbox/xray.service\"|" \
+  -e "s|readonly CADDY_CONFIG=.*|readonly CADDY_CONFIG=\"$sandbox/Caddyfile\"|" \
+  -e "s|readonly CADDY_SITE_DIR=.*|readonly CADDY_SITE_DIR=\"$sandbox/caddy-sites\"|" \
+  -e "s|readonly CADDY_WEB_ROOT=.*|readonly CADDY_WEB_ROOT=\"$sandbox/www\"|" \
   "$repo_dir/v2ray.sh" > "$sandbox/manager.sh"
 # shellcheck disable=SC1091
 source "$sandbox/manager.sh"
@@ -115,6 +118,32 @@ CORE
 }
 
 case "$scenario" in
+  caddy-port-conflict)
+    jq -n '{inbounds:[{port:443}]}' > "$CONFIG_FILE"
+    ss() { fail 'listener inspection should not run after Xray config conflict'; }
+    if caddy_ports_available > "$sandbox/output" 2>&1; then fail 'Caddy accepted Xray port 443 conflict'; fi
+    grep -Fq '无法与其共享端口' "$sandbox/output" || fail 'Caddy conflict reason missing'
+    ;;
+  caddy-reload-rollback)
+    mkdir -p "$CADDY_SITE_DIR"
+    printf 'import %s/*.caddy\n' "$CADDY_SITE_DIR" > "$CADDY_CONFIG"
+    printf 'old-site\n' > "$CADDY_SITE_DIR/example.com.caddy"
+    ss() { :; }
+    getent() { :; }
+    open_local_firewall_port() { :; }
+    # shellcheck disable=SC2329
+    caddy() { return 0; }
+    reloads=0
+    systemctl() {
+      case "$1" in
+        is-active) return 0 ;;
+        reload) ((reloads+=1)); (( reloads > 1 )) ;;
+        *) fail "unexpected Caddy systemctl call: $*" ;;
+      esac
+    }
+    if configure_caddy_site static example.com > "$sandbox/output" 2>&1; then fail 'failed Caddy reload reported success'; fi
+    [[ $(cat "$CADDY_SITE_DIR/example.com.caddy") == old-site ]] || fail 'old Caddy site was not restored'
+    ;;
   tls-renew-*)
     mkdir -p "$TLS_DIR/example.com" "$sandbox/lineage"
     printf old-cert > "$TLS_DIR/example.com/cert.pem"
