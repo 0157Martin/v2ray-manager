@@ -1,49 +1,66 @@
-# Xray / VLESS REALITY 安装与管理脚本
+# Xray 多协议安装与管理脚本
+
+[![CI](https://github.com/0157Martin/v2ray-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/0157Martin/v2ray-manager/actions/workflows/ci.yml)
 
 作者：[0157Martin](https://github.com/0157Martin)
 
-面向**你拥有或获授权管理的 Debian/Ubuntu 服务器**的一键安装与管理脚本。项目保留熟悉的 `v2ray` 管理命令，但底层已升级为 Xray Core，默认部署 VLESS + REALITY + XTLS Vision。
+这是一个面向 **Debian/Ubuntu** 的 Xray Core 安装与运维脚本，适用于你拥有或获授权管理的
+服务器。它通过 `v2ray` 命令提供交互菜单，同时支持 VLESS、Trojan、VMess，REALITY 或
+常规 TLS，以及 RAW、XHTTP、WebSocket、gRPC 等传输组合。
 
-## 协议组合
+脚本不会在安装结束时自动打印连接凭据。安装后由你选择具体入站，再导出分享链接或原生
+Xray 客户端 JSON。一个 Xray 服务可以运行多个独立入站；每个入站还可以生成最多 10 条
+具有独立凭据、可同时使用的子链接。
 
-1. VLESS + REALITY + XTLS Vision + RAW（默认推荐，直连或 Cloudflare 灰云）
-2. VLESS + REALITY + XHTTP（REALITY 握手仍须直达 Xray，不能走普通橙云）
-3. VLESS + REALITY + gRPC（REALITY 握手仍须直达 Xray，不能走普通橙云）
-4. VLESS + TLS + XHTTP（需自有域名和证书，可用于 Caddy/Cloudflare 橙云）
-5. VLESS + TLS + WebSocket（需自有域名和证书，可用于 Caddy/Cloudflare 橙云）
-6. VLESS + TLS + gRPC（需自有域名和证书，可用于兼容的 HTTP/2 反向代理）
-7. Trojan + REALITY + RAW（直连或 Cloudflare 灰云）
-8. VMess + TCP（旧版兼容，无 TLS/REALITY）
-9. VMess + WebSocket + TLS（旧版兼容）
-10. VMess + gRPC + TLS（旧版兼容）
-11. Trojan + WebSocket + TLS
-12. VLESS + TLS + XTLS Vision + RAW（官方教程组合，直连；RAW 不能走普通橙云）
+快速导航：[选择协议](#如何选择协议) · [安装](#一行安装) · [管理命令](#管理命令) ·
+[Caddy](#caddy-网站伪装与反向代理) · [非交互安装](#非交互安装) ·
+[连接排障](#导入后延迟为--1--无法连接)
 
-Cloudflare 仅作为 DNS 托管且关闭代理（灰云）时，域名会直接解析到 VPS，REALITY 可以正常
-使用。开启普通代理（橙云）后，Cloudflare 会终止客户端 TLS，因此所有 REALITY 组合都不能
-使用；菜单中的 XHTTP 或 gRPC 只描述传输层，不会改变这一限制。需要橙云、CDN 或优选 IP
-时请选择普通 TLS 的 XHTTP/WebSocket/gRPC 组合，并配置相应的 Caddy 反向代理。
+## 功能概览
+
+- 安装或更新 Xray Core，并校验官方发布包的 SHA-256 摘要。
+- 交互选择 12 种协议组合；安装过程不会静默创建或输出默认链接。
+- 管理多个入站，包括添加、修改、启用、停用、删除和批量导出。
+- 为单个入站维护 1–10 个独立用户凭据，配置失败时自动回滚。
+- 自动生成并校验 UUID、REALITY X25519 密钥、Short ID 和 TLS 证书。
+- 从现有证书导入，或使用 Certbot 申请及续期；部署失败恢复原证书。
+- 安装 Caddy，创建伪装站点，或为 XHTTP/WebSocket 配置本机反向代理。
+- 提供防火墙、服务状态、日志、Speedtest、回程路由、丢包和延迟诊断。
+- 自动保留最近 10 份配置备份，支持 Xray、管理脚本和配置的独立更新与回退。
+- 使用低权限 `xray` 系统账户，并对 systemd 服务进行基础加固。
+
+## 如何选择协议
+
+如果没有必须兼容的旧客户端，可从下面三类中选择：
+
+- **直接连接、没有自有证书：**优先选择 `VLESS-REALITY-Vision-RAW`。
+- **需要 Cloudflare 橙云或 HTTP CDN：**选择普通 TLS 的 XHTTP、WebSocket 或 gRPC；其中
+  WebSocket 的客户端和 CDN 兼容范围通常最广。
+- **已有旧版客户端：**使用 VMess 或传统 Trojan 组合；新部署优先考虑 VLESS。
+
+| 编号 | 菜单名称 | 适用场景 | Cloudflare 普通橙云 |
+| --- | --- | --- | --- |
+| 1 | VLESS-REALITY-Vision-RAW | 推荐的高性能直连方案，无需自有证书 | 不支持 |
+| 2 | VLESS-REALITY-XHTTP | 使用 XHTTP 传输，但 REALITY 仍需直连 | 不支持 |
+| 3 | VLESS-REALITY-gRPC | 使用 gRPC 传输，但 REALITY 仍需直连 | 不支持 |
+| 4 | VLESS-XHTTP-TLS | 自有域名、证书、Caddy 或 HTTP CDN | 支持 |
+| 5 | VLESS-WebSocket-TLS | 广泛兼容客户端和 HTTP CDN | 支持 |
+| 6 | VLESS-gRPC-TLS | 已有 HTTP/2 或 gRPC 反向代理 | 有条件支持 |
+| 7 | Trojan-REALITY-RAW | 需要 Trojan 客户端语义的 REALITY 直连 | 不支持 |
+| 8 | VMess-TCP | 无 TLS 的旧版兼容或可信链路 | 不支持 |
+| 9 | VMess-WebSocket-TLS | 旧客户端与 HTTP CDN 兼容 | 支持 |
+| 10 | VMess-gRPC-TLS | 旧客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
+| 11 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
+| 12 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
+
+“不支持橙云”不等于不能使用 Cloudflare DNS。可以把域名托管在 Cloudflare，但应将代理
+状态设为 **DNS only（灰云）**，让客户端直接连接服务器。
 
 ### Cloudflare 使用范围
 
 本项目没有任何协议必须经过 Cloudflare。Cloudflare 可以只负责 DNS，也可以作为可选的
 HTTP/HTTPS 反向代理；是否开启橙云取决于所选协议。使用灰云（DNS only）时，客户端仍然
 直接连接 VPS，Cloudflare 不转发流量。
-
-| 编号 | 协议组合 | 普通橙云 | 建议配置 |
-| --- | --- | --- | --- |
-| 1 | VLESS-REALITY-Vision-RAW | 不支持 | 灰云或不使用 Cloudflare，直接连接 Xray |
-| 2 | VLESS-REALITY-XHTTP | 不支持 | REALITY 握手必须直达 Xray，使用灰云 |
-| 3 | VLESS-REALITY-gRPC | 不支持 | REALITY 握手必须直达 Xray，使用灰云 |
-| 4 | VLESS-XHTTP-TLS | 支持 | 可选橙云/CDN，需要有效域名、证书及 HTTP 反代 |
-| 5 | VLESS-WebSocket-TLS | 支持 | 推荐用于普通橙云，需配置 WebSocket 反代 |
-| 6 | VLESS-gRPC-TLS | 有条件支持 | 入口必须为 443，并在 Cloudflare Network 中开启 gRPC |
-| 7 | Trojan-REALITY-RAW | 不支持 | 灰云或不使用 Cloudflare，直接连接 Xray |
-| 8 | VMess-TCP | 不支持 | 灰云直连；仅建议用于旧客户端或可信链路 |
-| 9 | VMess-WebSocket-TLS | 支持 | 适合普通橙云及旧客户端 |
-| 10 | VMess-gRPC-TLS | 有条件支持 | 入口必须为 443，并在 Cloudflare Network 中开启 gRPC |
-| 11 | Trojan-WebSocket-TLS | 支持 | 适合普通橙云，需配置 WebSocket 反代 |
-| 12 | VLESS-TLS-Vision-RAW | 不支持 | 灰云直连，不能作为普通 HTTP CDN 节点 |
 
 普通橙云只代理 Cloudflare 支持的 HTTP/HTTPS 端口。HTTPS 推荐使用 `443`，也支持
 `2053`、`2083`、`2087`、`2096` 和 `8443`；项目使用 CDN 域名导出时固定生成公网
@@ -62,24 +79,11 @@ Cloudflare 官方参考：
 - [gRPC 要求与开启方式](https://developers.cloudflare.com/network/grpc-connections/)
 - [Spectrum TCP/UDP 代理](https://developers.cloudflare.com/spectrum/)
 
-TLS 组合不会自动修改 DNS、Caddy 或 Nginx。可通过环境变量提供现有 PEM 证书与私钥；未提供时，脚本先匹配已有证书，找不到才使用 Certbot 申请。自动申请需要你拥有的域名指向本机、公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认使用 standalone，要求本机 80 端口空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html`，由该网站响应 HTTP challenge。证书按域名保存，Certbot 续期后通过部署钩子校验、同步，部署失败回滚。
-
-## 当前技术方案
-
-- Xray Core 最新稳定 Release
-- VLESS 协议与 REALITY 传输安全
-- XTLS Vision 流控及 RAW/TCP 传输
-- 下载官方发布包及其 `.dgst`，安装前验证 SHA-256
-- 独立的 `xray` 低权限系统账户和 systemd 安全加固
-- 自动生成 UUID、X25519 密钥对与 Short ID
-- 输出主流客户端可导入的 `vless://` 链接
-- 修改配置或轮换密钥失败时自动恢复上一份可用配置
-- 自动保留最近 10 份配置备份，支持手动备份和恢复
-- 提供运行状态、配置、DNS 与监听端口综合诊断
-- 支持环境变量驱动的非交互安装
-- 支持单个 Xray 进程同时运行多个独立入站
-- 支持添加、修改、停用、启用和删除单个入站
-- `v2ray links` 一次输出全部启用入站的有效链接
+普通 TLS 入站需要有效证书。脚本不会自动修改 DNS、Caddy 或 Nginx；只有你主动进入
+“Caddy 网站管理”或执行 `v2ray caddy ...` 时才会写入 Caddy 配置。你可以导入已有 PEM
+证书和私钥；未提供时，脚本先查找匹配证书，找不到才使用 Certbot。自动申请要求域名指向
+本机且公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认 standalone 模式要求
+本机 80 空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html` 使用 webroot 验证。
 
 ## 一行安装
 
@@ -97,6 +101,16 @@ bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main
 
 生产服务器建议先审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 和 [v2ray.sh](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray.sh)。
 
+安装完成后不会自动显示链接。运行下面三条命令完成检查和导出：
+
+```bash
+v2ray doctor             # 检查配置、证书、监听端口和服务状态
+v2ray inbounds           # 查看可用的入站 ID
+v2ray link primary       # 按入站 ID 输出分享链接
+```
+
+如果主入站 ID 不是 `primary`，请使用 `v2ray inbounds` 显示的实际 ID。
+
 ## 管理命令
 
 ```bash
@@ -107,6 +121,7 @@ v2ray links            # 输出全部启用入站链接
 v2ray users primary 5  # 为指定入站设置 1-10 条可同时使用的独立子链接
 v2ray firewall         # 放行已启用入站的本机 UFW/firewalld TCP 端口
 v2ray info             # 查看版本和连接信息
+v2ray version          # 查看管理脚本版本
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
 v2ray link             # 重新显示默认入站链接
@@ -122,8 +137,8 @@ v2ray speedtest        # 测试服务器下载、上传速度和延迟
 v2ray route 1.1.1.1    # 测试 VPS 到目标的回程路由、丢包和逐跳延迟
 v2ray caddy            # 打开 Caddy 网站管理菜单
 v2ray update           # 更新 Xray Core，保留配置
-    v2ray update.sh        # 更新管理脚本
-    v2ray rollback.sh      # 恢复上一次更新前的管理脚本
+v2ray update.sh        # 更新管理脚本
+v2ray rollback.sh      # 恢复上一次更新前的管理脚本
 v2ray rotate           # 轮换 REALITY 密钥和 Short ID
 v2ray backup           # 创建配置备份
 v2ray restore          # 恢复最近一份备份
@@ -132,14 +147,14 @@ v2ray uninstall
 ```
 
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、维护诊断、卸载”分组，并显示
-Xray/Caddy 运行状态和启用、停用入站数量。链接和客户端配置只在“连接与导出”中按用户
-选择显示；进入子菜单后可以连续操作，选择 `0` 返回主菜单。
+Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不会自动输出凭据；需要分享链接
+或客户端 JSON 时，进入“连接与导出”并选择对应入站。子菜单中选择 `0` 返回主菜单。
 
-“连接与导出 → 设置指定协议的子链接数量”可以为一个启用入站生成 `1–10` 个独立用户
-凭据。所有子链接共享该入站的协议、域名、端口、传输路径和 TLS/REALITY 参数，但 UUID
-（Trojan 中作为密码）各不相同，可以同时在线使用。重新设置数量时会保留已有凭据并补充
-或裁剪到指定总数；减少数量会立即使被裁剪的链接失效。客户端 JSON 默认导出第一条凭据，
-完整子链接使用 `v2ray link <入站ID>` 或“输出指定入站链接”查看。
+“连接与导出 → 设置指定协议的子链接数量”可以为一个启用入站生成 `1–10` 个独立凭据。
+这些链接共享协议、域名、端口、传输路径和 TLS/REALITY 参数，但 UUID（Trojan 中作为
+密码）不同，可以同时使用。增加数量时保留已有凭据并生成缺少的部分；减少数量时裁剪末尾
+凭据，被裁剪的链接立即失效。`v2ray client <入站ID>` 只导出第一条凭据；使用
+`v2ray link <入站ID>` 查看该入站的全部分享链接。
 
 “维护与诊断 → 路由、丢包与延迟测试”使用 `ping` 和 10 轮 MTR 报告测试 VPS 到指定客户端
 公网 IP 或域名的回程方向，并显示逐跳丢包和平均延迟。首次使用会从系统仓库安装
@@ -149,7 +164,7 @@ Xray/Caddy 运行状态和启用、停用入站数量。链接和客户端配置
 
 执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
 
-`v2ray speedtest` 也可从“维护工具 → Speedtest 服务器测速”运行。脚本优先使用已安装的
+`v2ray speedtest` 也可从“维护与诊断 → Speedtest 服务器测速”运行。脚本优先使用已安装的
 Ookla `speedtest` 或 `speedtest-cli`；均不存在时安装系统仓库的 `speedtest-cli`。测速会
 连接外部 Speedtest 服务器、暴露服务器公网 IP，并消耗一定流量，但不会修改或重启 Xray。
 
@@ -185,18 +200,24 @@ Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路�
 建议 Xray 使用 `24443` 等高位端口，Caddy 独占公网 `80/443`。应用前应确认 Xray 的域名、
 证书和传输路径与 Caddy 参数完全一致。
 
-Cloudflare 橙云或优选 IP 仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
+自定义 Cloudflare/CDN 入口域名仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
 `v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
-`443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名，避免把优选 IP 错当成证书域名。
-Cloudflare 代理不适用于普通 VLESS RAW、REALITY 或任意 TCP 节点。
+`443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名。为防止链接暴露 IP 或把 IP
+误当作证书域名，该参数只接受完整域名，不接受 IP 地址。Cloudflare 代理不适用于
+VLESS RAW、REALITY 或普通 TCP 节点。gRPC 虽可由 Cloudflare 转发，但不使用这个
+XHTTP/WebSocket 专用的地址覆盖导出入口。
 
 分享链接不写入或自动探测服务器公网 IP。普通 TLS 节点使用证书域名作为入口；REALITY
 和无 TLS 节点安装时要求填写一个指向 VPS 的入口域名，Cloudflare 中必须按协议选择灰云
 或橙云。已有节点若只保存了 IP，需要在“修改配置 → 更改服务器地址”中改成完整域名后再导出。
 
-## 按官方教程部署与导出
+## 官方文档对应关系与客户端 JSON
 
-4.3.0 依据 [服务器篇](https://xtls.github.io/document/level-0/ch07-xray-server.html)、[证书篇](https://xtls.github.io/document/level-0/ch06-certificates.html) 和 [客户端篇](https://xtls.github.io/document/level-0/ch08-xray-clients.html) 增加 TLS Vision、webroot 申请和原生客户端配置导出。字段使用实际稳定版 Xray 验证；教程中的网站回落、地区分流、SSH 与内核设置需按服务器用途配置，本脚本不自动照搬。
+项目参考 Xray 官方文档的[服务器篇](https://xtls.github.io/document/level-0/ch07-xray-server.html)、
+[证书篇](https://xtls.github.io/document/level-0/ch06-certificates.html) 和
+[客户端篇](https://xtls.github.io/document/level-0/ch08-xray-clients.html)，实现 TLS Vision、
+webroot 证书申请和原生客户端配置导出。生成字段会使用 Xray 最新稳定版进行 CI 验证；
+官方教程中的网站回落、地区分流、SSH 和内核参数需要根据服务器用途配置，脚本不会自动套用。
 
 选择菜单协议 12，或使用 `V2M_PROFILE=vless-tls-raw`，即可部署 TLS + Vision。该组合需要自有域名及有效证书，直接连接 Xray 的 TLS 端口，不能把它当成 WebSocket 节点放到普通 HTTP CDN 后面。
 
@@ -227,7 +248,10 @@ export V2M_REMARK=my-server
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-`V2M_UUID` 可省略，脚本会自动生成。`V2M_ADDRESS` 必须是指向服务器的完整入口域名，脚本不会自动探测或把公网 IP 写入分享链接。未显式指定端口时会从 `443` 开始寻找空闲端口；`443` 已被 Caddy、Xray 或其他服务占用时自动选择后续空闲端口，不会停止占用者。不要在共享日志中输出 UUID 或生成后的导入链接。
+`V2M_UUID` 可省略，脚本会自动生成。`V2M_ADDRESS` 必须是指向服务器的完整入口域名，脚本
+不会自动探测或把公网 IP 写入分享链接。未显式指定端口时，直连协议从 `443` 开始寻找
+空闲端口；HTTP/CDN 协议从 `24443` 开始寻找本机后端端口，为 Caddy 的公网 `443` 留出
+位置。脚本不会停止端口占用者。不要在共享日志中输出 UUID 或生成后的导入链接。
 
 `V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合须设置 `V2M_SERVER_NAME` 为你拥有的域名，可用 `V2M_CERT_FILE` 和 `V2M_KEY_FILE` 指定证书，或让脚本自动查找/申请。`V2M_ACME_EMAIL` 可选，用于 Certbot 账户邮箱。
 
@@ -239,20 +263,27 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 管理脚本更新前会保存 `/var/backups/v2ray-manager/manager.previous.sh`，可用 `v2ray rollback.sh` 恢复。若新管理命令本身无法运行，可用 root 执行 `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`。重新运行安装不会升级已存在的内核；请使用独立的 `v2ray update` 命令。
 
-## 安装提示
+## 交互安装行为
 
-一行安装命令在交互终端中会先显示协议列表，必须由用户自行选择协议组合；安装结束时不会自动输出 UUID 或默认链接。随后从 `443` 开始选择监听端口：443 空闲时默认使用 443；已被 Caddy、Nginx 或其他服务占用时，不会停止现有服务。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以直接输入 `v2ray` 重试或查看诊断。完成后输入 `v2ray` 进入菜单；需要导出时主动运行 `v2ray links` 或 `v2ray link`。
+一行安装命令在交互终端中会先显示协议列表，必须由用户自行选择协议组合；安装结束时
+不会自动输出 UUID 或默认链接。直连协议优先使用 `443`，HTTP/CDN 协议优先使用后端端口
+`24443`；端口已被 Caddy、Nginx、Xray 或其他服务占用时自动寻找空闲端口，不会停止现有
+服务。脚本启动后会立即创建或修复 `v2ray` 管理命令；即使后续下载或配置校验失败，也可以
+直接输入 `v2ray` 重试或查看诊断。需要导出时主动运行 `v2ray links` 或 `v2ray link`。
 
 没有交互终端时，安装器不会静默创建默认协议。CI、云初始化等自动化部署必须明确设置
 `V2M_NONINTERACTIVE=1`，并建议同时提供 `V2M_PROFILE` 等参数；未提供的非交互参数才使用
 脚本默认值。
 
-从管理菜单开始安装时需要选择：
+从管理菜单开始安装时需要确认：
 
-1. 监听端口，默认 `443`。
-2. 客户端 UUID 自动生成或沿用，脚本校验格式，无需手动填写。
-3. REALITY 目标域名，默认 `www.microsoft.com`。应选择服务器可以稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
-4. 节点备注。
+1. 协议组合。
+2. 监听端口。直连协议从 `443` 开始寻找空闲端口；HTTP/CDN 协议默认使用本机后端端口
+   `24443`，为 Caddy 的公网 `443` 留出位置。
+3. 客户端入口域名。分享链接不会写入或自动探测公网 IP。
+4. TLS 证书域名，或 REALITY 目标域名。REALITY 默认目标是 `www.microsoft.com`，应选择
+   服务器能稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
+5. 节点备注。UUID、REALITY 密钥和 Short ID 由脚本生成并验证。
 
 安装或新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
 
@@ -262,9 +293,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 `-1` 表示客户端测试没有成功，单凭这个结果不能区分入口地址、端口阻断、协议兼容或握手问题。先运行 `v2ray version`、`v2ray doctor` 和 `v2ray log`，确认服务器确实已部署修复后的脚本。诊断会检查全部入站端口、REALITY 目标握手和导出参数，但无法从本机证明公网端口可达。
 
-- 修改入站后，用 `v2ray links` 重新导出并重新导入客户端；4.2.1 起，单条链接也读取最新的启用入站状态。
+- 修改入站后，用 `v2ray links` 重新导出并重新导入客户端；单条链接始终读取最新的启用入站状态。
 - 分享地址必须是客户端能访问且指向服务器的入口域名。NAT/WARP 的出口地址不一定是入口；NAT 环境还需核对外部端口映射。
-- `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**。自动安装优先使用 443；如果 443 已被占用，以实际导出链接中的端口为准。
+- `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**。直连协议优先使用 443，HTTP/CDN 后端优先使用 24443；始终以实际导出链接和反向代理配置为准。
 - 从客户端网络检查 TCP 可达性，例如 Windows PowerShell 的 `Test-NetConnection <服务器地址> -Port <节点端口>`。TCP 成功仍不代表 REALITY/TLS 握手成功。
 - 核对客户端及内核是否支持所选协议组合。RAW 服务端在分享链接中使用 `type=tcp`，这是分享格式的兼容写法，无须手动改成 `raw`。
 
