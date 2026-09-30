@@ -144,7 +144,8 @@ v2ray speedtest        # 测试服务器下载、上传速度和延迟
 v2ray route 1.1.1.1    # 测试 VPS 到目标的回程路由、丢包和逐跳延迟
 v2ray caddy            # 打开 Caddy 网站管理菜单
 v2ray update           # 更新 Xray Core，保留配置
-v2ray update.sh        # 更新管理脚本
+v2ray upgrade          # 一键更新项目脚本、迁移数据并保留现有链接
+v2ray update.sh        # upgrade 的兼容别名
 v2ray rollback.sh      # 恢复上一次更新前的管理脚本
 v2ray rotate           # 轮换 REALITY 密钥和 Short ID
 v2ray backup           # 创建配置备份
@@ -271,7 +272,19 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 `v2ray update` 在临时目录下载并校验新内核和 GeoData，用新内核检查当前配置后才替换文件。运行中的服务重启后会连续检查 5 秒；文件替换或健康检查失败时自动恢复旧内核与 GeoData。原先停止的服务保持停止。自动回退失败时，会输出保留的恢复文件目录。该检查用于发现启动故障，不代表已验证客户端到服务器的端到端连通性。
 
-`v2ray update.sh` 和安装器默认通过 GitHub API 解析 `main` 的完整提交 SHA，再从该固定提交下载脚本，避免一次操作中版本漂移。可设置 `V2M_MANAGER_REF` 为完整的 40 位提交 SHA，以部署指定版本或绕过提交查询的 API 限流。下载通过 HTTPS，并检查 Bash 语法与项目标识；这不是独立签名验证。
+`v2ray upgrade` 是服务器已安装项目的一键更新入口，`v2ray update.sh` 作为兼容别名继续可用。
+更新器通过 GitHub API 解析 `main` 的完整提交 SHA，再从该固定提交下载脚本，避免一次操作中
+版本漂移。新脚本通过 Bash 语法和项目标识检查后才会替换当前命令，然后自动执行数据迁移、
+重建 Xray 配置并比较更新前后的入站连接参数。UUID/密码、域名、端口、传输路径、TLS/REALITY
+参数和证书路径保持不变，因此原分享链接继续有效。若迁移失败或连接参数发生非预期变化，
+配置和管理脚本都会恢复到更新前版本。
+
+从 5.2.0 开始，脚本会在运行管理命令时检查数据结构版本。由旧版 `v2ray update.sh` 首次
+升级到 5.2.0 后，如果旧更新器尚未调用迁移，新脚本会在下一次运行 `v2ray`、`v2ray doctor`
+或其他管理命令时自动完成迁移，无需重新生成或重新导入链接。
+
+可以设置 `V2M_MANAGER_REF` 为完整的 40 位提交 SHA，以部署指定版本或绕过提交查询的 API
+限流。下载通过 HTTPS，并检查 Bash 语法与项目标识；这不是独立签名验证。
 
 管理脚本更新前会保存 `/var/backups/v2ray-manager/manager.previous.sh`，可用 `v2ray rollback.sh` 恢复。若新管理命令本身无法运行，可用 root 执行 `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`。重新运行安装不会升级已存在的内核；请使用独立的 `v2ray update` 命令。
 

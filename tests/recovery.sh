@@ -12,7 +12,7 @@ if [[ ${1:-} != --case ]]; then
   for scenario in healthy delayed-crash restarted-process invalid-core download-failure \
     update-success update-stopped update-rollback partial-copy rollback-failure \
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
-    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users \
+    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot \
     link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback; do
     mkdir "$sandbox/$scenario"
@@ -387,6 +387,22 @@ CORE
         list_inbounds > "$sandbox/inbounds-output"
         grep -q 'REALITY 直连' "$sandbox/inbounds-output" || fail 'inbound list did not show protocol group'
         grep -Eq 'primary +启用 +VLESS-REALITY-Vision-RAW +4 +24443' "$sandbox/inbounds-output" || fail 'inbound list did not show link count'
+        ;;
+      link-project-migrate)
+        EXTRA_UUIDS=22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333
+        save_current_node "$NODES_DIR/primary.env"
+        sed -i '/^DATA_SCHEMA=/d' "$NODES_DIR/primary.env"
+        rebuild_config_from_nodes
+        before=$(config_connection_fingerprint "$CONFIG_FILE")
+        migrate_project_state > "$sandbox/migrate-output"
+        after=$(config_connection_fingerprint "$CONFIG_FILE")
+        [[ $before == "$after" ]] || fail 'project migration changed connection parameters'
+        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$NODES_DIR/primary.env" >/dev/null || fail 'node schema marker missing after migration'
+        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$STATE_FILE" >/dev/null || fail 'manager schema marker missing after migration'
+        jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'migration changed existing sub-links'
+        sed -i '/^DATA_SCHEMA=/d' "$NODES_DIR/primary.env"
+        ensure_project_state_current doctor > "$sandbox/automatic-migrate-output"
+        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$NODES_DIR/primary.env" >/dev/null || fail 'automatic migration did not upgrade old node state'
         ;;
     esac
     ;;

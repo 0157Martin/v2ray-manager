@@ -25,7 +25,10 @@ channel.
   and GeoData on copy or restart/health-check failure. A stopped service remains stopped. If rollback
   fails, the transaction directory is retained and printed for manual recovery. The service unit
   is preserved during core-only updates.
-- `v2ray update.sh` resolves the repository's current commit and downloads that immutable revision.
+- `v2ray upgrade` (with `v2ray update.sh` retained as an alias) resolves the repository's current
+  commit and downloads that immutable revision. After replacement, the new manager migrates its
+  state schema, rebuilds the Xray configuration, and compares connection-relevant fields with the
+  pre-update configuration. Unexpected changes restore both configuration and the previous manager.
   Set `V2M_MANAGER_REF` to a full 40-character commit SHA to pin a specific revision. The bootstrapper
   uses the same policy. Syntax and identity checks supplement HTTPS; they are not signature checks.
 - `v2ray rollback.sh` restores `/var/backups/v2ray-manager/manager.previous.sh`. If the current
