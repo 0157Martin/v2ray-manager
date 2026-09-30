@@ -175,3 +175,8 @@ valid_transport_path /a1b2c3 || fail 'valid transport path rejected'
 ! valid_transport_path //bad || fail 'double-slash transport path accepted'
 rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray"
 printf '%s\n' 'Caddy configuration tests passed.'
+
+warp_domains=$(normalize_warp_domains 'netflix.com, domain:openai.com,geosite:netflix')
+[[ $warp_domains == 'domain:netflix.com,domain:openai.com,geosite:netflix' ]] || fail 'WARP domain normalization mismatch'
+if (normalize_warp_domains 'https://invalid.example/path' >/dev/null 2>&1); then fail 'invalid WARP domain rule accepted'; fi
+printf '%s\n' 'WARP policy tests passed.'

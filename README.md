@@ -145,6 +145,7 @@ v2ray restart
 v2ray log              # 查看最近 100 条日志
 v2ray speedtest        # 测试服务器下载、上传速度和延迟
 v2ray route 1.1.1.1    # 测试 VPS 到目标的回程路由、丢包和逐跳延迟
+v2ray warp             # 管理全部协议共用的 WARP 出站策略
 v2ray caddy            # 打开 Caddy 网站管理菜单
 v2ray update           # 更新 Xray Core，保留配置
 v2ray upgrade          # 一键更新项目脚本、迁移数据并保留现有链接
@@ -315,6 +316,37 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 新增入站后，脚本会检测已启用的本机 UFW 或 firewalld，并自动放行全部已启用入站的 TCP 端口；也可随时运行 `v2ray firewall` 重试。未启用这两种防火墙时，脚本不会猜测或改写 iptables/nftables 规则。
 
 云服务商安全组仍需在控制台手动放行所选 TCP 端口——它属于云账户权限，脚本没有也不应保存该账户的 API 凭据。本脚本不会自动修改 DNS 或系统代理。
+
+## WARP 出站管理
+
+主菜单的“WARP 出站管理”对全部启用的 VLESS、VMess 和 Trojan 入站统一生效，不需要逐个
+选择协议。项目安装 Cloudflare 官方 Linux 客户端，并将它设置为只监听
+`127.0.0.1:40000` 的本机代理；Xray 根据路由规则使用该代理，因此不会改变服务器默认路由，
+也不会接管 SSH、Caddy、软件更新或其他系统进程。
+
+推荐使用“指定域名通过 WARP”：
+
+```bash
+v2ray warp install
+v2ray warp selective 'geosite:netflix,domain:openai.com,domain:chatgpt.com'
+v2ray warp status
+v2ray warp test
+```
+
+需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
+访问内网时绕过边界，`geoip:private` 始终使用原生直连；这里的“全部”指所有协议产生的
+公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
+QUIC 或其他 UDP 连接被错误送入代理后超时。运行 `v2ray warp off` 可让全部协议恢复原生出口，`v2ray warp uninstall`
+会先恢复原生出口再移除 WARP 客户端。
+
+WARP 只能改变服务器出站路径和出口 IP，不能替代 REALITY/TLS、防火墙或 SSH 安全设置，
+也不保证特定流媒体长期解锁。菜单中的出口检测以 Cloudflare `cdn-cgi/trace` 返回
+`warp=on` 为成功标准。策略变更会先备份现有配置，再重建并校验 Xray；服务健康检查失败时
+自动恢复之前的配置和策略。
+
+实现依据：[Cloudflare Linux 客户端](https://developers.cloudflare.com/warp-client/get-started/linux/)、
+[Cloudflare WARP Local proxy 模式](https://developers.cloudflare.com/warp-client/warp-modes/)、
+[Xray 路由规则](https://xtls.github.io/config/routing.html)。
 
 ## 导入后延迟为 -1 / 无法连接
 

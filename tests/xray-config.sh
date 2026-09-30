@@ -108,4 +108,15 @@ done
 jq -s '{log:{loglevel:"warning"},inbounds:map(.inbounds[0]),outbounds:.[0].outbounds}' "${multi_files[@]}" > "$temporary_dir/multi.json"
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/multi.json"
 
-printf 'Xray %s accepted the empty install state, all protocol profiles, and the combined multi-inbound configuration.\n' "$tag"
+# WARP routing is shared by every inbound and must remain valid in selective and all-traffic modes.
+cp "$temporary_dir/multi.json" "$temporary_dir/warp-selective.json"
+inject_warp_config "$temporary_dir/warp-selective.json" selective 'geosite:netflix,domain:openai.com'
+jq -e '.outbounds[] | select(.tag == "warp" and .protocol == "socks")' "$temporary_dir/warp-selective.json" >/dev/null
+jq -e '.routing.rules[] | select(.outboundTag == "warp") | .domain == ["geosite:netflix","domain:openai.com"]' "$temporary_dir/warp-selective.json" >/dev/null
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/warp-selective.json"
+cp "$temporary_dir/multi.json" "$temporary_dir/warp-all.json"
+inject_warp_config "$temporary_dir/warp-all.json" all
+jq -e '.routing.rules[] | select(.outboundTag == "warp") | .network == "tcp"' "$temporary_dir/warp-all.json" >/dev/null
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/warp-all.json"
+
+printf 'Xray %s accepted the empty state, all protocol profiles, combined inbounds, and shared WARP routing.\n' "$tag"
