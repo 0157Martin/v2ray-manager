@@ -65,6 +65,19 @@ for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tl
   XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/$PROFILE.client.json"
 done
 
+# Keep one real-core check for multiple credentials on the same inbound.
+export PROFILE=vless-reality-raw
+export PORT=25443
+export PATH_VALUE=
+export UUID
+UUID=$($core_binary uuid)
+export EXTRA_UUIDS
+EXTRA_UUIDS="$($core_binary uuid),$($core_binary uuid)"
+render_config "$temporary_dir/multi-user.json"
+jq -e '.inbounds[0].settings.clients | length == 3' "$temporary_dir/multi-user.json" >/dev/null
+XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/multi-user.json"
+export EXTRA_UUIDS=
+
 roundtrip_args=()
 if [[ ${CONFIGURATION_ONLY:-0} == 1 ]]; then roundtrip_args+=(--configuration-only); fi
 "${PYTHON:-python3}" "$repo_dir/tests/link-roundtrip.py" "$temporary_dir" "$core_binary" "${roundtrip_args[@]}"

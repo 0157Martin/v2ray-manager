@@ -75,6 +75,11 @@ jq -e '.inbounds[0].protocol == "vless"' "$temporary" >/dev/null || fail "protoc
 jq -e '.inbounds[0].streamSettings.security == "reality"' "$temporary" >/dev/null || fail "security mismatch"
 jq -e '.inbounds[0].settings.clients[0].flow == "xtls-rprx-vision"' "$temporary" >/dev/null || fail "flow mismatch"
 
+export EXTRA_UUIDS=22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333
+render_config "$temporary"
+jq -e '.inbounds[0].settings.clients | length == 3 and .[1].id == "22222222-2222-4222-8222-222222222222"' "$temporary" >/dev/null || fail 'multiple inbound users did not render'
+export EXTRA_UUIDS=''
+
 PROFILE=vless-reality-xhttp
 PATH_VALUE=/test-path
 render_config "$temporary"
@@ -109,6 +114,12 @@ render_config "$temporary"
 cdn_link=$(show_connection_loaded "$temporary" edge.cdn.example.com)
 [[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@edge.cdn.example.com:443?'* ]] || fail 'CDN export did not use override domain and port 443'
 [[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'
+export EXTRA_UUIDS=22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333
+render_config "$temporary"
+multi_links=$(show_connection_loaded "$temporary" edge.cdn.example.com)
+[[ $(grep -c 'vless://' <<<"$multi_links") == 3 ]] || fail 'multi-user inbound did not export three links'
+[[ $multi_links == *'cdn-export-test-1'* && $multi_links == *'cdn-export-test-3'* ]] || fail 'sub-link remarks were not numbered'
+export EXTRA_UUIDS=''
 printf '%s\n' 'CDN address export test passed.'
 
 openssl genpkey -algorithm X25519 -out "$tls_test_dir/reality.pem" >/dev/null 2>&1

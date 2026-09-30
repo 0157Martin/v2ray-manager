@@ -12,7 +12,7 @@ if [[ ${1:-} != --case ]]; then
   for scenario in healthy delayed-crash restarted-process invalid-core download-failure \
     update-success update-stopped update-rollback partial-copy rollback-failure \
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
-    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation \
+    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot \
     link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback; do
     mkdir "$sandbox/$scenario"
@@ -350,6 +350,24 @@ CORE
         [[ $PORT == 24443 && $REMARK == node-A ]] || fail 'firewall changed selected node'
         output=$(show_connection_loaded)
         [[ $output == *':24443?'* && $output == *'#node-A'* ]] || fail 'wrong node exported after operation'
+        ;;
+      link-multi-users)
+        cat > "$XRAY_BIN" <<'CORE'
+#!/usr/bin/env bash
+if [[ $1 == uuid ]]; then
+  count_file=${sandbox}/uuid-count
+  count=0; [[ ! -f $count_file ]] || count=$(cat "$count_file")
+  ((count+=1)); printf '%s' "$count" > "$count_file"
+  printf '44444444-4444-4444-8444-%012d\n' "$count"
+fi
+CORE
+        chmod +x "$XRAY_BIN"
+        set_sub_link_count primary 3 > "$sandbox/output"
+        # shellcheck disable=SC1090,SC1091
+        . "$NODES_DIR/primary.env"
+        [[ $(tr ',' '\n' <<<"$EXTRA_UUIDS" | wc -l) == 2 ]] || fail 'sub-link credentials not persisted'
+        jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'three users not applied to Xray config'
+        [[ $(grep -c 'vless://' "$sandbox/output") == 3 ]] || fail 'three sub-links not exported'
         ;;
     esac
     ;;
