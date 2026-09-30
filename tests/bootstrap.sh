@@ -21,26 +21,30 @@ else
 #!/usr/bin/env bash
 readonly APP_NAME="v2ray-manager"
 readonly MANAGER_VERSION="4.2.0"
-printf '%s %s\n' "$V2M_NONINTERACTIVE" "$1" > "$sandbox/executed"
+printf '%s %s\n' "${V2M_NONINTERACTIVE:-0}" "$1" > "$sandbox/executed"
 MANAGER
 fi
 CURL
 chmod +x "$sandbox/bin/curl"
 export PATH="$sandbox/bin:$PATH"
 unset V2M_MANAGER_REF
-bash "$repo_dir/install.sh"
+if bash "$repo_dir/install.sh" >/dev/null 2>&1; then
+  printf 'Non-terminal bootstrap silently selected a default protocol.\n' >&2; exit 1
+fi
+[[ ! -e $sandbox/executed ]]
+V2M_NONINTERACTIVE=1 bash "$repo_dir/install.sh"
 [[ $(cat "$sandbox/executed") == '1 install' ]]
 grep -q '/1111111111111111111111111111111111111111/v2ray.sh$' "$sandbox/requests"
 rm "$sandbox/executed" "$sandbox/requests"
-V2M_MANAGER_REF=2222222222222222222222222222222222222222 bash "$repo_dir/install.sh"
+V2M_NONINTERACTIVE=1 V2M_MANAGER_REF=2222222222222222222222222222222222222222 bash "$repo_dir/install.sh"
 [[ $(wc -l < "$sandbox/requests") == 1 ]]
 grep -q '/2222222222222222222222222222222222222222/v2ray.sh$' "$sandbox/requests"
 rm "$sandbox/executed"
-if INVALID_SCRIPT=1 bash "$repo_dir/install.sh" >/dev/null 2>&1; then
+if V2M_NONINTERACTIVE=1 INVALID_SCRIPT=1 bash "$repo_dir/install.sh" >/dev/null 2>&1; then
   printf 'Invalid downloaded script was accepted.\n' >&2; exit 1
 fi
 [[ ! -e $sandbox/executed ]]
-if V2M_MANAGER_REF=main bash "$repo_dir/install.sh" >/dev/null 2>&1; then
+if V2M_NONINTERACTIVE=1 V2M_MANAGER_REF=main bash "$repo_dir/install.sh" >/dev/null 2>&1; then
   printf 'Mutable revision was accepted.\n' >&2; exit 1
 fi
 printf 'Bootstrap tests passed.\n'
