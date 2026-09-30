@@ -217,6 +217,11 @@ Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路�
 建议 Xray 使用 `24443` 等高位端口，Caddy 独占公网 `80/443`。应用前应确认 Xray 的域名、
 证书和传输路径与 Caddy 参数完全一致。
 
+在菜单中创建 Xray XHTTP/WS 路径反代时，管理器会按输入的 TLS 域名查找已启用的对应
+入站，并自动填入它实际使用的本机端口和传输路径。直接按 Enter 会采用显示的值；没有
+匹配入站时默认使用 `127.0.0.1:24443` 和 `/xhttp`。手动输入 `custom-path` 会规范化为
+`/custom-path`，包含空格或连续 `/` 的路径会被拒绝并返回 Caddy 菜单，不会退出到 shell。
+
 自定义 Cloudflare/CDN 入口域名仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
 `v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
 `443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名。为防止链接暴露 IP 或把 IP

@@ -173,6 +173,21 @@ grep -Fq 'tls_server_name cdn.example.com' "$caddy_xray" || fail 'Xray upstream 
 ! render_caddy_site xray cdn.example.com 127.0.0.1:24443 "$caddy_xray" '/bad path' || fail 'invalid transport path accepted'
 valid_transport_path /a1b2c3 || fail 'valid transport path rejected'
 ! valid_transport_path //bad || fail 'double-slash transport path accepted'
+[[ $(normalize_caddy_path '') == /xhttp ]] || fail 'empty Caddy path did not use default'
+[[ $(normalize_caddy_path custom-path) == /custom-path ]] || fail 'Caddy path did not gain a leading slash'
+if normalize_caddy_path '/bad path' >/dev/null; then fail 'invalid normalized Caddy path accepted'; fi
+caddy_node_dir=$(mktemp -d)
+cat > "$caddy_node_dir/matched.env" <<'EOF'
+PROFILE=vless-tls-xhttp
+SERVER_NAME=tenglong.xyz
+PORT=25443
+PATH_VALUE=/matched-path
+EOF
+export CADDY_NODE_DIR_OVERRIDE=$caddy_node_dir
+IFS=$'\t' read -r matched_upstream matched_path < <(find_caddy_xray_defaults tenglong.xyz)
+[[ $matched_upstream == 127.0.0.1:25443 && $matched_path == /matched-path ]] || fail 'Caddy did not discover matching Xray inbound defaults'
+rm -rf -- "$caddy_node_dir"
+unset CADDY_NODE_DIR_OVERRIDE
 rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray"
 printf '%s\n' 'Caddy configuration tests passed.'
 
