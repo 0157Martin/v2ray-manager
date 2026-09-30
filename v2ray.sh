@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.7.0"
+readonly MANAGER_VERSION="4.8.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -164,6 +164,7 @@ valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
 valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
+valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
@@ -1366,6 +1367,72 @@ run_speedtest() {
   }
 }
 
+install_route_tools() {
+  if command -v mtr >/dev/null 2>&1 && command -v ping >/dev/null 2>&1; then return; fi
+  step "安装路由测试工具"
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y mtr-tiny iputils-ping traceroute
+}
+
+route_latency_test() {
+  local target=$1
+  valid_route_target "$target" || { red "目标只能是有效 IP 或域名，不能包含 URL、端口或空格。" >&2; return 1; }
+  getent ahosts "$target" >/dev/null 2>&1 || { red "目标无法解析：$target" >&2; return 1; }
+  install_route_tools || return 1
+  printf '\n%s\n' "===== VPS → $target 回程路由与延迟 ====="
+  yellow "该结果从服务器发起，表示 VPS 到目标的回程方向；逐跳星号可能只是路由器不响应探测。"
+  printf '\n%s\n' '--- ICMP 延迟 ---'
+  ping -c 5 -W 2 "$target" || yellow "目标未响应 ICMP；这不一定表示 TCP 服务不可用。"
+  printf '\n%s\n' '--- MTR 路由、丢包与逐跳延迟（10 轮）---'
+  mtr --report --report-wide --show-ips --report-cycles 10 "$target" || {
+    red "MTR 测试失败。" >&2
+    return 1
+  }
+}
+
+show_forward_test_commands() (
+  local address port
+  load_connection_state || return 1
+  address=$(server_address)
+  port=$PORT
+  [[ -n $address && $address != YOUR_SERVER_IP ]] || {
+    red "无法确定客户端入口地址，请先在入站配置中设置服务器地址。" >&2
+    return 1
+  }
+  address=${address#[}; address=${address%]}
+  printf '\n%s\n' '===== 客户端 → VPS 去程测试 ====='
+  printf '请在发生连接问题的客户端网络执行；目标为 %s，节点端口为 %s。\n\n' "$address" "$port"
+  printf '%s\n' 'Windows PowerShell：'
+  printf '  Test-NetConnection %s -Port %s\n' "$address" "$port"
+  printf '  tracert -d %s\n\n' "$address"
+  printf '%s\n' 'Linux/macOS：'
+  printf '  ping -c 5 %s\n' "$address"
+  printf '  traceroute -n %s\n' "$address"
+  printf '  nc -vz -w 5 %s %s\n\n' "$address" "$port"
+  yellow "去程必须从客户端所在网络发起；VPS 本机无法还原客户端运营商的真实去程。"
+)
+
+route_test_menu() {
+  local choice target
+  while :; do
+    printf '\n%s\n' '----- 路由与延迟测试 -----'
+    printf '%s\n' '1) 测试 VPS → 目标的回程路由、丢包和延迟' \
+      '2) 显示客户端 → VPS 去程测试命令' '3) Speedtest 带宽测速' '0) 返回维护菜单'
+    read -r -p '请选择 [0-3]:' choice
+    case "$choice" in
+      1)
+        read -r -p '请输入客户端公网 IP 或目标域名：' target
+        route_latency_test "$target" || true
+        pause
+        ;;
+      2) show_forward_test_commands || true; pause ;;
+      3) run_speedtest || true; pause ;;
+      0) return ;;
+      *) yellow "无效选择。"; pause ;;
+    esac
+  done
+}
+
 valid_caddy_upstream() {
   local port
   if [[ $1 =~ ^(127\.0\.0\.1|localhost):([0-9]+)$ ]]; then
@@ -1791,13 +1858,13 @@ maintenance_menu() {
     printf '\n%s\n' '----- 维护与诊断 -----'
     printf '%s\n' '1) 更新 Xray Core' '2) 更新管理脚本' '3) 运行综合诊断' \
       '4) 检查并放行本机防火墙' '5) 备份配置' '6) 恢复最近备份' \
-      '7) 轮换 REALITY 密钥' '8) 恢复上一版管理脚本' '9) Speedtest 服务器测速' \
+      '7) 轮换 REALITY 密钥' '8) 恢复上一版管理脚本' '9) 路由、丢包与延迟测试' \
       '10) 查看项目信息' '0) 返回主菜单'
     read -r -p '请选择 [0-10]:' choice
     case "$choice" in
       1) update_core; pause ;; 2) update_manager; pause ;; 3) doctor || true; pause ;;
       4) open_enabled_inbound_ports; pause ;; 5) manual_backup; pause ;; 6) restore_latest; pause ;;
-      7) rotate_reality_keys; pause ;; 8) rollback_manager; pause ;; 9) run_speedtest || true; pause ;;
+      7) rotate_reality_keys; pause ;; 8) rollback_manager; pause ;; 9) route_test_menu ;;
       10) show_about; pause ;; 0) return ;; *) yellow "无效选择。"; pause ;;
     esac
   done
@@ -1812,6 +1879,7 @@ show_help() {
     'v2ray link <入站ID> <CDN地址> 以 443 导出 TLS XHTTP/WS 优选地址链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray speedtest 运行服务器网络测速' \
+    'v2ray route [目标IP/域名] 测试回程路由、丢包和延迟' \
     'v2ray caddy    管理 Caddy 伪装网站和本机反向代理' \
     'v2ray doctor   运行综合诊断' \
     'v2ray help     查看完整命令用法'
@@ -1878,6 +1946,7 @@ main() {
     start|stop|restart) service_action "$1" ;;
     log) show_logs ;;
     speedtest|speettest) run_speedtest ;;
+    route) if [[ -n ${2:-} ]]; then route_latency_test "$2"; else route_test_menu; fi ;;
     caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
     update) update_core ;;
     update.sh) update_manager ;;
@@ -1889,7 +1958,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link [入站ID] [CDN地址]|client [入站ID]|status|start|stop|restart|log|speedtest|caddy [install|static|reverse|xray|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link [入站ID] [CDN地址]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

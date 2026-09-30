@@ -75,6 +75,7 @@ v2ray stop
 v2ray restart
 v2ray log              # 查看最近 100 条日志
 v2ray speedtest        # 测试服务器下载、上传速度和延迟
+v2ray route 1.1.1.1    # 测试 VPS 到目标的回程路由、丢包和逐跳延迟
 v2ray caddy            # 打开 Caddy 网站管理菜单
 v2ray update           # 更新 Xray Core，保留配置
     v2ray update.sh        # 更新管理脚本
@@ -89,6 +90,12 @@ v2ray uninstall
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、维护诊断、卸载”分组，并显示
 Xray/Caddy 运行状态和启用、停用入站数量。链接和客户端配置只在“连接与导出”中按用户
 选择显示；进入子菜单后可以连续操作，选择 `0` 返回主菜单。
+
+“维护与诊断 → 路由、丢包与延迟测试”使用 `ping` 和 10 轮 MTR 报告测试 VPS 到指定客户端
+公网 IP 或域名的回程方向，并显示逐跳丢包和平均延迟。首次使用会从系统仓库安装
+`mtr-tiny`、`iputils-ping` 和 `traceroute`。真实去程依赖客户端运营商网络，必须从客户端
+发起；菜单会根据当前节点地址和端口生成 Windows PowerShell、Linux/macOS 测试命令。
+逐跳星号或中间节点丢包可能只是路由器限制 ICMP，需结合最终目标的丢包与延迟判断。
 
 执行 `rotate` 后旧客户端链接会立即失效，需要重新导入新链接。
 

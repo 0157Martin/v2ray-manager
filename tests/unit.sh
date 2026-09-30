@@ -19,6 +19,11 @@ valid_uuid 11111111-1111-4111-8111-111111111111 || fail 'valid UUID rejected'
 valid_server_name www.microsoft.com || fail "normal hostname should be valid"
 ! valid_server_name localhost || fail "single-label hostname should be invalid"
 ! valid_server_name 'bad..example.com' || fail "hostname with empty label should be invalid"
+valid_route_target 1.1.1.1 || fail 'IPv4 route target rejected'
+valid_route_target 2001:4860:4860::8888 || fail 'IPv6 route target rejected'
+valid_route_target client.example.com || fail 'hostname route target rejected'
+! valid_route_target 'https://example.com' || fail 'URL accepted as route target'
+! valid_route_target 'example.com;id' || fail 'shell metacharacter accepted as route target'
 
 export ADDRESS=23.95.15.200
 [[ $(server_address) == 23.95.15.200 ]] || fail "explicit server address should override public-IP detection"
@@ -118,6 +123,17 @@ speedtest-cli() { printf '%s\n' 'mock-speedtest-ok'; }
 speedtest_output=$(run_speedtest)
 [[ $speedtest_output == *mock-speedtest-ok* ]] || fail 'speedtest-cli was not invoked'
 printf '%s\n' 'Speedtest command-selection test passed.'
+
+# Route commands are mocked to verify argument handling without network traffic
+# or package installation on the test host.
+install_route_tools() { :; }
+getent() { :; }
+ping() { printf '%s\n' "mock-ping:$*"; }
+mtr() { printf '%s\n' "mock-mtr:$*"; }
+route_output=$(route_latency_test client.example.com)
+[[ $route_output == *'mock-ping:-c 5 -W 2 client.example.com'* ]] || fail 'route latency ping arguments mismatch'
+[[ $route_output == *'mock-mtr:--report --report-wide --show-ips --report-cycles 10 client.example.com'* ]] || fail 'MTR did not use ten report cycles'
+printf '%s\n' 'Route and latency command test passed.'
 
 caddy_static=$(mktemp)
 caddy_reverse=$(mktemp)
