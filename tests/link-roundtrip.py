@@ -41,7 +41,7 @@ def check_export(folder, profile):
     inbound = server["inbounds"][0]
     stream = inbound["streamSettings"]
     user = inbound["settings"]["clients"][0]
-    assert data["address"] == "127.0.0.1"
+    assert data["address"] == "node.test.example"
     assert data["port"] == inbound["port"]
     assert data["protocol"] == inbound["protocol"]
     assert data["user"] == user.get("id", user.get("password"))
@@ -157,7 +157,7 @@ def real_traffic(folder, core, server, data):
         "log": {"loglevel": "debug"},
         "inbounds": [{"listen": "127.0.0.1", "port": socks_port, "protocol": "socks", "settings": {"auth": "noauth"}}],
         "outbounds": [{"protocol": data["protocol"], "settings": {"vnext": [{
-            "address": data["address"], "port": server_port,
+            "address": "127.0.0.1", "port": server_port,
             "users": [{"id": data["user"], "encryption": "none", "flow": data["flow"]}]
         }]}, "streamSettings": {"network": data["network"], "security": data["security"],
             "realitySettings": {"serverName": data["sni"], "fingerprint": data["fingerprint"],

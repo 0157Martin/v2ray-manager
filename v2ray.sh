@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="4.8.1"
+readonly MANAGER_VERSION="4.9.0"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
@@ -244,6 +244,7 @@ choose_profile() {
     12) PROFILE=vless-tls-raw; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
     *) die "协议组合选择无效。" ;;
   esac
+  green "已选择协议：$(profile_name)"
 }
 
 generate_reality_credentials() {
@@ -277,7 +278,7 @@ reality_pair_valid() (
 
 ask_server_values() {
   local default_port default_uuid default_name default_server
-  default_port=${PORT:-$DEFAULT_PORT}
+  if [[ -n ${PORT:-} ]]; then default_port=$PORT; else default_port=$(find_free_port "$DEFAULT_PORT"); fi
   default_uuid=${UUID:-$("$XRAY_BIN" uuid)}
   default_name=${REMARK:-xray-reality}
   default_server=${SERVER_NAME:-www.microsoft.com}
@@ -306,15 +307,21 @@ ask_server_values() {
     if [[ -n ${V2M_PORT:-} ]]; then
       PORT=$V2M_PORT
     elif [[ -z ${PORT:-} ]]; then
-      PORT=$(find_free_port "$DEFAULT_PORT")
+      if [[ $PROFILE == *-tls-xhttp || $PROFILE == *-tls-ws || $PROFILE == *-tls-grpc ]]; then
+        PORT=$(find_free_port 24443)
+      else
+        PORT=$(find_free_port "$DEFAULT_PORT")
+      fi
     fi
     UUID=${V2M_UUID:-$default_uuid}
     SERVER_NAME=${V2M_SERVER_NAME:-$default_server}
     REMARK=${V2M_REMARK:-$default_name}
     ADDRESS=${V2M_ADDRESS:-${ADDRESS:-}}
+    if [[ -z $ADDRESS ]] && profile_uses_tls; then ADDRESS=$SERVER_NAME; fi
     valid_port "$PORT" || die "V2M_PORT 必须是 1 到 65535 的端口。"
     valid_uuid "$UUID" || die "V2M_UUID 格式无效。"
     valid_server_name "$SERVER_NAME" || die "V2M_SERVER_NAME 必须是有效完整域名。"
+    valid_server_name "$ADDRESS" || die "为避免在分享链接中暴露公网 IP，V2M_ADDRESS 必须是指向服务器的完整域名。"
     if profile_uses_reality && [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
       generate_reality_credentials
     fi
@@ -323,6 +330,10 @@ ask_server_values() {
 
   choose_profile
   if profile_uses_tls && [[ $previous_profile != *-tls-* ]]; then default_server=; fi
+  if [[ -z ${PORT:-} && ( $PROFILE == *-tls-xhttp || $PROFILE == *-tls-ws || $PROFILE == *-tls-grpc ) ]]; then
+    default_port=$(find_free_port 24443)
+    yellow "HTTP/CDN 协议默认让 Xray 使用后端端口 $default_port，为 Caddy 保留公网 443。"
+  fi
 
   while :; do
     read -r -p "监听端口 [${default_port}]：" PORT
@@ -343,6 +354,17 @@ ask_server_values() {
     valid_server_name "$SERVER_NAME" && break
     yellow "请输入有效的完整域名，例如 www.microsoft.com。"
   done
+  if profile_uses_tls; then
+    ADDRESS=$SERVER_NAME
+    green "分享链接入口域名将使用：$ADDRESS"
+  else
+    while :; do
+      read -r -p "客户端入口域名（须指向本机；REALITY 使用灰云）[${ADDRESS:-}]：" value
+      ADDRESS=${value:-${ADDRESS:-}}
+      valid_server_name "$ADDRESS" && break
+      yellow "请输入完整域名；为避免泄露公网 IP，分享链接不接受 IP 地址。"
+    done
+  fi
   read -r -p "备注名称 [${default_name}]：" REMARK
   REMARK=${REMARK:-$default_name}
 
@@ -865,19 +887,15 @@ restart_or_rollback() {
 }
 
 server_address() {
-  local addr first second
-  if [[ -n ${ADDRESS:-} ]]; then
+  if valid_server_name "${ADDRESS:-}"; then
     printf '%s' "$ADDRESS"
     return
   fi
-  addr=$(curl --fail --silent --max-time 4 https://api.ipify.org 2>/dev/null || true)
-  IFS=. read -r first second _ <<<"$addr"
-  if [[ $first == 104 && $second =~ ^(1[6-9]|2[0-9]|3[01])$ ]] || \
-     [[ $first == 172 && $second =~ ^(6[4-9]|7[01])$ ]] || [[ $first == 188 && $second == 114 ]]; then
-    printf '%s' 'YOUR_SERVER_IP'
+  if profile_uses_tls && valid_server_name "${SERVER_NAME:-}"; then
+    printf '%s' "$SERVER_NAME"
     return
   fi
-  printf '%s' "${addr:-YOUR_SERVER_IP}"
+  printf '%s' 'YOUR_SERVER_DOMAIN'
 }
 
 # The node registry is authoritative after add/modify/disable operations.
@@ -916,7 +934,7 @@ show_connection() (
       red "自定义 CDN/优选 IP 仅适用于 TLS XHTTP/WebSocket 入站。" >&2
       return 1
     }
-    [[ $address_override != *[[:space:]/\?#@]* ]] || { red "CDN/优选 IP 地址格式无效。" >&2; return 1; }
+    valid_server_name "$address_override" || { red "CDN 入口必须填写域名；为避免暴露 IP，链接不接受优选 IP 地址。" >&2; return 1; }
   fi
   show_connection_loaded "$CONFIG_FILE" "$address_override"
 )
@@ -993,8 +1011,8 @@ show_connection_loaded() (
   address=${cdn_address:-$(server_address)}
   client_port=$PORT
   [[ -z $cdn_address ]] || client_port=443
-  if [[ -z $address || $address == YOUR_SERVER_IP || $address == *[[:space:]/\?#@]* ]]; then
-    red "无法导出链接：客户端入口地址未知或格式无效。请填写服务器真实公网 IP 或直连域名（不要填写 http:// 或端口）。" >&2
+  if ! valid_server_name "$address"; then
+    red "无法导出链接：入口必须是域名，不能输出公网 IP。请把域名解析到服务器，并在入站配置中填写该域名。" >&2
     return 1
   fi
   address=${address#[}; address=${address%]}
@@ -1119,8 +1137,9 @@ change_menu() {
       ensure_port_available
       ;;
     3)
-      read -r -p "客户端连接的 IP/域名 [${ADDRESS:-自动检测}]:" value
-      ADDRESS=$value
+      read -r -p "客户端连接域名 [${ADDRESS:-未设置}]:" value
+      ADDRESS=${value:-${ADDRESS:-}}
+      valid_server_name "$ADDRESS" || die "入口必须是完整域名，分享链接不会写入公网 IP。"
       ;;
     4)
       read -r -p "新 SNI [${SERVER_NAME}]:" value
@@ -1291,7 +1310,7 @@ export_menu() {
   while :; do
     printf '\n%s\n' '----- 连接与导出 -----'
     printf '%s\n' '1) 查看入站列表' '2) 输出全部启用链接' '3) 输出指定入站链接' \
-      '4) 输出 Cloudflare/CDN 优选地址链接' '5) 导出 Xray 客户端 JSON' '0) 返回主菜单'
+      '4) 使用 Cloudflare/CDN 域名输出链接' '5) 导出 Xray 客户端 JSON' '0) 返回主菜单'
     read -r -p '请选择 [0-5]:' choice
     case "$choice" in
       1) list_inbounds; pause ;;
@@ -1304,7 +1323,7 @@ export_menu() {
       4)
         list_inbounds
         read -r -p '请输入 TLS XHTTP/WS 入站 ID：' node_id
-        read -r -p '请输入 Cloudflare 优选 IP 或 CDN 域名：' cdn_address
+        read -r -p '请输入 Cloudflare/CDN 入口域名：' cdn_address
         show_connection "$node_id" "$cdn_address"; pause
         ;;
       5)
@@ -1398,7 +1417,7 @@ show_forward_test_commands() (
   load_connection_state || return 1
   address=$(server_address)
   port=$PORT
-  [[ -n $address && $address != YOUR_SERVER_IP ]] || {
+  [[ -n $address && $address != YOUR_SERVER_DOMAIN ]] || {
     red "无法确定客户端入口地址，请先在入站配置中设置服务器地址。" >&2
     return 1
   }
@@ -1879,7 +1898,7 @@ show_help() {
     'v2ray add      添加新入站' \
     'v2ray inbounds 查看入站列表' \
     'v2ray links    输出全部启用入站链接' \
-    'v2ray link <入站ID> <CDN地址> 以 443 导出 TLS XHTTP/WS 优选地址链接' \
+    'v2ray link <入站ID> <CDN域名> 以 443 导出 TLS XHTTP/WS 链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray speedtest 运行服务器网络测速' \
     'v2ray route [目标IP/域名] 测试回程路由、丢包和延迟' \
@@ -1961,7 +1980,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link [入站ID] [CDN地址]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|status|log]|update|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

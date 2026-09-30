@@ -25,8 +25,8 @@ valid_route_target client.example.com || fail 'hostname route target rejected'
 ! valid_route_target 'https://example.com' || fail 'URL accepted as route target'
 ! valid_route_target 'example.com;id' || fail 'shell metacharacter accepted as route target'
 
-export ADDRESS=23.95.15.200
-[[ $(server_address) == 23.95.15.200 ]] || fail "explicit server address should override public-IP detection"
+export ADDRESS=edge.example.com
+[[ $(server_address) == edge.example.com ]] || fail "explicit server domain should be used for exports"
 
 unset PORT V2M_PORT
 export V2M_NONINTERACTIVE=1 PROFILE=vless-reality-raw
@@ -36,11 +36,19 @@ export PRIVATE_KEY=test-private PUBLIC_KEY=test-public SHORT_ID=0123456789abcdef
 # Called indirectly by ask_server_values.
 # shellcheck disable=SC2329
 find_free_port() {
-  [[ $1 == 443 ]] || fail "automatic installation did not start at port 443"
-  printf '443'
+  case "$1" in
+    443) printf '443' ;;
+    24443) printf '24443' ;;
+    *) fail "unexpected automatic port search start: $1" ;;
+  esac
 }
 ask_server_values
 [[ $PORT == 443 ]] || fail "automatic installation did not select port 443"
+unset PORT
+export V2M_PROFILE=vless-tls-ws V2M_SERVER_NAME=cdn.example.com V2M_ADDRESS=cdn.example.com V2M_PATH=/cdn
+ask_server_values
+[[ $PORT == 24443 ]] || fail "HTTP/CDN installation did not reserve public port 443 for Caddy"
+unset V2M_PROFILE V2M_SERVER_NAME V2M_ADDRESS V2M_PATH
 unset V2M_NONINTERACTIVE
 
 parse_reality_credentials $'PrivateKey: private-new\nPassword (PublicKey): public-new\nHash32: unused'
@@ -98,8 +106,8 @@ REMARK=cdn-export-test
 export TLS_CERT_PATH_OVERRIDE="$tls_test_dir/cert.pem"
 export TLS_KEY_PATH_OVERRIDE="$tls_test_dir/key.pem"
 render_config "$temporary"
-cdn_link=$(show_connection_loaded "$temporary" 104.16.1.1)
-[[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@104.16.1.1:443?'* ]] || fail 'CDN export did not use override address and port 443'
+cdn_link=$(show_connection_loaded "$temporary" edge.cdn.example.com)
+[[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@edge.cdn.example.com:443?'* ]] || fail 'CDN export did not use override domain and port 443'
 [[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'
 printf '%s\n' 'CDN address export test passed.'
 

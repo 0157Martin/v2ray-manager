@@ -42,7 +42,7 @@ export PORT=443
 export UUID
 UUID=$("$core_binary" uuid)
 export SERVER_NAME=example.com
-export ADDRESS=127.0.0.1
+export ADDRESS=node.test.example
 export REMARK='test node & 中文'
 export SHORT_ID=0123456789abcdef
 MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=example.com' \

@@ -291,7 +291,7 @@ CORE
   link-*)
     mkdir -p "$NODES_DIR"
     export PORT=24443 UUID=11111111-1111-4111-8111-111111111111
-    export ADDRESS=192.0.2.20 PROFILE=vless-reality-raw SERVER_NAME=example.com
+    export ADDRESS=edge.example.com PROFILE=vless-reality-raw SERVER_NAME=example.com
     export PRIVATE_KEY=test-private PUBLIC_KEY=test-public SHORT_ID=0123456789abcdef
     export REMARK='node A & test' PATH_VALUE=
     # These cases exercise registry/URL behavior; real keys are covered by xray-config.sh.
@@ -301,7 +301,7 @@ CORE
     case "$scenario" in
       link-client-export)
         export_client primary > "$sandbox/client.json"
-        jq -e '.outbounds[0].settings.vnext[0] | .address == "192.0.2.20" and .port == 24443' "$sandbox/client.json" >/dev/null || fail 'client export not selected node JSON'
+        jq -e '.outbounds[0].settings.vnext[0] | .address == "edge.example.com" and .port == 24443' "$sandbox/client.json" >/dev/null || fail 'client export not selected node JSON'
         if export_client ../primary > "$sandbox/invalid.json" 2>/dev/null; then fail 'path traversal accepted'; fi
         ;;
       link-client-disabled)
@@ -312,7 +312,7 @@ CORE
       link-stale-primary)
         printf 'PORT=9999\n' > "$STATE_FILE"
         output=$(show_connection)
-        [[ $output == *'@192.0.2.20:24443?'* ]] || fail 'export used stale manager.env'
+        [[ $output == *'@edge.example.com:24443?'* ]] || fail 'export used stale manager.env'
         ;;
       link-disabled-primary)
         mv "$NODES_DIR/primary.env" "$NODES_DIR/primary.disabled"
@@ -331,8 +331,8 @@ CORE
         ADDRESS=2001:db8::10
         render_config "$CONFIG_FILE"
         jq -e '.inbounds[0].listen == "::"' "$CONFIG_FILE" >/dev/null || fail 'IPv6 address has IPv4-only listener'
-        output=$(show_connection_loaded)
-        [[ $output == *'@[2001:db8::10]:24443?'* ]] || fail 'IPv6 authority missing brackets'
+        if show_connection_loaded > "$sandbox/link" 2>/dev/null; then fail 'IPv6 address was exposed in link'; fi
+        ! grep -q 'vless://' "$sandbox/link" || fail 'IPv6 link printed despite domain-only policy'
         ;;
       link-mismatch)
         PORT=24444

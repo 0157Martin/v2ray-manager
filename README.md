@@ -71,7 +71,7 @@ v2ray info             # 查看版本和连接信息
 v2ray change           # 打开分级修改菜单
 v2ray config           # change 的兼容别名
 v2ray link             # 重新显示默认入站链接
-v2ray link primary 104.16.1.1 # 用 CDN/优选 IP 导出，SNI/Host 仍使用原域名
+v2ray link primary edge.example.net # 用 CDN 域名导出，SNI/Host 仍使用原证书域名
 v2ray client           # 输出默认启用入站的 Xray 客户端 JSON
 v2ray client primary   # 按入站 ID 导出；ID 见 v2ray inbounds
 v2ray status           # 查看服务状态
@@ -141,9 +141,13 @@ Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路�
 证书和传输路径与 Caddy 参数完全一致。
 
 Cloudflare 橙云或优选 IP 仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
-`v2ray link <入站ID> <优选IP或CDN域名>` 导出时，连接地址和客户端端口会改为指定地址与
+`v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
 `443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名，避免把优选 IP 错当成证书域名。
 Cloudflare 代理不适用于普通 VLESS RAW、REALITY 或任意 TCP 节点。
+
+分享链接不写入或自动探测服务器公网 IP。普通 TLS 节点使用证书域名作为入口；REALITY
+和无 TLS 节点安装时要求填写一个指向 VPS 的入口域名，Cloudflare 中必须按协议选择灰云
+或橙云。已有节点若只保存了 IP，需要在“修改配置 → 更改服务器地址”中改成完整域名后再导出。
 
 ## 按官方教程部署与导出
 
@@ -172,13 +176,13 @@ Certbot 续期钩子执行 `v2ray cert-refresh "$RENEWED_LINEAGE"`：仅更新�
 export V2M_NONINTERACTIVE=1
 export V2M_PORT=443
 export V2M_PROFILE=vless-reality-raw
-export V2M_ADDRESS=203.0.113.10
+export V2M_ADDRESS=edge.example.com
 export V2M_SERVER_NAME=www.microsoft.com
 export V2M_REMARK=my-server
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
 
-`V2M_UUID` 可省略，脚本会自动生成。服务器使用 NAT、WARP 或出口代理时，必须通过 `V2M_ADDRESS` 指定客户端实际连接的 IP 或域名；脚本检测到 Cloudflare/WARP 出口时不会把该出口 IP 写入链接。安装前会检查 TCP 端口，已被其他服务占用时将安全退出。不要在共享日志中输出 UUID 或生成后的导入链接。
+`V2M_UUID` 可省略，脚本会自动生成。`V2M_ADDRESS` 必须是指向服务器的完整入口域名，脚本不会自动探测或把公网 IP 写入分享链接。未显式指定端口时会从 `443` 开始寻找空闲端口；`443` 已被 Caddy、Xray 或其他服务占用时自动选择后续空闲端口，不会停止占用者。不要在共享日志中输出 UUID 或生成后的导入链接。
 
 `V2M_PROFILE` 的可选值与交互菜单一致（例如 `vless-reality-raw`、`trojan-reality-raw`、`vmess-tls-ws`）。XHTTP/WebSocket 可用 `V2M_PATH` 指定路径；TLS 组合须设置 `V2M_SERVER_NAME` 为你拥有的域名，可用 `V2M_CERT_FILE` 和 `V2M_KEY_FILE` 指定证书，或让脚本自动查找/申请。`V2M_ACME_EMAIL` 可选，用于 Certbot 账户邮箱。
 
@@ -214,7 +218,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 `-1` 表示客户端测试没有成功，单凭这个结果不能区分入口地址、端口阻断、协议兼容或握手问题。先运行 `v2ray version`、`v2ray doctor` 和 `v2ray log`，确认服务器确实已部署修复后的脚本。诊断会检查全部入站端口、REALITY 目标握手和导出参数，但无法从本机证明公网端口可达。
 
 - 修改入站后，用 `v2ray links` 重新导出并重新导入客户端；4.2.1 起，单条链接也读取最新的启用入站状态。
-- 地址必须是客户端能访问的服务器公网 IP 或直连域名。NAT/WARP 的出口 IP 不一定是入口地址；NAT 环境还需核对外部端口映射。
+- 分享地址必须是客户端能访问且指向服务器的入口域名。NAT/WARP 的出口地址不一定是入口；NAT 环境还需核对外部端口映射。
 - `v2ray firewall` 只处理本机已启用的 UFW/firewalld；云安全组需要放行**链接中的 TCP 端口**。自动安装优先使用 443；如果 443 已被占用，以实际导出链接中的端口为准。
 - 从客户端网络检查 TCP 可达性，例如 Windows PowerShell 的 `Test-NetConnection <服务器地址> -Port <节点端口>`。TCP 成功仍不代表 REALITY/TLS 握手成功。
 - 核对客户端及内核是否支持所选协议组合。RAW 服务端在分享链接中使用 `type=tcp`，这是分享格式的兼容写法，无须手动改成 `raw`。
