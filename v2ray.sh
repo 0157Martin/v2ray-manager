@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.1"
+readonly MANAGER_VERSION="5.5.2"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
@@ -2025,6 +2025,37 @@ warp_cli() {
   warp-cli --accept-tos "$@"
 }
 
+wait_for_warp_proxy() {
+  local attempt
+  for ((attempt=0; attempt<30; attempt++)); do
+    if systemctl is-active --quiet warp-svc &&
+      ss -H -lnt "sport = :${WARP_PROXY_PORT}" 2>/dev/null | grep -q .; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+configure_warp_proxy() {
+  systemctl enable --now warp-svc || return 1
+  warp_cli mode proxy || return 1
+  warp_cli proxy port "$WARP_PROXY_PORT" || return 1
+  warp_cli connect || return 1
+  if ! wait_for_warp_proxy; then
+    red "WARP 已发送连接命令，但 127.0.0.1:${WARP_PROXY_PORT} 在 30 秒内没有开始监听。" >&2
+    warp_cli status >&2 || true
+    return 1
+  fi
+  warp_trace >/dev/null
+}
+
+reregister_warp() {
+  warp_cli disconnect >/dev/null 2>&1 || true
+  warp_cli registration delete >/dev/null 2>&1 || true
+  timeout 45 warp-cli --accept-tos registration new || return 1
+}
+
 install_warp() {
   require_supported_os
   local codename key_file
@@ -2046,19 +2077,21 @@ install_warp() {
   if ! warp_cli registration show >/dev/null 2>&1; then
     timeout 45 warp-cli --accept-tos registration new || die "WARP 注册失败。"
   fi
-  warp_cli mode proxy
-  warp_cli proxy port "$WARP_PROXY_PORT"
-  warp_cli connect
+  configure_warp_proxy || {
+    yellow "首次连接未就绪，正在自动执行 WARP 修复和重新注册流程…"
+    reregister_warp || { red "WARP 重新注册失败。" >&2; return 1; }
+    configure_warp_proxy || { red "重新注册后 WARP 本机代理仍未启动。" >&2; return 1; }
+  }
   green "WARP 本机代理已安装：127.0.0.1:${WARP_PROXY_PORT}。"
   yellow "尚未改变 Xray 出站；请在 WARP 菜单中选择分流策略。"
 }
 
 warp_trace() {
-  command -v warp-cli >/dev/null 2>&1 || die "WARP 尚未安装。"
+  command -v warp-cli >/dev/null 2>&1 || { red "WARP 尚未安装。" >&2; return 1; }
   local trace
   trace=$(curl --fail --silent --show-error --max-time 15 --proxy "socks5h://127.0.0.1:${WARP_PROXY_PORT}" \
-    https://www.cloudflare.com/cdn-cgi/trace) || die "无法通过 WARP 本机代理联网。"
-  grep -q '^warp=on$' <<<"$trace" || die "Cloudflare 未确认 WARP 已连接。"
+    https://www.cloudflare.com/cdn-cgi/trace) || { red "无法通过 WARP 本机代理联网。" >&2; return 1; }
+  grep -q '^warp=on$' <<<"$trace" || { red "Cloudflare 未确认 WARP 已连接。" >&2; return 1; }
   printf '%s\n' "$trace" | awk -F= '/^(ip|loc|warp)=/{printf "%s: %s\n", $1, $2}'
 }
 
@@ -2193,14 +2226,14 @@ check_warp_services() {
 
 repair_warp() {
   command -v warp-cli >/dev/null 2>&1 || die "WARP 尚未安装，请先选择安装。"
-  systemctl enable --now warp-svc
   if ! warp_cli registration show >/dev/null 2>&1; then
     timeout 45 warp-cli --accept-tos registration new || die "WARP 重新注册失败。"
   fi
-  warp_cli mode proxy
-  warp_cli proxy port "$WARP_PROXY_PORT"
-  warp_cli connect
-  warp_trace >/dev/null
+  if ! configure_warp_proxy; then
+    yellow "现有 WARP 注册无法启动本机代理，正在重新注册免费 WARP 设备…"
+    reregister_warp || die "WARP 重新注册失败。"
+    configure_warp_proxy || die "重新注册后本机代理仍未启动；请运行 warp-cli status 和 journalctl -u warp-svc。"
+  fi
   if [[ -r $CONFIG_FILE ]]; then
     create_backup
     rebuild_or_restore
@@ -2230,25 +2263,25 @@ warp_menu() {
       '7) 停用 WARP 策略' '8) 修复/重新生成配置' '9) 卸载 WARP' '0) 返回主菜单'
     read -r -p '请选择 [0-9]：' choice
     case "$choice" in
-      1) install_warp; pause ;;
+      1) (install_warp) || true; pause ;;
       2) show_warp_status; (warp_trace) || true; pause ;;
       3)
         read -r -p '确认让全部协议的公网 TCP 流量通过 WARP？[y/N] ' answer
-        [[ ${answer,,} == y || ${answer,,} == yes ]] && set_warp_policy all
+        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then (set_warp_policy all) || true; fi
         pause
         ;;
       4)
         read -r -p '域名规则，逗号分隔 [geosite:netflix,domain:openai.com,domain:chatgpt.com]：' domains
-        set_warp_policy selective "${domains:-geosite:netflix,domain:openai.com,domain:chatgpt.com}"
+        (set_warp_policy selective "${domains:-geosite:netflix,domain:openai.com,domain:chatgpt.com}") || true
         pause
         ;;
-      5) warp_ip_strategy_menu; pause ;;
-      6) check_warp_services; pause ;;
-      7) disable_warp_policy; pause ;;
-      8) repair_warp; pause ;;
+      5) (warp_ip_strategy_menu) || true; pause ;;
+      6) (check_warp_services) || true; pause ;;
+      7) (disable_warp_policy) || true; pause ;;
+      8) (repair_warp) || true; pause ;;
       9)
         read -r -p '确认卸载 WARP 并恢复原生出口？[y/N] ' answer
-        [[ ${answer,,} == y || ${answer,,} == yes ]] && uninstall_warp
+        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then (uninstall_warp) || true; fi
         pause
         ;;
       0) return ;;

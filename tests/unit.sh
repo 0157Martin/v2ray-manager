@@ -195,3 +195,13 @@ warp_domains=$(normalize_warp_domains 'netflix.com, domain:openai.com,geosite:ne
 [[ $warp_domains == 'domain:netflix.com,domain:openai.com,geosite:netflix' ]] || fail 'WARP domain normalization mismatch'
 if (normalize_warp_domains 'https://invalid.example/path' >/dev/null 2>&1); then fail 'invalid WARP domain rule accepted'; fi
 printf '%s\n' 'WARP policy tests passed.'
+
+# The WARP client connects asynchronously; installation must wait for its local proxy listener.
+systemctl() { return 0; }
+sleep() { :; }
+ss() { [[ ${MOCK_WARP_LISTENER:-down} == up ]] && printf '%s\n' 'LISTEN 0 4096 127.0.0.1:40000'; }
+export MOCK_WARP_LISTENER=up
+wait_for_warp_proxy || fail 'ready WARP proxy listener was not detected'
+export MOCK_WARP_LISTENER=down
+if wait_for_warp_proxy; then fail 'missing WARP proxy listener was accepted'; fi
+printf '%s\n' 'WARP startup wait tests passed.'

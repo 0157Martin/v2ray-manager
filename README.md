@@ -358,6 +358,10 @@ IPv4/IPv6 策略可通过菜单选择自动双栈、仅 IPv4 或仅 IPv6，也�
 出站，不区分入站协议。`v2ray warp check` 检查 Netflix、Disney+ 和 ChatGPT 当前 HTTP
 可访问性，`v2ray warp repair` 会恢复 WARP 服务、本机代理和 Xray 路由配置。
 
+安装和修复只有在 `127.0.0.1:40000` 开始监听、且 Cloudflare trace 返回 `warp=on` 后才会
+报告成功。`warp-cli connect` 完成较慢时最多等待 30 秒；现有注册无法启动代理时会自动断开
+并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
+
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，`geoip:private` 始终使用原生直连；这里的“全部”指所有协议产生的
 公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
