@@ -60,9 +60,170 @@ Caddy 统一监听公网 80/443，Xray 使用 `127.0.0.1:24443` 等后端端口�
 该路径只适用于普通 TLS 的 HTTP 兼容传输。REALITY、RAW、VMess TCP 等任意 TCP 协议不能
 通过普通橙云转发。
 
-## 4. 推荐操作顺序
+## 4. 转发机制原理图
 
-### 4.1 第一次安装
+下面的图展示一条客户端请求进入服务器后的完整决策过程。Caddy 只处理配置给它的 HTTP/TLS
+站点；直接连接 Xray 端口的 REALITY、RAW 等流量不会经过 Caddy。
+
+```mermaid
+flowchart TD
+    Client[客户端请求] --> Entry{连接哪个公网入口?}
+    Entry -->|REALITY / RAW / 独立端口| XrayInbound[Xray 入站]
+    Entry -->|HTTPS 443| Caddy[Caddy]
+
+    Caddy --> Match{域名和路径匹配?}
+    Match -->|普通网站路径| Website[静态网站或本机 Web 服务]
+    Match -->|XHTTP / WebSocket 路径| XrayInbound
+    Match -->|没有站点规则| Reject[拒绝或 Caddy 默认响应]
+
+    XrayInbound --> Auth{协议握手和用户凭据有效?}
+    Auth -->|否| Drop[拒绝连接]
+    Auth -->|是| Sniff[识别 HTTP / TLS / QUIC 目标]
+    Sniff --> Router[Xray 路由规则]
+
+    Router --> Private{私有地址?}
+    Private -->|是| Direct[Direct 原生出口]
+    Private -->|否| WarpRule{命中 WARP 域名或全局 TCP 策略?}
+    WarpRule -->|是，且为 TCP| Warp[Socks 出站 127.0.0.1:40000]
+    Warp --> WarpSvc[Cloudflare WARP / MASQUE]
+    WarpSvc --> Target[目标网站]
+    WarpRule -->|否或 UDP| Direct
+    Direct --> Target
+    Router -->|明确阻止规则| Block[Blackhole 丢弃]
+```
+
+### 4.1 Caddy 如何转发
+
+Caddy 根据站点域名和路径匹配请求。例如：
+
+```text
+https://node.example.com/              → 伪装网站
+https://node.example.com/xhttp         → 127.0.0.1:24443 的 Xray 入站
+https://app.example.com/               → 127.0.0.1:8080 的本机 Web 应用
+```
+
+项目为 Xray XHTTP/WS 生成路径匹配器，只将指定路径及其子路径交给 Xray。TLS 在 Caddy 与
+客户端之间建立；Caddy 到项目当前 TLS 后端也使用 HTTPS，并设置与证书一致的 SNI。配置必须
+通过 `caddy validate` 才会加载。
+
+### 4.2 Xray 如何转发
+
+Xray 先在入站完成协议握手和凭据校验，再根据目标地址选择出站：
+
+1. `sniffing` 从 HTTP、TLS 或 QUIC 流量中识别目标域名，供路由规则使用；
+2. `routing.rules` 从上到下匹配，第一条有效规则决定出站；
+3. `direct` 使用服务器原生网络；
+4. `warp` 把匹配的 TCP 请求交给本机 WARP SOCKS 代理；
+5. `block` 使用 Blackhole 丢弃明确禁止的流量；
+6. 未命中规则时使用第一项默认出站，本项目将 Direct 放在第一项。
+
+WARP 模式下私有地址优先 Direct，防止本地或内网请求被送到外部隧道。UDP 保持 Direct，避免
+Cloudflare Local Proxy 对 UDP 支持不明确时产生超时。
+
+### 4.3 多入站与统一出站
+
+```mermaid
+flowchart LR
+    A[VLESS REALITY 入站] --> R[Xray 路由引擎]
+    B[VLESS XHTTP TLS 入站] --> R
+    C[VMess WebSocket TLS 入站] --> R
+    D[Trojan 入站] --> R
+
+    R --> E[Direct]
+    R --> F[WARP]
+    R --> G[Block]
+```
+
+每个入站可以有自己的协议、端口和用户，但它们进入同一个 Xray 路由引擎。因此 WARP 策略
+天然可以对全部协议统一生效，不需要为每个入站复制一份出站配置。
+
+## 5. 项目运行原理图
+
+项目运行分为“管理平面”和“数据平面”。`v2ray` 命令负责写配置和维护服务；Xray、Caddy、
+WARP负责实际转发流量。
+
+```mermaid
+flowchart TB
+    subgraph Management[管理平面]
+        Menu[v2ray 命令和菜单]
+        State[入站状态 / nodes/*.env]
+        WarpState[WARP 策略 / warp.env]
+        Backup[配置备份]
+        Render[配置渲染与合并]
+        Validate[Xray run -test]
+        Health[systemd 五秒健康检查]
+    end
+
+    subgraph Data[数据平面]
+        CaddySvc[Caddy 服务]
+        XraySvc[Xray Core 服务]
+        WarpDaemon[warp-svc]
+        Internet[目标网络]
+    end
+
+    Menu --> Backup
+    Menu --> State
+    Menu --> WarpState
+    State --> Render
+    WarpState --> Render
+    Render --> Validate
+    Validate -->|通过| Config["/etc/xray/config.json"]
+    Validate -->|失败| Backup
+    Config --> XraySvc
+    XraySvc --> Health
+    Health -->|失败| Restore[恢复旧配置]
+    Restore --> XraySvc
+    Health -->|通过| Running[配置提交完成]
+
+    CaddySvc --> XraySvc
+    XraySvc -->|Direct| Internet
+    XraySvc -->|WARP SOCKS| WarpDaemon
+    WarpDaemon --> Internet
+```
+
+### 5.1 配置变更事务
+
+一次添加、修改、停用或删除入站会经历：
+
+```text
+读取状态 → 创建备份 → 生成临时 JSON → Xray 语法校验
+→ 原子安装 config.json → 重启服务 → 观察 PID 和重启次数 5 秒
+→ 成功提交，或失败恢复旧配置
+```
+
+配置文件通过校验只代表语法和 Xray 对象有效。公网端口、云安全组、DNS、CDN 和客户端兼容性
+仍需通过 `v2ray doctor` 及客户端网络测试确认。
+
+### 5.2 启动与常驻运行
+
+```mermaid
+sequenceDiagram
+    participant Systemd as systemd
+    participant Xray as Xray Core
+    participant Config as config.json
+    participant Client as 客户端
+    participant Target as 目标网站
+
+    Systemd->>Xray: 启动 xray.service
+    Xray->>Config: 读取并解析配置
+    alt 配置有效
+        Xray-->>Systemd: 保持运行并监听所有启用入站
+        Client->>Xray: 协议握手与认证
+        Xray->>Target: 按路由选择 Direct 或 WARP
+        Target-->>Client: 响应经原路径返回
+    else 配置或运行失败
+        Xray-->>Systemd: 退出
+        Systemd->>Xray: 按 Restart=on-failure 尝试重启
+        Note over Systemd,Xray: 管理脚本健康检查发现异常后恢复备份
+    end
+```
+
+Xray 以低权限 `xray` 系统账户运行，通过 systemd 获得绑定低端口所需的有限能力。管理脚本
+必须由 root 执行，因为它需要安装程序、写入 `/etc/xray`、管理 systemd 和防火墙规则。
+
+## 6. 推荐操作顺序
+
+### 6.1 第一次安装
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
@@ -79,7 +240,7 @@ v2ray links
 
 `v2ray add` 才会显示协议选择。添加完成后会输出该入站的链接；以后可从“连接与导出”再次查看。
 
-### 4.2 已安装服务器更新
+### 6.2 已安装服务器更新
 
 ```bash
 v2ray upgrade
@@ -90,14 +251,14 @@ v2ray doctor
 `upgrade` 更新管理脚本并迁移项目状态；`update` 只更新 Xray Core。两者不会主动更换 UUID、
 端口、域名、证书路径或 REALITY 密钥。迁移造成连接参数意外变化时会恢复旧脚本和配置。
 
-### 4.3 修改前先判断修改层级
+### 6.3 修改前先判断修改层级
 
 - 改协议、端口、域名、传输路径：修改入站，客户端通常需要重新导入。
 - 增加使用者：新增子链接用户，不影响已有用户。
 - 只改变服务器出口：修改 WARP 策略，分享链接不变。
 - 增加伪装网站或 HTTP 反代：修改 Caddy，不影响 REALITY 等直连入站。
 
-## 5. 入站和子链接的原理
+## 7. 入站和子链接的原理
 
 一个入站对应一个监听端口和一组协议参数。项目将每个入站保存成独立状态文件，然后合并生成
 一份 `/etc/xray/config.json`。查看入站时会按 REALITY、TLS HTTP/CDN、其他直连和旧版兼容
@@ -124,7 +285,7 @@ v2ray users delete <入站ID> 3
 v2ray users show <入站ID>
 ```
 
-## 6. 端口如何规划
+## 8. 端口如何规划
 
 | 场景 | 公网端口 | Xray 监听 |
 | --- | --- | --- |
@@ -137,7 +298,7 @@ v2ray users show <入站ID>
 其他服务；端口被占用时会寻找空闲端口或要求先修改配置。云安全组仍需手动放行分享链接实际
 使用的公网 TCP 端口。
 
-## 7. Caddy 的作用和边界
+## 9. Caddy 的作用和边界
 
 Caddy 是服务器级 systemd 服务，可以同时加载多个域名站点，但每个站点只处理自己的域名和
 路径。项目支持：
@@ -160,7 +321,7 @@ Caddy 不负责：
 - 云安全组和 DNS 控制台；
 - 服务器所有网络流量。
 
-## 8. WARP 的作用和边界
+## 10. WARP 的作用和边界
 
 WARP 改变的是 Xray 到目标网站的出站路径。项目使用 Cloudflare 官方 Linux 客户端的 Local
 Proxy 模式，由 Xray 连接 `127.0.0.1:40000`，不接管服务器默认路由，因此不会主动改变 SSH、
@@ -192,7 +353,7 @@ v2ray warp diagnose
 `journalctl -u warp-svc` 调试日志，其中可能包含注册凭据。`127.0.0.1:40000` 只在本机使用，
 不应开放公网入站。
 
-## 9. Cloudflare、Caddy、WARP 如何选择
+## 11. Cloudflare、Caddy、WARP 如何选择
 
 | 目标 | 需要 Cloudflare 橙云 | 需要 Caddy | 需要 WARP |
 | --- | --- | --- | --- |
@@ -206,7 +367,7 @@ v2ray warp diagnose
 三者都不是项目运行的强制依赖。最简单的部署是 VLESS REALITY 直连；只有明确需要网站入口、
 CDN 或特殊出站时再增加 Caddy、Cloudflare 或 WARP。
 
-## 10. 备份、校验和回滚
+## 12. 备份、校验和回滚
 
 配置变更采用以下顺序：
 
@@ -226,7 +387,7 @@ v2ray rollback.sh
 
 `restore` 恢复最近配置；`rollback.sh` 恢复上一次项目脚本。两者用途不同。
 
-## 11. 延迟显示 -1 时如何判断
+## 13. 延迟显示 -1 时如何判断
 
 `-1` 只表示客户端没有完成测试，不能直接判断为服务器速度慢。按顺序检查：
 
@@ -242,7 +403,7 @@ v2ray rollback.sh
 服务器上的 `ping`、MTR 和 Speedtest 只能描述服务器侧网络。客户端到 VPS 的真实去程必须从
 客户端所在网络发起。
 
-## 12. 重要文件
+## 14. 重要文件
 
 | 路径 | 内容 |
 | --- | --- |
@@ -259,7 +420,7 @@ v2ray rollback.sh
 `manager.env`、`nodes/`、TLS 私钥、备份和导出的客户端 JSON 都应视为敏感文件。不要将它们
 上传到公开仓库或粘贴到公开问题中。
 
-## 13. 最短场景建议
+## 15. 最短场景建议
 
 ### 没有域名证书，追求简单
 

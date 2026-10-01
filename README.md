@@ -21,6 +21,23 @@ Xray 客户端 JSON。一个 Xray 服务可以运行多个独立入站；每个�
 Xray、WARP 和目标网站的实际流量顺序解释组件职责，并给出安装、端口规划、多人使用、
 更新回滚和延迟 `-1` 的操作步骤。
 
+```mermaid
+flowchart LR
+    Client[客户端] --> CDN[Cloudflare CDN 可选]
+    Client --> DirectEntry[直连入口]
+    CDN --> Caddy[Caddy 可选]
+    Caddy --> Xray[Xray 入站与路由]
+    DirectEntry --> Xray
+    Xray --> Native[服务器原生出口]
+    Xray --> Warp[WARP 可选]
+    Native --> Target[目标网站]
+    Warp --> Target
+```
+
+详细的路径匹配、路由决策、配置生成、systemd 健康检查和失败回滚图见
+[转发机制原理图](docs/PROJECT_GUIDE.md#4-转发机制原理图)与
+[项目运行原理图](docs/PROJECT_GUIDE.md#5-项目运行原理图)。
+
 ## 功能概览
 
 - 安装或更新 Xray Core，并校验官方发布包的 SHA-256 摘要。
