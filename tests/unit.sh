@@ -211,4 +211,6 @@ export MOCK_WARP_LISTENER=up
 configure_warp_proxy || fail 'mock WARP proxy configuration failed'
 grep -Fxq 'tunnel protocol set MASQUE' "$warp_calls" || fail 'WARP Local Proxy did not explicitly select MASQUE'
 rm -f -- "$warp_calls"
+redacted=$(printf '%s\n' 'ERROR license: "secret-value", device_id=ee4f2dc1-4a4b-47a1-b0c8-78f8633a6e12, public_key: [1, 2, 3]' | redact_warp_log)
+[[ $redacted != *secret-value* && $redacted != *ee4f2dc1* && $redacted != *'[1, 2, 3]'* ]] || fail 'WARP diagnostic log leaked registration credentials'
 printf '%s\n' 'WARP startup wait tests passed.'

@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.3"
+readonly MANAGER_VERSION="5.5.4"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
@@ -2055,7 +2055,15 @@ warp_is_connecting() {
   warp_cli status 2>/dev/null | grep -qi 'Connecting'
 }
 
+redact_warp_log() {
+  sed -E \
+    -e 's/(license|token|secret|private_key)[[:space:]]*[:=][[:space:]]*("[^"]*"|[^,}[:space:]]+)/\1=[REDACTED]/Ig' \
+    -e 's/(public_key)[[:space:]]*[:=][[:space:]]*\[[^]]*\]/\1=[REDACTED]/Ig' \
+    -e 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[REDACTED-ID]/g'
+}
+
 warp_connectivity_diagnostics() {
+  local log_output
   printf '%s\n' '----- WARP 上游连通性诊断 -----'
   printf '系统时间同步：'
   timedatectl show -p NTPSynchronized --value 2>/dev/null || printf '未知\n'
@@ -2070,7 +2078,13 @@ warp_connectivity_diagnostics() {
   printf '%s\n' 'WARP 状态：'
   warp_cli status 2>&1 || true
   printf '%s\n' 'warp-svc 最近日志：'
-  journalctl -u warp-svc -n 30 --no-pager 2>&1 || true
+  log_output=$(journalctl -u warp-svc -n 300 --no-pager 2>&1 | \
+    grep -Ei 'Connecting|HappyEyeballs|ERROR|WARN|failed|failure|timeout|unreachable|refused' | tail -n 30 || true)
+  if [[ -n $log_output ]]; then
+    redact_warp_log <<<"$log_output"
+  else
+    yellow "最近日志中没有匹配的连接错误。"
+  fi
   yellow "Local Proxy 使用 MASQUE。服务器和服务商出站防火墙需允许 Cloudflare WARP 的 UDP 443、500、1701、4500、4443、8443、8095；并允许 TCP 443 回退。"
   yellow "状态卡在 Connecting/Happy Eyeballs 表示上游隧道未建立，不是 127.0.0.1:${WARP_PROXY_PORT} 本身的防火墙问题。"
 }
