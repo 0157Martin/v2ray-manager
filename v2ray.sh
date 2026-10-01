@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.8"
+readonly MANAGER_VERSION="5.5.9"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -168,6 +168,15 @@ valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
 reality_target_supported() { [[ ${1,,} != www.microsoft.com && ${1,,} != microsoft.com ]]; }
+check_reality_target() {
+  local target=$1 output
+  command -v openssl >/dev/null && command -v timeout >/dev/null || return 2
+  output=$(timeout 12 openssl s_client -connect "$target:443" -servername "$target" \
+    -verify_hostname "$target" -tls1_3 -groups X25519 -alpn h2 </dev/null 2>&1 || true)
+  [[ $output == *'TLSv1.3'* || $output == *'TLSv1.3,'* ]] || return 1
+  [[ $output == *'ALPN protocol: h2'* ]] || return 1
+  [[ $output == *'Verify return code: 0 (ok)'* ]] || return 1
+}
 valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
@@ -203,7 +212,7 @@ choose_profile() {
   local choice default_path
   printf '%s\n' \
     '--- 直连 / Cloudflare 灰云 DNS（不能经过普通橙云）---' \
-    '1) VLESS-REALITY-Vision-RAW  [推荐：高性能、无需自有证书、直连]' \
+    '1) VLESS-REALITY-Vision-RAW  [高级：目标站/客户端兼容性通过检测后使用]' \
     '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]' \
     '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]' \
     '--- HTTP/CDN / Cloudflare 橙云（需要自有域名）---' \
@@ -371,6 +380,16 @@ ask_server_values() {
       if profile_uses_reality && ! reality_target_supported "$SERVER_NAME"; then
         yellow "当前 Xray 版本已知无法稳定使用 $SERVER_NAME 作为 REALITY 目标，请改用 dl.google.com。"
         continue
+      fi
+      if profile_uses_reality; then
+        if check_reality_target "$SERVER_NAME"; then
+          green "REALITY 目标已通过 TLS 1.3、H2、证书和 SNI 检查。"
+        else
+          case $? in
+            2) yellow '缺少 openssl/timeout，暂时无法验证 REALITY 目标。' ;;
+            *) yellow "目标 $SERVER_NAME 未通过 REALITY 必要条件检查，请更换目标域名。"; continue ;;
+          esac
+        fi
       fi
       break
     fi
@@ -2459,7 +2478,7 @@ warp_command() {
 }
 
 doctor() {
-  local failures=0 port security target node_file node_count=0 handshake
+  local failures=0 port security target node_file node_count=0 fallback
   printf '%s\n' "===== v2ray-manager 诊断 ====="
 
   if [[ -x "$XRAY_BIN" ]]; then green "[通过] Xray Core 可执行文件"; else red "[失败] 缺少 Xray Core"; ((failures+=1)); fi
@@ -2488,12 +2507,17 @@ doctor() {
           red "[失败] TCP $port 的 REALITY 目标无法解析"; ((failures+=1)); continue
         fi
         if command -v openssl >/dev/null && command -v timeout >/dev/null; then
-          handshake=$(timeout 8 openssl s_client -connect "$target:443" -servername "$target" \
-            -tls1_3 -brief </dev/null 2>&1 || true)
-          if [[ $handshake == *TLSv1.3* ]]; then
-            green "[通过] TCP $port 的 REALITY 目标 TLS 1.3 握手"
+          if check_reality_target "$target"; then
+            green "[通过] TCP $port 的 REALITY 目标满足 TLS 1.3、H2、证书和 SNI 条件"
           else
-            red "[失败] TCP $port 的 REALITY 目标 TLS 1.3 握手失败"; ((failures+=1))
+            red "[失败] TCP $port 的 REALITY 目标不满足 TLS 1.3/H2/证书/SNI 条件"; ((failures+=1))
+          fi
+          fallback=$(timeout 12 openssl s_client -connect "127.0.0.1:$port" -servername "$target" \
+            -verify_hostname "$target" -tls1_3 -groups X25519 -alpn h2 </dev/null 2>&1 || true)
+          if [[ $fallback == *'ALPN protocol: h2'* && $fallback == *'Verify return code: 0 (ok)'* ]]; then
+            green "[通过] TCP $port 的 REALITY 未认证回落链路可用"
+          else
+            red "[失败] TCP $port 的 REALITY 回落链路无法完成目标站 TLS 握手"; ((failures+=1))
           fi
         else
           yellow "[未检查] 缺少 openssl/timeout，无法验证 REALITY 目标握手。"
