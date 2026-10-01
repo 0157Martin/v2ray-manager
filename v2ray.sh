@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.7"
+readonly MANAGER_VERSION="5.5.8"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -1515,73 +1515,161 @@ sub_link_menu() {
   done
 }
 
-select_node_file() {
-  local include_disabled=${1:-0} node_id
+SELECTED_NODE_FILES=()
+select_node_files() {
+  local wanted_state=${1:-any} input node_id candidate
+  local -a requested candidates
+  local -A seen=()
+  SELECTED_NODE_FILES=()
   list_inbounds >&2
-  read -r -p '请输入入站 ID:' node_id
-  if [[ -e $NODES_DIR/$node_id.env ]]; then printf '%s' "$NODES_DIR/$node_id.env"; return; fi
-  if [[ $include_disabled == 1 && -e $NODES_DIR/$node_id.disabled ]]; then printf '%s' "$NODES_DIR/$node_id.disabled"; return; fi
-  die "找不到入站：$node_id"
+  read -r -p '请输入入站 ID（多个用空格或逗号分隔，all 表示全部）：' input
+  input=${input//,/ }
+  read -r -a requested <<<"$input"
+  (( ${#requested[@]} > 0 )) || die '至少选择一个入站。'
+  if [[ ${requested[0],,} == all ]]; then
+    case "$wanted_state" in
+      enabled) candidates=("$NODES_DIR"/*.env) ;;
+      disabled) candidates=("$NODES_DIR"/*.disabled) ;;
+      any) candidates=("$NODES_DIR"/*.env "$NODES_DIR"/*.disabled) ;;
+      *) die "未知入站选择状态：$wanted_state" ;;
+    esac
+    for candidate in "${candidates[@]}"; do [[ -e $candidate ]] && SELECTED_NODE_FILES+=("$candidate"); done
+  else
+    for node_id in "${requested[@]}"; do
+      node_id=${node_id%.env}; node_id=${node_id%.disabled}
+      [[ $node_id =~ ^[A-Za-z0-9._-]+$ ]] || die "入站 ID 格式无效：$node_id"
+      [[ -z ${seen[$node_id]:-} ]] || continue
+      seen[$node_id]=1
+      candidate=
+      case "$wanted_state" in
+        enabled) [[ -e $NODES_DIR/$node_id.env ]] && candidate="$NODES_DIR/$node_id.env" ;;
+        disabled) [[ -e $NODES_DIR/$node_id.disabled ]] && candidate="$NODES_DIR/$node_id.disabled" ;;
+        any)
+          if [[ -e $NODES_DIR/$node_id.env ]]; then candidate="$NODES_DIR/$node_id.env"
+          elif [[ -e $NODES_DIR/$node_id.disabled ]]; then candidate="$NODES_DIR/$node_id.disabled"; fi
+          ;;
+        *) die "未知入站选择状态：$wanted_state" ;;
+      esac
+      [[ -n $candidate ]] || die "找不到符合当前操作状态的入站：$node_id"
+      SELECTED_NODE_FILES+=("$candidate")
+    done
+  fi
+  (( ${#SELECTED_NODE_FILES[@]} > 0 )) || die '没有符合条件的入站。'
+}
+
+selected_node_names() {
+  local file
+  for file in "${SELECTED_NODE_FILES[@]}"; do basename "$file" | sed -E 's/\.(env|disabled)$//'; done
 }
 
 disable_inbound() {
   local node_file
-  node_file=$(select_node_file 0)
+  select_node_files enabled
   create_backup
-  mv "$node_file" "${node_file%.env}.disabled"
+  for node_file in "${SELECTED_NODE_FILES[@]}"; do mv "$node_file" "${node_file%.env}.disabled"; done
   rebuild_or_restore
   restart_or_rollback
-  green "入站已停用。"
+  green "已批量停用 ${#SELECTED_NODE_FILES[@]} 个入站。"
 }
 
 modify_inbound() {
-  local node_file
-  node_file=$(select_node_file 0)
-  # shellcheck disable=SC1090
-  EXTRA_UUIDS=''
-  # shellcheck disable=SC1090
-  . "$node_file"
-  ask_server_values
-  ensure_port_available
+  local node_file mode value node_id
+  select_node_files enabled
   create_backup
-  prepare_tls_material
-  save_current_node "$node_file"
+  if (( ${#SELECTED_NODE_FILES[@]} > 1 )); then
+    printf '%s\n' '批量修改方式：' '1) 全部改为同一客户端入口域名' \
+      '2) 全部改为同一 REALITY 目标域名' '3) 逐个完整修改' '0) 取消'
+    read -r -p '请选择 [0-3]：' mode
+    case "$mode" in
+      1)
+        read -r -p '新的客户端入口域名：' value
+        valid_server_name "$value" || die '请输入有效的完整入口域名。'
+        for node_file in "${SELECTED_NODE_FILES[@]}"; do
+          # shellcheck disable=SC1090
+          . "$node_file"
+          ADDRESS=$value
+          save_current_node "$node_file"
+        done
+        ;;
+      2)
+        read -r -p "新的 REALITY 目标域名 [${DEFAULT_REALITY_SERVER_NAME}]：" value
+        value=${value:-$DEFAULT_REALITY_SERVER_NAME}
+        valid_server_name "$value" || die '请输入有效的完整 REALITY 目标域名。'
+        reality_target_supported "$value" || die "当前 Xray 版本不支持稳定使用 $value；请改用 $DEFAULT_REALITY_SERVER_NAME。"
+        for node_file in "${SELECTED_NODE_FILES[@]}"; do
+          # shellcheck disable=SC1090
+          . "$node_file"
+          profile_uses_reality || die "$(basename "$node_file") 不是 REALITY 入站，批量操作已取消。"
+        done
+        for node_file in "${SELECTED_NODE_FILES[@]}"; do
+          # shellcheck disable=SC1090
+          . "$node_file"
+          SERVER_NAME=$value
+          save_current_node "$node_file"
+        done
+        ;;
+      3)
+        for node_file in "${SELECTED_NODE_FILES[@]}"; do
+          node_id=$(basename "$node_file" .env)
+          cyan_value "正在修改：$node_id"; printf '\n'
+          EXTRA_UUIDS=''
+          # shellcheck disable=SC1090
+          . "$node_file"
+          ask_server_values
+          ensure_port_available
+          prepare_tls_material
+          save_current_node "$node_file"
+        done
+        ;;
+      0) return ;;
+      *) die '批量修改方式无效。' ;;
+    esac
+  else
+    node_file=${SELECTED_NODE_FILES[0]}
+    EXTRA_UUIDS=''
+    # shellcheck disable=SC1090
+    . "$node_file"
+    ask_server_values
+    ensure_port_available
+    prepare_tls_material
+    save_current_node "$node_file"
+  fi
   rebuild_or_restore
   restart_or_rollback
-  green "入站已更新。"
+  green "已更新 ${#SELECTED_NODE_FILES[@]} 个入站。"
   open_enabled_inbound_ports
-  show_connection_loaded "$CONFIG_FILE"
+  list_inbounds
 }
 
 enable_inbound() {
   local node_file
-  node_file=$(select_node_file 1)
-  [[ $node_file == *.disabled ]] || die "该入站已经启用。"
+  select_node_files disabled
   create_backup
-  mv "$node_file" "${node_file%.disabled}.env"
+  for node_file in "${SELECTED_NODE_FILES[@]}"; do mv "$node_file" "${node_file%.disabled}.env"; done
   rebuild_or_restore
   restart_or_rollback
-  green "入站已启用。"
+  green "已批量启用 ${#SELECTED_NODE_FILES[@]} 个入站。"
 }
 
 delete_inbound() {
-  local node_file answer
-  node_file=$(select_node_file 1)
-  read -r -p "确认删除 $(basename "$node_file")？[y/N] " answer
-  [[ ${answer,,} == y || ${answer,,} == yes ]] || return
+  local node_file answer names
+  select_node_files any
+  names=$(selected_node_names | paste -sd ', ' -)
+  read -r -p "确认删除 ${#SELECTED_NODE_FILES[@]} 个入站（$names）？请输入 DELETE：" answer
+  [[ $answer == DELETE ]] || return
   create_backup
-  rm -f "$node_file"
+  for node_file in "${SELECTED_NODE_FILES[@]}"; do rm -f -- "$node_file"; done
   rebuild_or_restore
   restart_or_rollback
-  green "入站已删除。"
+  green "已批量删除 ${#SELECTED_NODE_FILES[@]} 个入站。"
 }
 
 manage_inbounds_menu() {
   local choice
   while :; do
     printf '\n%s\n' '----- 入站管理 -----'
-    printf '%s\n' '1) 查看入站列表' '2) 添加新入站' '3) 修改入站' '4) 停用入站' \
-      '5) 启用入站' '6) 删除入站' '0) 返回主菜单'
+    printf '%s\n' '1) 查看入站列表' '2) 添加新入站' '3) 修改入站（支持批量）' '4) 停用入站（支持批量）' \
+      '5) 启用入站（支持批量）' '6) 删除入站（支持批量）' '0) 返回主菜单'
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) list_inbounds; pause ;; 2) add_inbound; pause ;; 3) modify_inbound; pause ;;
