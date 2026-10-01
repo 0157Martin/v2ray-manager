@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.4"
+readonly MANAGER_VERSION="5.5.5"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly BIN_DIR="/usr/local/bin"
