@@ -287,7 +287,7 @@ export V2M_NONINTERACTIVE=1
 export V2M_PORT=443
 export V2M_PROFILE=vless-reality-raw
 export V2M_ADDRESS=edge.example.com
-export V2M_SERVER_NAME=www.microsoft.com
+export V2M_SERVER_NAME=dl.google.com
 export V2M_REMARK=my-server
 bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/install.sh)
 ```
@@ -336,7 +336,7 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 2. 监听端口。直连协议从 `443` 开始寻找空闲端口；HTTP/CDN 协议默认使用本机后端端口
    `24443`，为 Caddy 的公网 `443` 留出位置。
 3. 客户端入口域名。分享链接不会写入或自动探测公网 IP。
-4. TLS 证书域名，或 REALITY 目标域名。REALITY 默认目标是 `www.microsoft.com`，应选择
+4. TLS 证书域名，或 REALITY 目标域名。REALITY 默认目标是 `dl.google.com`，应选择
    服务器能稳定访问、支持 TLS 1.3 且与服务器网络位置合理的站点。
 5. 节点备注。UUID、REALITY 密钥和 Short ID 由脚本生成并验证。
 

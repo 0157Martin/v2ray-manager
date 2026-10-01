@@ -1,5 +1,10 @@
 # Changelog
 
+## 5.5.7
+
+- 将 REALITY 默认目标从在 Xray 26.3.27 上存在已知握手故障的 `www.microsoft.com` 改为 `dl.google.com`。
+- 交互与无人值守安装会拒绝已知不兼容的 Microsoft REALITY 目标，并给出可执行的替代建议。
+
 ## 5.5.6
 
 - 中文项目指南新增完整转发机制图，展示 Caddy 域名/路径匹配、Xray 入站认证、嗅探、路由

@@ -17,6 +17,8 @@ valid_uuid 11111111-1111-4111-8111-111111111111 || fail 'valid UUID rejected'
 ! valid_uuid ------------------------------------ || fail '36 hyphens accepted as UUID'
 ! valid_uuid 111111111111111111111111111111111111 || fail 'UUID without required separators accepted'
 valid_server_name www.microsoft.com || fail "normal hostname should be valid"
+reality_target_supported dl.google.com || fail "supported REALITY target rejected"
+! reality_target_supported www.microsoft.com || fail "known-broken REALITY target accepted"
 ! valid_server_name localhost || fail "single-label hostname should be invalid"
 ! valid_server_name 'bad..example.com' || fail "hostname with empty label should be invalid"
 valid_route_target 1.1.1.1 || fail 'IPv4 route target rejected'
@@ -31,7 +33,7 @@ export ADDRESS=edge.example.com
 unset PORT V2M_PORT
 export V2M_NONINTERACTIVE=1 PROFILE=vless-reality-raw
 export UUID=11111111-1111-4111-8111-111111111111
-export SERVER_NAME=www.microsoft.com REMARK=default-port-test
+export SERVER_NAME=dl.google.com REMARK=default-port-test
 export PRIVATE_KEY=test-private PUBLIC_KEY=test-public SHORT_ID=0123456789abcdef
 # Called indirectly by ask_server_values.
 # shellcheck disable=SC2329
@@ -63,7 +65,7 @@ parse_reality_credentials $'PrivateKey: private-new\r\nPassword (PublicKey): pub
 
 export PORT=443
 export UUID=11111111-1111-4111-8111-111111111111
-export SERVER_NAME=www.microsoft.com
+export SERVER_NAME=dl.google.com
 PRIVATE_KEY=test-private-key
 export SHORT_ID=0123456789abcdef
 export PROFILE=vless-reality-raw

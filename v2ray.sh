@@ -7,9 +7,10 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.6"
+readonly MANAGER_VERSION="5.5.7"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
+readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
 readonly BIN_DIR="/usr/local/bin"
 readonly MANAGER_BIN="$BIN_DIR/v2ray"
 readonly XRAY_BIN="$BIN_DIR/xray-core"
@@ -166,6 +167,7 @@ download_core() (
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
+reality_target_supported() { [[ ${1,,} != www.microsoft.com && ${1,,} != microsoft.com ]]; }
 valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
@@ -292,7 +294,7 @@ ask_server_values() {
   if [[ -n ${PORT:-} ]]; then default_port=$PORT; else default_port=$(find_free_port "$DEFAULT_PORT"); fi
   default_uuid=${UUID:-$("$XRAY_BIN" uuid)}
   default_name=${REMARK:-xray-reality}
-  default_server=${SERVER_NAME:-www.microsoft.com}
+  default_server=${SERVER_NAME:-$DEFAULT_REALITY_SERVER_NAME}
   local previous_profile=${PROFILE:-vless-reality-raw}
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
@@ -332,6 +334,9 @@ ask_server_values() {
     valid_port "$PORT" || die "V2M_PORT 必须是 1 到 65535 的端口。"
     valid_uuid "$UUID" || die "V2M_UUID 格式无效。"
     valid_server_name "$SERVER_NAME" || die "V2M_SERVER_NAME 必须是有效完整域名。"
+    if profile_uses_reality && ! reality_target_supported "$SERVER_NAME"; then
+      die "当前 Xray 版本已知无法稳定使用 $SERVER_NAME 作为 REALITY 目标；请改用 dl.google.com。"
+    fi
     valid_server_name "$ADDRESS" || die "为避免在分享链接中暴露公网 IP，V2M_ADDRESS 必须是指向服务器的完整域名。"
     if profile_uses_reality && [[ -z ${PRIVATE_KEY:-} || -z ${PUBLIC_KEY:-} || -z ${SHORT_ID:-} ]]; then
       generate_reality_credentials
@@ -362,8 +367,14 @@ ask_server_values() {
       read -r -p "REALITY 目标域名 [${default_server}]：" SERVER_NAME
     fi
     SERVER_NAME=${SERVER_NAME:-$default_server}
-    valid_server_name "$SERVER_NAME" && break
-    yellow "请输入有效的完整域名，例如 www.microsoft.com。"
+    if valid_server_name "$SERVER_NAME"; then
+      if profile_uses_reality && ! reality_target_supported "$SERVER_NAME"; then
+        yellow "当前 Xray 版本已知无法稳定使用 $SERVER_NAME 作为 REALITY 目标，请改用 dl.google.com。"
+        continue
+      fi
+      break
+    fi
+    yellow "请输入有效的完整域名，例如 dl.google.com。"
   done
   if profile_uses_tls; then
     ADDRESS=$SERVER_NAME
