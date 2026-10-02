@@ -294,12 +294,13 @@ v2ray caddy install
 v2ray caddy static www.example.com
 v2ray caddy reverse app.example.com 127.0.0.1:8080
 v2ray caddy xray cdn.example.com 127.0.0.1:24443 /a1b2c3
-v2ray caddy refresh cdn.example.com
+v2ray caddy page-install cdn.example.com
+v2ray caddy page-update cdn.example.com
 v2ray caddy status
 v2ray caddy log
 ```
 
-静态站点和 Xray 路径反代站点会自动生成一页独立的个人主页。页面随机组合姓名、职业、城市和项目卡片，不含外部资源或前端脚本；需要更换页面内容时执行 `v2ray caddy refresh <域名>`，不会改动 Caddy 路径反代或客户端链接。
+静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。页面随机组合姓名、职业、城市和项目卡片，不含外部资源或前端脚本。Caddy 菜单的“个人网页设置”将安装和更新分开：安装不会覆盖已有页面，更新才会生成新的随机内容；二者都不会改动 Caddy 路径反代或客户端链接。命令行可使用 `v2ray caddy page-install <域名>` 与 `v2ray caddy page-update <域名>`。
 
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，

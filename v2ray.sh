@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.18"
+readonly MANAGER_VERSION="5.5.19"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2147,6 +2147,11 @@ render_personal_landing_page() {
 EOF
 }
 
+landing_page_path() {
+  valid_server_name "$1" || return 1
+  printf '%s/%s/index.html' "$CADDY_WEB_ROOT" "$1"
+}
+
 write_caddy_landing_page() {
   local domain=$1 root="$CADDY_WEB_ROOT/$1" temporary
   valid_server_name "$domain" || return 1
@@ -2156,6 +2161,32 @@ write_caddy_landing_page() {
   install -m 644 -o root -g root "$temporary" "$root/index.html" || { rm -f -- "$temporary"; return 1; }
   rm -f -- "$temporary"
   chown -R caddy:caddy "$root"
+}
+
+install_caddy_landing_page() {
+  local page
+  page=$(landing_page_path "$1") || return 1
+  if [[ -e $page ]]; then
+    yellow "个人主页已存在：$page；请使用更新个人主页保留 Caddy 路由并生成新页面。" >&2
+    return 1
+  fi
+  write_caddy_landing_page "$1"
+}
+
+ensure_caddy_landing_page() {
+  local page
+  page=$(landing_page_path "$1") || return 1
+  [[ -e $page ]] || install_caddy_landing_page "$1"
+}
+
+update_caddy_landing_page() {
+  local page
+  page=$(landing_page_path "$1") || return 1
+  if [[ ! -e $page ]]; then
+    yellow '未找到已安装的个人主页，请先选择安装随机个人主页。' >&2
+    return 1
+  fi
+  write_caddy_landing_page "$1"
 }
 
 configure_caddy_site() {
@@ -2188,7 +2219,7 @@ configure_caddy_site() {
     red "Caddy 配置校验失败，已恢复旧站点配置。" >&2
     return 1
   fi
-  if [[ $mode == static || $mode == xray ]]; then write_caddy_landing_page "$domain"; fi
+  if [[ $mode == static || $mode == xray ]]; then ensure_caddy_landing_page "$domain"; fi
   open_local_firewall_port 80
   open_local_firewall_port 443
   if systemctl is-active --quiet caddy; then
@@ -2238,12 +2269,41 @@ normalize_caddy_path() {
   printf '%s' "$path"
 }
 
+caddy_page_menu() {
+  local choice domain
+  while :; do
+    ui_box_title '个人网页设置'
+    ui_menu_item '1) 安装随机个人主页'
+    ui_menu_item '2) 更新随机个人主页'
+    ui_box_divider
+    ui_menu_item '0) 返回 Caddy 网站管理'
+    ui_box_bottom
+    read -r -p '请选择 [0-2]：' choice
+    case "$choice" in
+      1)
+        read -r -p '网站域名：' domain
+        install_caddy_landing_page "$domain" && green "个人主页已安装：https://$domain" || true
+        pause
+        ;;
+      2)
+        read -r -p '网站域名：' domain
+        if update_caddy_landing_page "$domain"; then
+          green "个人主页已更新：https://$domain"
+        fi
+        pause
+        ;;
+      0) return ;;
+      *) yellow '无效选择。'; pause ;;
+    esac
+  done
+}
+
 caddy_menu() {
   local choice domain upstream path suggested_upstream suggested_path
   while :; do
     printf '\n%s\n' '----- Caddy 网站管理 -----'
     printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-      '4) 同步 Xray XHTTP/WS 路径反代' '5) 随机生成个人主页' '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
+      '4) 同步 Xray XHTTP/WS 路径反代' '5) 个人网页设置' '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
     read -r -p '请选择 [0-7]:' choice
     case "$choice" in
       1) caddy_ports_available && install_caddy && green "Caddy 已安装。"; pause ;;
@@ -2272,11 +2332,7 @@ caddy_menu() {
         configure_caddy_site xray "$domain" "$upstream" "$path" || true
         pause
         ;;
-      5)
-        read -r -p '网站域名：' domain
-        write_caddy_landing_page "$domain" && green "已随机生成个人主页：https://$domain" || true
-        pause
-        ;;
+      5) caddy_page_menu ;;
       6) systemctl --no-pager --full status caddy || true; pause ;;
       7) journalctl -u caddy -n 100 --no-pager || true; pause ;;
       0) return ;;
@@ -2293,7 +2349,8 @@ caddy_command() {
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
     xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
-    refresh) [[ -n $domain ]] || die "用法：v2ray caddy refresh <域名>"; write_caddy_landing_page "$domain" ;;
+    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名>"; install_caddy_landing_page "$domain" ;;
+    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名>"; update_caddy_landing_page "$domain" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -3067,7 +3124,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|refresh|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install|page-update|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
