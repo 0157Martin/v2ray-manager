@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.14"
+readonly MANAGER_VERSION="5.5.15"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -42,6 +42,12 @@ cyan_value() { printf '\033[36m%s\033[0m' "$*"; }
 step() { printf '\033[33m%s\033[0m  %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { red "错误：$*"; exit 1; }
 pause() { read -r -p "按 Enter 键返回菜单…" _; }
+
+ui_box_top() { printf '\033[38;5;39m╭──────────────────────────────────────────────────────────────╮\033[0m\n'; }
+ui_box_divider() { printf '\033[38;5;39m├──────────────────────────────────────────────────────────────┤\033[0m\n'; }
+ui_box_bottom() { printf '\033[38;5;39m╰──────────────────────────────────────────────────────────────╯\033[0m\n'; }
+ui_box_title() { ui_box_top; printf '\033[1;38;5;51m│  %s\033[0m\n' "$1"; ui_box_divider; }
+ui_menu_item() { printf '\033[38;5;39m│\033[0m  %s\n' "$1"; }
 
 require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 root 运行：sudo bash $0"
@@ -2920,13 +2926,23 @@ menu() {
       disabled_nodes=0
     fi
     if [[ -x $XRAY_BIN ]]; then install_label='检查/修复 Xray（保留现有入站）'; else install_label='安装 Xray Core（稍后手动添加协议）'; fi
-    printf '%s\n' "---------- ${APP_NAME} v${MANAGER_VERSION} by ${AUTHOR} ----------"
-    printf 'Xray: %s\n服务状态: ' "$core_version"
+    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  ·  ${AUTHOR}"
+    printf '\033[38;5;39m│\033[0m  Xray: %s\n' "$core_version"
+    printf '\033[38;5;39m│\033[0m  服务状态: '
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
-    printf 'Caddy: %s  入站: %s 启用 / %s 停用\n' "$caddy_state" "$active_nodes" "$disabled_nodes"
-    printf '\n%s\n' \
-      "1) $install_label" '2) 入站管理' '3) 连接与导出' '4) Xray 服务管理' \
-      '5) Caddy 网站管理' '6) WARP 出站管理（全部协议）' '7) 维护与诊断' '8) 卸载项目' '0) 退出'
+    printf '\033[38;5;39m│\033[0m  Caddy: %s  ·  入站：%s 启用 / %s 停用\n' "$caddy_state" "$active_nodes" "$disabled_nodes"
+    ui_box_divider
+    ui_menu_item "1) $install_label"
+    ui_menu_item '2) 入站管理'
+    ui_menu_item '3) 连接与导出'
+    ui_menu_item '4) Xray 服务管理'
+    ui_menu_item '5) Caddy 网站管理'
+    ui_menu_item '6) WARP 出站管理（全部协议）'
+    ui_menu_item '7) 维护与诊断'
+    ui_menu_item '8) 卸载项目'
+    ui_box_divider
+    ui_menu_item '0) 退出'
+    ui_box_bottom
     read -r -p '请选择 [0-8]：' choice
     case "$choice" in
       1) install_xray; pause ;;
