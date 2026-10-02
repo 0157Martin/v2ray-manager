@@ -148,6 +148,27 @@ bash <(wget -qO- https://raw.githubusercontent.com/0157Martin/v2ray-manager/main
 
 生产服务器建议先审阅 [install.sh](https://github.com/0157Martin/v2ray-manager/blob/main/install.sh) 和 [v2ray.sh](https://github.com/0157Martin/v2ray-manager/blob/main/v2ray.sh)。
 
+### 安装注意事项
+
+安装前请逐项确认：
+
+- **系统与权限：**仅支持 Debian/Ubuntu，使用 `root` 或 `sudo -i` 运行。脚本会安装依赖、创建
+  `xray` 系统账户、写入 `/etc/xray/` 和 systemd 服务；不要在由其他面板或手工 Xray 安装共同
+  管理的同一目录上直接覆盖。
+- **网络与软件源：**服务器需要能访问 GitHub、Xray 发布源和发行版软件源。若网络、DNS 或代理
+  环境限制下载，先解决出站访问问题；不要从不明镜像复制一行安装命令。远程执行前可先审阅上面的
+  `install.sh` 与 `v2ray.sh`。
+- **端口规划：**添加入站前检查 `80`、`443` 及计划使用的端口是否已被 Nginx、Caddy、Apache 或
+  其他服务占用。TLS 自动申请证书通常要求公网 TCP `80` 可达；使用 Caddy 时让 Caddy 独占
+  公网 `80/443`，并为 Xray TLS HTTP 入站选择本机后端端口。
+- **防火墙与云安全组：**UFW/firewalld 可以由 `v2ray firewall` 处理，但云厂商安全组、上游 NAT
+  和机房防火墙必须由你自行放行。以导出的链接端口为准，而不是只假设一定使用 `443`。
+- **域名与协议：**普通 TLS/HTTP CDN 组合需要你拥有并能解析到服务器的证书域名。REALITY 不申请
+  本机证书，但仍要求一个指向 VPS 的客户端入口域名，以及单独通过检查的目标站/SNI；入口域名与
+  REALITY 目标站不能互换。
+- **避免泄露凭据：**安装完成不自动输出连接链接。执行 `v2ray links` 后，其中的 UUID、Trojan
+  密码、公钥和 Short ID 都应视为访问凭据，不要贴到工单、日志或公开截图中。
+
 安装只部署 Xray Core、systemd 服务和管理命令，不会弹出协议选择，也不会创建或显示默认
 链接。先手动添加需要的协议，再检查和导出：
 
