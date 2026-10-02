@@ -180,6 +180,8 @@ v2ray doctor           # 运行综合诊断
 v2ray uninstall
 ```
 
+交互式主菜单会显示两帧轻量终端动画（“竹影守护”和“剑光突进”）。动画不使用图片协议，SSH 和普通终端可直接运行；如需关闭，可使用 `V2M_NO_ANIMATION=1 v2ray` 或 `V2M_ANIMATION=off v2ray`。若终端复用器没有暴露 TTY，可使用 `V2M_ANIMATION=on v2ray` 强制显示。
+
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、WARP、维护诊断、卸载”分组，并显示
 Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不会自动输出凭据；需要分享链接
 或客户端 JSON 时，进入“连接与导出”并选择对应入站。子菜单中选择 `0` 返回主菜单。

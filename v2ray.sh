@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.10"
+readonly MANAGER_VERSION="5.5.11"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -42,6 +42,24 @@ cyan_value() { printf '\033[36m%s\033[0m' "$*"; }
 step() { printf '\033[33m%s\033[0m  %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { red "错误：$*"; exit 1; }
 pause() { read -r -p "按 Enter 键返回菜单…" _; }
+
+# A brief ANSI-only menu transition inspired by the bamboo and sword scenes.
+# It deliberately avoids terminal image protocols so SSH and ordinary terminals
+# remain usable. Set V2M_NO_ANIMATION=1 or V2M_ANIMATION=off to suppress it.
+# V2M_ANIMATION=on is useful when a terminal multiplexer does not expose its TTY.
+menu_animation() (
+  [[ ${V2M_NO_ANIMATION:-0} != 1 ]] || return 0
+  case "${V2M_ANIMATION:-auto}" in
+    off) return 0 ;;
+    on) ;;
+    auto) [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]] || return 0 ;;
+    *) return 0 ;;
+  esac
+  printf '\033[38;5;108m\n  │  │  │     竹 影 守 护\n\033[38;5;222m      ◉      ──╲    ╱──\n\033[0m'
+  sleep 0.12
+  printf '\033[2A\033[38;5;108m  │  │  │     竹 影 守 护\n\033[38;5;220m  ────────╲  剑 光 突 进  ╱────────\n\033[0m'
+  sleep 0.12
+)
 
 require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 root 运行：sudo bash $0"
@@ -2866,6 +2884,7 @@ show_about() {
 menu() {
   while :; do
     clear || true
+    menu_animation
     local core_version service_state caddy_state active_nodes disabled_nodes install_label
     core_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')
     if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi
