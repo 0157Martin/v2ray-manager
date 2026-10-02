@@ -2191,8 +2191,18 @@ download_caddy_page_assets() (
 )
 
 write_caddy_landing_page() {
-  local domain=$1 template=${2:-portfolio}
+  local domain=$1 template=${2:-portfolio} root temporary
   valid_server_name "$domain" || return 1
+  if [[ $template == default ]]; then
+    root="$CADDY_WEB_ROOT/$domain"
+    temporary=$(mktemp) || return 1
+    if ! render_personal_landing_page "$domain" "$temporary"; then rm -f -- "$temporary"; return 1; fi
+    install -d -m 755 "$root"
+    install -m 644 "$temporary" "$root/index.html"
+    rm -f -- "$temporary"
+    chown -R caddy:caddy "$root"
+    return 0
+  fi
   download_caddy_page_assets "$domain" "$template"
 }
 
@@ -2315,17 +2325,17 @@ caddy_page_menu() {
     case "$choice" in
       1)
         read -r -p '网站域名：' domain
-        printf '%s\n' '1) 深色作品集（Portfolio）' '2) 浅色简历（Resume）'
-        read -r -p '选择模板 [1-2，默认 1]：' choice
-        template=portfolio; [[ $choice == 2 ]] && template=resume
+        printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
+        read -r -p '选择模板 [1-3，默认 1]：' choice
+        template=portfolio; [[ $choice == 2 ]] && template=resume; [[ $choice == 3 ]] && template=default
         install_caddy_landing_page "$domain" "$template" && green "个人主页已安装：https://$domain（$template）" || true
         pause
         ;;
       2)
         read -r -p '网站域名：' domain
-        printf '%s\n' '1) 深色作品集（Portfolio）' '2) 浅色简历（Resume）'
-        read -r -p '选择模板 [1-2，默认 1]：' choice
-        template=portfolio; [[ $choice == 2 ]] && template=resume
+        printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
+        read -r -p '选择模板 [1-3，默认 1]：' choice
+        template=portfolio; [[ $choice == 2 ]] && template=resume; [[ $choice == 3 ]] && template=default
         if update_caddy_landing_page "$domain" "$template"; then
           green "个人主页已更新：https://$domain"
         fi
@@ -2388,8 +2398,8 @@ caddy_command() {
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
     xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
-    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume]"; install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
-    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume]"; update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
+    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume|default]"; install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
+    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume|default]"; update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -3163,7 +3173,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install <域名> [portfolio|resume]|page-update <域名> [portfolio|resume]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install <域名> [portfolio|resume|default]|page-update <域名> [portfolio|resume|default]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

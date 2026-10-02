@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 将两个独立 Caddy 页面重构为个人博客：`portfolio` 使用无水印竹林角色背景，`resume` 使用纯排版纸张风格；个人网页安装与更新菜单新增无需下载的 `default` 内置网页选项。
+
 - Caddy 个人网页拆分到独立的 `v2ray-portfolio-page` 与 `v2ray-resume-page` 仓库；菜单和命令行按模板选择对应仓库，下载固定提交的构建产物并校验 SHA-256，主项目不再存放网页源码与构建文件。
 - Caddy 的“个人网页设置”拆分“安装随机个人主页”和“更新随机个人主页”；首次配置静态站点或 XHTTP/WS 路径反代时只自动安装一次，后续同步不再覆盖页面内容。新增 `v2ray caddy page-install <域名>` 与 `v2ray caddy page-update <域名>`。
 - `v2ray doctor` 在 Xray 已启用 WARP 策略时检查 `warp-svc` 和本机 SOCKS 监听端口；WARP 服务不可用会明确报错并给出修复或停用命令，避免仅显示 Xray 正常而实际出站不可用。

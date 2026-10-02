@@ -296,11 +296,12 @@ v2ray caddy reverse app.example.com 127.0.0.1:8080
 v2ray caddy xray cdn.example.com 127.0.0.1:24443 /a1b2c3
 v2ray caddy page-install cdn.example.com portfolio
 v2ray caddy page-update cdn.example.com resume
+v2ray caddy page-update cdn.example.com default
 v2ray caddy status
 v2ray caddy log
 ```
 
-静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供两个独立仓库维护的 React/Vite 模板：[`portfolio`](https://github.com/0157Martin/v2ray-portfolio-page) 是深色作品集，[`resume`](https://github.com/0157Martin/v2ray-resume-page) 是浅色简历。安装不会覆盖已有页面，更新才会替换模板和随机内容；二者都不会改动 Caddy 路径反代或客户端链接。目标服务器只下载对应仓库已构建的静态文件，不需要 Node.js、npm 或 Vite；每个文件均按固定提交下载并进行 SHA-256 校验。
+静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供三种选择：[`portfolio`](https://github.com/0157Martin/v2ray-portfolio-page) 是使用竹林角色背景的沉浸式个人博客，[`resume`](https://github.com/0157Martin/v2ray-resume-page) 是不使用背景图片的纸张排版个人博客，`default` 是主脚本内置的轻量默认网页，无需从 GitHub 下载模板。安装不会覆盖已有页面，更新才会替换模板和随机内容；三种网页都不会改动 Caddy 路径反代或客户端链接。服务器安装两个 React/Vite 博客时只下载对应仓库已经构建的静态文件，不需要 Node.js、npm 或 Vite；每个下载文件均按固定提交进行 SHA-256 校验。
 
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，
