@@ -109,6 +109,25 @@ REALITY 组合。[Xray REALITY 配置说明](https://xtls.github.io/config/trans
 HTTP/HTTPS 反向代理；是否开启橙云取决于所选协议。使用灰云（DNS only）时，客户端仍然
 直接连接 VPS，Cloudflare 不转发流量。
 
+| 项目 | 橙云（Proxied） | 灰云（DNS only） |
+| --- | --- | --- |
+| DNS 返回结果 | Cloudflare 边缘节点 IP | VPS 的真实 IP |
+| 实际路径 | 客户端 → Cloudflare → VPS | 客户端 → VPS |
+| Cloudflare 处理流量 | 处理受支持的 HTTP/HTTPS | 只提供 DNS 解析 |
+| 适合的本项目组合 | Caddy 网站、XHTTP、WebSocket、符合条件的 gRPC | REALITY、RAW、VMess TCP 等直连协议 |
+| 公网端口建议 | `443` | 以入站实际端口为准 |
+
+橙云可以使一般访客不直接看到源站 IP，但它不等同于任意 TCP 代理。使用橙云时，Caddy 仍然
+应配置真实域名的 HTTPS，Cloudflare 的 SSL/TLS 模式建议设为 **Full (strict)**。灰云不经过
+Cloudflare，DNS 会直接给出服务器地址，因此适合需要端到端原始 TCP/TLS 握手的 REALITY。
+
+同一台服务器同时部署 Caddy HTTP 入站和 REALITY 时，建议使用两个子域名，分别设置代理状态：
+
+```text
+www.example.com       橙云 → Caddy 网站 / XHTTP / WebSocket
+reality.example.com   灰云 → REALITY / RAW 直连
+```
+
 普通橙云只代理 Cloudflare 支持的 HTTP/HTTPS 端口。HTTPS 推荐使用 `443`，也支持
 `2053`、`2083`、`2087`、`2096` 和 `8443`；项目使用 CDN 域名导出时固定生成公网
 `443` 入口。WebSocket 可用于 Cloudflare 各套餐。gRPC 节点还需要 TLS、HTTP/2、ALPN、
