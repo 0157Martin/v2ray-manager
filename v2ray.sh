@@ -2175,6 +2175,8 @@ download_caddy_page_assets() (
     red '网页模板清单无效。' >&2; return 1;
   }
   while IFS=$'\t' read -r path checksum; do
+    path=${path%$'\r'}
+    checksum=${checksum%$'\r'}
     mkdir -p "$temporary/$(dirname "$path")"
     curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/$path" -o "$temporary/$path"
     [[ $(sha256sum "$temporary/$path" | awk '{print $1}') == "$checksum" ]] || { red "网页模板文件校验失败：$path" >&2; return 1; }
