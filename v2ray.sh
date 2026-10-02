@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.19"
+readonly MANAGER_VERSION="5.6.0"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -34,6 +34,7 @@ readonly SERVICE_NAME="xray"
 readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
 readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
+readonly CADDY_PAGES_DIST_PATH="web/caddy-pages/dist"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -2152,25 +2153,52 @@ landing_page_path() {
   printf '%s/%s/index.html' "$CADDY_WEB_ROOT" "$1"
 }
 
-write_caddy_landing_page() {
-  local domain=$1 root="$CADDY_WEB_ROOT/$1" temporary
+download_caddy_page_assets() (
+  set -Eeuo pipefail
+  local domain=$1 template=${2:-portfolio} root="$CADDY_WEB_ROOT/$1" revision base manifest path checksum temporary
   valid_server_name "$domain" || return 1
+  [[ $template == portfolio || $template == resume ]] || { red '网页模板必须是 portfolio 或 resume。' >&2; return 1; }
+  if ! command -v curl >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
+    red '安装网页模板需要 curl、jq 和 sha256sum。' >&2; return 1;
+  fi
+  revision=${V2M_MANAGER_REF:-}
+  if [[ -z $revision ]]; then
+    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$MANAGER_API" | jq -r '.sha')
+  fi
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || { red '无法取得网页模板的固定项目提交。' >&2; return 1; }
+  base="https://raw.githubusercontent.com/0157Martin/v2ray-manager/$revision/$CADDY_PAGES_DIST_PATH"
+  temporary=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$temporary"' EXIT
+  manifest="$temporary/deploy-manifest.json"
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/deploy-manifest.json" -o "$manifest"
+  jq -e '.version == 1 and (.files | type == "array" and length > 0) and all(.files[]; (.path | type == "string" and test("^(index\\.html|site-config\\.json|favicon\\.svg|icons\\.svg|assets/[A-Za-z0-9._-]+)$")) and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))' "$manifest" >/dev/null || {
+    red '网页模板清单无效。' >&2; return 1;
+  }
+  while IFS=$'\t' read -r path checksum; do
+    mkdir -p "$temporary/$(dirname "$path")"
+    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/$path" -o "$temporary/$path"
+    [[ $(sha256sum "$temporary/$path" | awk '{print $1}') == "$checksum" ]] || { red "网页模板文件校验失败：$path" >&2; return 1; }
+  done < <(jq -r '.files[] | [.path, .sha256] | @tsv' "$manifest")
+  jq -n --arg template "$template" --arg domain "$domain" --arg seed "$(date +%s)-$RANDOM" '{template:$template,domain:$domain,seed:$seed}' > "$temporary/site-config.json"
   install -d -m 755 "$root"
-  temporary=$(mktemp "$root/.index.XXXXXX") || return 1
-  render_personal_landing_page "$domain" "$temporary" || { rm -f -- "$temporary"; return 1; }
-  install -m 644 -o root -g root "$temporary" "$root/index.html" || { rm -f -- "$temporary"; return 1; }
-  rm -f -- "$temporary"
+  cp -a "$temporary/." "$root/"
   chown -R caddy:caddy "$root"
+)
+
+write_caddy_landing_page() {
+  local domain=$1 template=${2:-portfolio}
+  valid_server_name "$domain" || return 1
+  download_caddy_page_assets "$domain" "$template"
 }
 
 install_caddy_landing_page() {
-  local page
-  page=$(landing_page_path "$1") || return 1
+  local domain=$1 template=${2:-portfolio} page
+  page=$(landing_page_path "$domain") || return 1
   if [[ -e $page ]]; then
     yellow "个人主页已存在：$page；请使用更新个人主页保留 Caddy 路由并生成新页面。" >&2
     return 1
   fi
-  write_caddy_landing_page "$1"
+  write_caddy_landing_page "$domain" "$template"
 }
 
 ensure_caddy_landing_page() {
@@ -2180,13 +2208,13 @@ ensure_caddy_landing_page() {
 }
 
 update_caddy_landing_page() {
-  local page
-  page=$(landing_page_path "$1") || return 1
+  local domain=$1 template=${2:-portfolio} page
+  page=$(landing_page_path "$domain") || return 1
   if [[ ! -e $page ]]; then
     yellow '未找到已安装的个人主页，请先选择安装随机个人主页。' >&2
     return 1
   fi
-  write_caddy_landing_page "$1"
+  write_caddy_landing_page "$domain" "$template"
 }
 
 configure_caddy_site() {
@@ -2270,7 +2298,7 @@ normalize_caddy_path() {
 }
 
 caddy_page_menu() {
-  local choice domain
+  local choice domain template
   while :; do
     ui_box_title '个人网页设置'
     ui_menu_item '1) 安装随机个人主页'
@@ -2282,12 +2310,18 @@ caddy_page_menu() {
     case "$choice" in
       1)
         read -r -p '网站域名：' domain
-        install_caddy_landing_page "$domain" && green "个人主页已安装：https://$domain" || true
+        printf '%s\n' '1) 深色作品集（Portfolio）' '2) 浅色简历（Resume）'
+        read -r -p '选择模板 [1-2，默认 1]：' choice
+        template=portfolio; [[ $choice == 2 ]] && template=resume
+        install_caddy_landing_page "$domain" "$template" && green "个人主页已安装：https://$domain（$template）" || true
         pause
         ;;
       2)
         read -r -p '网站域名：' domain
-        if update_caddy_landing_page "$domain"; then
+        printf '%s\n' '1) 深色作品集（Portfolio）' '2) 浅色简历（Resume）'
+        read -r -p '选择模板 [1-2，默认 1]：' choice
+        template=portfolio; [[ $choice == 2 ]] && template=resume
+        if update_caddy_landing_page "$domain" "$template"; then
           green "个人主页已更新：https://$domain"
         fi
         pause
@@ -2349,8 +2383,8 @@ caddy_command() {
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
     xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
-    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名>"; install_caddy_landing_page "$domain" ;;
-    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名>"; update_caddy_landing_page "$domain" ;;
+    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume]"; install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
+    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume]"; update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -3124,7 +3158,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install|page-update|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install <域名> [portfolio|resume]|page-update <域名> [portfolio|resume]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

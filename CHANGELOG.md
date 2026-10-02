@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 新增 `web/caddy-pages` React + TypeScript + Vite 子项目，提供基于 MIT 模板参考重构的深色作品集与浅色简历两套 Caddy 个人主页；菜单和命令行可选择安装或更新模板，服务器下载固定提交的构建产物并校验 SHA-256。
 - Caddy 的“个人网页设置”拆分“安装随机个人主页”和“更新随机个人主页”；首次配置静态站点或 XHTTP/WS 路径反代时只自动安装一次，后续同步不再覆盖页面内容。新增 `v2ray caddy page-install <域名>` 与 `v2ray caddy page-update <域名>`。
 - `v2ray doctor` 在 Xray 已启用 WARP 策略时检查 `warp-svc` 和本机 SOCKS 监听端口；WARP 服务不可用会明确报错并给出修复或停用命令，避免仅显示 Xray 正常而实际出站不可用。
 - 主菜单、入站管理、连接与导出及入站列表改为带状态区、分隔线和编号分组的终端边框布局，保留原有菜单编号与命令行为。
