@@ -452,6 +452,19 @@ IPv4/IPv6 策略可通过菜单选择自动双栈、仅 IPv4 或仅 IPv6，也�
 出站，不区分入站协议。`v2ray warp check` 检查 Netflix、Disney+ 和 ChatGPT 当前 HTTP
 可访问性，`v2ray warp repair` 会恢复 WARP 服务、本机代理和 Xray 路由配置。
 
+### 流媒体可用性边界
+
+“检测可用”只表示脚本在当时能访问对应服务的公开 HTTP 入口；它不能证明账号、订阅套餐、内容库、
+DRM、设备认证或实际播放一定可用。流媒体平台会按账号地区、IP 信誉、授权区域和设备信号分别决策，
+结果可能随时变化。Cloudflare 也明确说明，WARP **不是**用来伪装从其他国家访问互联网的服务，且依赖
+地区授权的影音、音乐、广播或游戏服务可能无法正常工作。
+
+建议先使用 `v2ray warp check` 记录当前结果，再按需要把少量域名加入
+`v2ray warp selective`。如果某服务在 WARP 出站下不可用，移除该域名或运行 `v2ray warp off`
+恢复原生出口；不要把“全部协议通过 WARP”当作流媒体解锁保证，也不要为绕过平台地区授权而分享或
+依赖该配置。[Cloudflare WARP 模式说明](https://developers.cloudflare.com/warp-client/warp-modes/) 和
+[已知问题](https://developers.cloudflare.com/warp-client/known-issues-and-faq/) 说明了这些限制。
+
 安装和修复只有在 `127.0.0.1:40000` 开始监听、且 Cloudflare trace 返回 `warp=on` 后才会
 报告成功。`warp-cli connect` 完成较慢时最多等待 30 秒；现有注册无法启动代理时会自动断开
 并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
