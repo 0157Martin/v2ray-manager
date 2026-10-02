@@ -213,8 +213,10 @@ systemctl() { return 0; }
 sleep() { :; }
 ss() { [[ ${MOCK_WARP_LISTENER:-down} == up ]] && printf '%s\n' 'LISTEN 0 4096 127.0.0.1:40000'; }
 export MOCK_WARP_LISTENER=up
+warp_proxy_ready || fail 'ready WARP proxy was not reported healthy'
 wait_for_warp_proxy || fail 'ready WARP proxy listener was not detected'
 export MOCK_WARP_LISTENER=down
+if warp_proxy_ready; then fail 'missing WARP proxy was reported healthy'; fi
 if wait_for_warp_proxy; then fail 'missing WARP proxy listener was accepted'; fi
 warp_calls=$(mktemp)
 warp_cli() { printf '%s\n' "$*" >> "$warp_calls"; }

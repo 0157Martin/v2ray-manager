@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.16"
+readonly MANAGER_VERSION="5.5.17"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2260,13 +2260,15 @@ warp_cli() {
   warp-cli --accept-tos "$@"
 }
 
+warp_proxy_ready() {
+  systemctl is-active --quiet warp-svc &&
+    ss -H -lnt "sport = :${WARP_PROXY_PORT}" 2>/dev/null | grep -q .
+}
+
 wait_for_warp_proxy() {
   local attempt
   for ((attempt=0; attempt<30; attempt++)); do
-    if systemctl is-active --quiet warp-svc &&
-      ss -H -lnt "sport = :${WARP_PROXY_PORT}" 2>/dev/null | grep -q .; then
-      return 0
-    fi
+    warp_proxy_ready && return 0
     sleep 1
   done
   return 1
@@ -2609,6 +2611,16 @@ doctor() {
     ((failures+=1))
   fi
   if systemctl is-active --quiet "$SERVICE_NAME"; then green "[通过] xray.service 正在运行"; else red "[失败] xray.service 未运行"; ((failures+=1)); fi
+
+  if [[ -r $WARP_STATE_FILE ]]; then
+    if warp_proxy_ready; then
+      green "[通过] Xray WARP 策略所需的本机 SOCKS 代理正在监听 127.0.0.1:${WARP_PROXY_PORT}"
+    else
+      red "[失败] Xray 已启用 WARP 策略，但 warp-svc 或 127.0.0.1:${WARP_PROXY_PORT} 不可用"
+      yellow "运行 v2ray warp repair 检查 WARP 上游；若不再需要 WARP，请运行 v2ray warp off。"
+      ((failures+=1))
+    fi
+  fi
 
   if [[ -r $CONFIG_FILE ]]; then
     while IFS=$'\t' read -r port security target; do
