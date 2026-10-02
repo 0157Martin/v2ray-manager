@@ -80,6 +80,26 @@ flowchart LR
 | 11 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
 | 12 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
 
+### REALITY 使用前须知
+
+REALITY 不是普通 TLS 证书的替代配置项，而是一种借用目标站 TLS 握手特征的传输安全机制。它不需要为
+入站申请证书，但客户端需要支持 REALITY，且必须拿到同一入站导出的公钥（`pbk`）、Short ID（`sid`）
+和 SNI。官方文档限定 REALITY 只能配合 **RAW、XHTTP 或 gRPC**；本项目也只在这三种传输中提供
+REALITY 组合。[Xray REALITY 配置说明](https://xtls.github.io/config/transport.html#realityobject) 将其
+定义为经过修改的 TLS，并说明客户端指纹参数不能关闭 uTLS。
+
+- **入口必须直连：**客户端入口域名应解析到 VPS，并使用 Cloudflare 灰云（DNS only）。普通橙云不能
+  代理 REALITY/RAW 的任意 TCP 流量；Caddy 的 HTTP 反代也不能放在 REALITY 前面。
+- **目标站不是入口域名：**`serverName`/SNI 指向用于伪装的目标站；分享链接中的服务器地址则指向你的
+  VPS。两者填反会导致连接失败或把流量送往错误的位置。
+- **先检查再使用：**目标站至少应稳定支持 TLS 1.3、H2、有效证书链和相应 SNI。本项目在创建或修改
+  REALITY 入站时会做这些检查；检查不通过时应换站点，不要通过关闭验证强行继续。
+- **认证失败会回落：**为保持外部表现，Xray 会把未通过 REALITY 认证的连接直接转发给 `target`。
+  因此应避免把公共 CDN 或可能产生高成本流量的站点作为目标；官方文档也建议关注这种被扫描后滥用的
+  风险，并说明可用回落限速作为最后手段。详见 [官方 REALITY 参数文档](https://github.com/XTLS/Xray-docs-next/blob/main/docs/en/config/transports/reality.md)。
+- **更新或轮换后重新导入：**执行 `v2ray rotate <入站ID>` 后，旧的公钥和 Short ID 立即失效；用
+  `v2ray links` 重新导出对应链接，再在客户端更新。
+
 “不支持橙云”不等于不能使用 Cloudflare DNS。可以把域名托管在 Cloudflare，但应将代理
 状态设为 **DNS only（灰云）**，让客户端直接连接服务器。
 
