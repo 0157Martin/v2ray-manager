@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.9"
+readonly MANAGER_VERSION="5.5.10"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -166,6 +166,7 @@ download_core() (
 
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
+valid_node_id() { [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
 reality_target_supported() { [[ ${1,,} != www.microsoft.com && ${1,,} != microsoft.com ]]; }
 check_reality_target() {
@@ -674,63 +675,56 @@ inject_warp_config() {
 }
 
 write_config() {
+  local node_file=${1:-$NODES_DIR/primary.env}
   ensure_service_user
   install -d -m 755 "$CONFIG_DIR"
   create_backup
   prepare_tls_material
-  # Xray determines the configuration format from the final file extension.
-  local temporary="$CONFIG_DIR/config.pending.json"
-  render_config "$temporary"
-  apply_warp_config "$temporary"
-  if ! XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary"; then
-    red "Xray 配置校验输出如上。"
-    rm -f "$temporary"
-    die "新配置未通过 Xray 校验。"
-  fi
-  install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE"
-  rm -f "$temporary"
-  cat > "$STATE_FILE" <<EOF
-DATA_SCHEMA=${DATA_SCHEMA_VERSION}
-PORT=${PORT}
-UUID=${UUID}
-EXTRA_UUIDS=$(printf %q "${EXTRA_UUIDS:-}")
-ADDRESS=$(printf %q "${ADDRESS:-}")
-PROFILE=$(printf %q "${PROFILE:-vless-reality-raw}")
-PATH_VALUE=$(printf %q "${PATH_VALUE:-}")
-CERT_SOURCE=$(printf %q "${CERT_SOURCE:-}")
-KEY_SOURCE=$(printf %q "${KEY_SOURCE:-}")
-SERVER_NAME=$(printf %q "$SERVER_NAME")
-PRIVATE_KEY=$(printf %q "$PRIVATE_KEY")
-PUBLIC_KEY=$(printf %q "$PUBLIC_KEY")
-SHORT_ID=$(printf %q "$SHORT_ID")
-REMARK=$(printf %q "$REMARK")
-EOF
-  chmod 600 "$STATE_FILE"
+  validate_pending_config node
+  [[ -f $STATE_FILE ]] || save_current_node "$STATE_FILE"
   install -d -m 700 "$NODES_DIR"
-  save_current_node "$NODES_DIR/primary.env"
+  save_current_node "$node_file"
   rebuild_or_restore
 }
+
+# Keep credentials private from creation, including on failure or interruption.
+# Xray determines the configuration format from the final file extension.
+validate_pending_config() (
+  umask 077
+  local mode=$1 temporary_dir temporary
+  temporary_dir=$(mktemp -d "$CONFIG_DIR/.config.XXXXXX") || return 1
+  trap 'rm -rf -- "$temporary_dir"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  temporary="$temporary_dir/config.json"
+  if [[ $mode == empty ]]; then
+    jq -n '{log:{loglevel:"warning"},inbounds:[],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$temporary" || return 1
+  else
+    render_config "$temporary" || return 1
+  fi
+  apply_warp_config "$temporary" || return 1
+  XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary" || return 1
+  if [[ $mode == empty ]]; then
+    install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE" || return 1
+  fi
+)
 
 write_empty_config() {
   ensure_service_user
   install -d -m 755 "$CONFIG_DIR"
   install -d -m 700 "$NODES_DIR"
-  local temporary="$CONFIG_DIR/config.pending.json"
-  jq -n '{log:{loglevel:"warning"},inbounds:[],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$temporary"
-  apply_warp_config "$temporary"
-  if ! XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary"; then
-    rm -f -- "$temporary"
-    die "空入站配置未通过 Xray 校验。"
-  fi
-  install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE"
-  rm -f -- "$temporary"
-  printf 'DATA_SCHEMA=%s\n' "$DATA_SCHEMA_VERSION" > "$STATE_FILE"
-  chmod 600 "$STATE_FILE"
+  validate_pending_config empty
+  write_data_schema_marker "$STATE_FILE"
 }
 
-save_current_node() {
-  local destination=$1
-  cat > "$destination" <<EOF
+save_current_node() (
+  umask 077
+  local destination=$1 temporary
+  temporary=$(mktemp "${destination}.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cat > "$temporary" <<EOF || return 1
 DATA_SCHEMA=${DATA_SCHEMA_VERSION}
 PORT=${PORT}
 UUID=${UUID}
@@ -746,8 +740,8 @@ PUBLIC_KEY=$(printf %q "${PUBLIC_KEY:-}")
 SHORT_ID=$(printf %q "${SHORT_ID:-}")
 REMARK=$(printf %q "$REMARK")
 EOF
-  chmod 600 "$destination"
-}
+  mv -f -- "$temporary" "$destination"
+)
 
 rebuild_config_from_nodes() (
   install -d -m 700 "$NODES_DIR" || return 1
@@ -931,35 +925,35 @@ restore_archive() (
   set -Eeuo pipefail
   local archive=$1 temp_dir
   [[ -r "$archive" ]] || die "备份文件不可读：$archive"
-  temp_dir=$(mktemp -d)
+  temp_dir=$(mktemp -d) || return 1
   trap 'rm -rf -- "$temp_dir"' EXIT
-  tar -xzf "$archive" -C "$temp_dir"
+  tar -xzf "$archive" -C "$temp_dir" || return 1
   [[ -r "$temp_dir/config.json" && -r "$temp_dir/manager.env" ]] || die "备份内容不完整。"
   # Validate against the archived certificates, not the possibly broken live ones.
   jq --arg live "$TLS_DIR/" --arg staged "$temp_dir/tls/" \
     'walk(if type == "string" then if startswith($live) then $staged + .[($live|length):] else . end else . end)' \
-    "$temp_dir/config.json" > "$temp_dir/validation.json"
+    "$temp_dir/config.json" > "$temp_dir/validation.json" || return 1
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temp_dir/validation.json" >/dev/null || die "备份配置未通过 Xray 校验。"
   if [[ -d $temp_dir/tls ]]; then
     # Retain both legacy shared certificates and all per-domain directories.
-    chown -R root:xray "$temp_dir/tls"
-    find "$temp_dir/tls" -type d -exec chmod 750 {} +
-    find "$temp_dir/tls" -type f -exec chmod 640 {} +
-    find "$temp_dir/tls" -type f -name source -exec chmod 600 {} +
-    install -d -m 750 -o root -g xray "$TLS_DIR"
-    cp -a "$temp_dir/tls/." "$TLS_DIR/"
+    chown -R root:xray "$temp_dir/tls" || return 1
+    find "$temp_dir/tls" -type d -exec chmod 750 {} + || return 1
+    find "$temp_dir/tls" -type f -exec chmod 640 {} + || return 1
+    find "$temp_dir/tls" -type f -name source -exec chmod 600 {} + || return 1
+    install -d -m 750 -o root -g xray "$TLS_DIR" || return 1
+    cp -a "$temp_dir/tls/." "$TLS_DIR/" || return 1
   fi
-  install -m 640 -o root -g xray "$temp_dir/config.json" "$CONFIG_FILE"
-  install -m 600 -o root -g root "$temp_dir/manager.env" "$STATE_FILE"
+  install -m 640 -o root -g xray "$temp_dir/config.json" "$CONFIG_FILE" || return 1
+  install -m 600 -o root -g root "$temp_dir/manager.env" "$STATE_FILE" || return 1
   if [[ -f $temp_dir/warp.env ]]; then
-    install -m 600 -o root -g root "$temp_dir/warp.env" "$WARP_STATE_FILE"
+    install -m 600 -o root -g root "$temp_dir/warp.env" "$WARP_STATE_FILE" || return 1
   else
-    rm -f -- "$WARP_STATE_FILE"
+    rm -f -- "$WARP_STATE_FILE" || return 1
   fi
   if [[ -d $temp_dir/nodes ]]; then
-    rm -rf "$NODES_DIR"
-    install -d -m 700 "$NODES_DIR"
-    cp -a "$temp_dir/nodes/." "$NODES_DIR/"
+    rm -rf "$NODES_DIR" || return 1
+    install -d -m 700 "$NODES_DIR" || return 1
+    cp -a "$temp_dir/nodes/." "$NODES_DIR/" || return 1
   fi
 )
 
@@ -1050,10 +1044,10 @@ load_connection_state() {
 show_connection() (
   local node_id=${1:-} address_override=${2:-}
   if [[ -n $node_id ]]; then
-    [[ $node_id =~ ^[A-Za-z0-9_-]+$ && -f $NODES_DIR/$node_id.env ]] || {
+    if ! valid_node_id "$node_id" || [[ ! -f $NODES_DIR/$node_id.env ]]; then
       red "找不到启用的入站：$node_id" >&2
       return 1
-    }
+    fi
     # shellcheck disable=SC1090
     . "$NODES_DIR/$node_id.env"
   else
@@ -1103,7 +1097,10 @@ render_client_config() {
 
 export_client() (
   if [[ -n ${1:-} ]]; then
-    [[ $1 =~ ^[A-Za-z0-9_-]+$ && -f $NODES_DIR/$1.env ]] || { red "找不到启用的入站：$1" >&2; return 1; }
+    if ! valid_node_id "$1" || [[ ! -f $NODES_DIR/$1.env ]]; then
+      red "找不到启用的入站：$1" >&2
+      return 1
+    fi
     # shellcheck disable=SC1090
     source "$NODES_DIR/$1.env"
   else
@@ -1257,20 +1254,45 @@ show_connection_loaded() (
   yellow "请确认云服务商安全组已放行 TCP ${PORT}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
 )
 
+# manager.env may have stale or no connection data; edits use the node registry.
+load_edit_node() {
+  local node_id=${1:-} candidate
+  local -a candidates=()
+  if [[ -z $node_id ]]; then
+    for candidate in "$NODES_DIR"/*.env; do
+      [[ -f $candidate ]] && candidates+=("$candidate")
+    done
+    (( ${#candidates[@]} > 0 )) || die "没有启用的入站，请先运行 v2ray add。"
+    if (( ${#candidates[@]} == 1 )); then
+      node_id=$(basename "${candidates[0]}" .env)
+    else
+      list_inbounds
+      read -r -p '请输入要修改的一个启用入站 ID：' node_id
+    fi
+  fi
+  if ! valid_node_id "$node_id" || [[ ! -f $NODES_DIR/$node_id.env ]]; then
+    die "找不到启用的入站：$node_id"
+  fi
+  EDIT_NODE_FILE="$NODES_DIR/$node_id.env"
+  EXTRA_UUIDS=''
+  # shellcheck disable=SC1090
+  . "$EDIT_NODE_FILE"
+}
+
 change_config() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
-  load_state
+  load_edit_node "${1:-}"
   ask_server_values
-  write_config
+  write_config "$EDIT_NODE_FILE"
   restart_or_rollback
   green "配置已更新并重启服务。"
   open_enabled_inbound_ports
-  show_connection
+  show_connection "$(basename "$EDIT_NODE_FILE" .env)"
 }
 
 change_menu() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
-  load_state
+  load_edit_node "${1:-}"
   printf '\n当前选择: %s\n\n' "$(profile_name)"
   printf '%s\n' '请选择更改:' \
     '1) 更改协议组合' '2) 更改端口' '3) 更改服务器地址' '4) 更改目标域名 / SNI' \
@@ -1306,17 +1328,17 @@ change_menu() {
       ;;
     7)
       profile_uses_reality || die "TLS 组合不使用 REALITY 密钥。"
-      rotate_reality_keys; return
+      rotate_reality_keys "$(basename "$EDIT_NODE_FILE" .env)"; return
       ;;
-    8) change_config; return ;;
+    8) change_config "$(basename "$EDIT_NODE_FILE" .env)"; return ;;
     0) return ;;
     *) die "无效选择。" ;;
   esac
-  write_config
+  write_config "$EDIT_NODE_FILE"
   restart_or_rollback
   green "配置已更新并重启服务。"
   open_enabled_inbound_ports
-  show_connection
+  show_connection "$(basename "$EDIT_NODE_FILE" .env)"
 }
 
 find_free_port() {
@@ -1393,7 +1415,9 @@ show_all_links() (
 load_sub_link_credentials() {
   local node_id=$1 node_file credential
   local -a extra_credentials
-  [[ $node_id =~ ^[A-Za-z0-9_-]+$ && -f $NODES_DIR/$node_id.env ]] || die "找不到启用的入站：$node_id"
+  if ! valid_node_id "$node_id" || [[ ! -f $NODES_DIR/$node_id.env ]]; then
+    die "找不到启用的入站：$node_id"
+  fi
   node_file="$NODES_DIR/$node_id.env"
   EXTRA_UUIDS=''
   # shellcheck disable=SC1090
@@ -1556,7 +1580,7 @@ select_node_files() {
   else
     for node_id in "${requested[@]}"; do
       node_id=${node_id%.env}; node_id=${node_id%.disabled}
-      [[ $node_id =~ ^[A-Za-z0-9._-]+$ ]] || die "入站 ID 格式无效：$node_id"
+      valid_node_id "$node_id" || die "入站 ID 格式无效：$node_id"
       [[ -z ${seen[$node_id]:-} ]] || continue
       seen[$node_id]=1
       candidate=
@@ -1591,10 +1615,17 @@ disable_inbound() {
   green "已批量停用 ${#SELECTED_NODE_FILES[@]} 个入站。"
 }
 
-modify_inbound() {
+modify_inbound() (
   local node_file mode value node_id
   select_node_files enabled
   create_backup
+  [[ -n ${LAST_BACKUP:-} ]] || die "无法创建修改前备份，未修改入站。"
+  INBOUND_EDIT_ARCHIVE=$LAST_BACKUP
+  INBOUND_EDIT_COMMITTED=0
+  INBOUND_EDIT_RESTART_ATTEMPTED=0
+  trap 'finish_inbound_edit "$?" "${INBOUND_EDIT_ARCHIVE:-}" "${INBOUND_EDIT_COMMITTED:-0}" "${INBOUND_EDIT_RESTART_ATTEMPTED:-0}"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   if (( ${#SELECTED_NODE_FILES[@]} > 1 )); then
     printf '%s\n' '批量修改方式：' '1) 全部改为同一客户端入口域名' \
       '2) 全部改为同一 REALITY 目标域名' '3) 逐个完整修改' '0) 取消'
@@ -1653,11 +1684,31 @@ modify_inbound() {
     prepare_tls_material
     save_current_node "$node_file"
   fi
-  rebuild_or_restore
-  restart_or_rollback
+  rebuild_config_from_nodes || die "入站配置生成失败，正在恢复修改前状态。"
+  INBOUND_EDIT_RESTART_ATTEMPTED=1
+  restart_checked || die "新配置启动失败，正在恢复修改前状态。"
+  INBOUND_EDIT_COMMITTED=1
+  trap - EXIT INT TERM
   green "已更新 ${#SELECTED_NODE_FILES[@]} 个入站。"
   open_enabled_inbound_ports
   list_inbounds
+)
+
+finish_inbound_edit() {
+  local status=$1 archive=$2 committed=$3 restart_attempted=$4
+  trap - EXIT INT TERM
+  if (( status != 0 && ! committed )); then
+    if restore_archive "$archive"; then
+      yellow "已恢复本次修改前的全部入站和配置。"
+      if (( restart_attempted )); then
+        restart_checked || { red "配置已恢复，但服务恢复失败，请运行 v2ray log。"; exit 1; }
+      fi
+    else
+      red "自动回滚失败，修改前备份保留在 $archive。"
+      exit 1
+    fi
+  fi
+  exit "$status"
 }
 
 enable_inbound() {
@@ -1754,13 +1805,13 @@ users_command() {
 
 rotate_reality_keys() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
-  load_state
+  load_edit_node "${1:-}"
   profile_uses_reality || die "当前 TLS 组合不使用 REALITY 密钥。"
   generate_reality_credentials
-  write_config
+  write_config "$EDIT_NODE_FILE"
   restart_or_rollback
   green "REALITY 密钥和 Short ID 已轮换，旧客户端链接立即失效。"
-  show_connection
+  show_connection "$(basename "$EDIT_NODE_FILE" .env)"
 }
 
 service_action() {
@@ -2625,18 +2676,19 @@ config_connection_fingerprint() {
   }]' "$config_file" | sha256sum | awk '{print $1}'
 }
 
-write_data_schema_marker() {
+write_data_schema_marker() (
+  umask 077
   local state_file=$1 temporary
-  [[ -f $state_file ]] || return 0
-  temporary=$(mktemp)
-  awk '!/^DATA_SCHEMA=/' "$state_file" > "$temporary"
+  temporary=$(mktemp "${state_file}.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   {
     printf 'DATA_SCHEMA=%s\n' "$DATA_SCHEMA_VERSION"
-    cat "$temporary"
-  } > "${temporary}.next"
-  install -m 600 "${temporary}.next" "$state_file"
-  rm -f -- "$temporary" "${temporary}.next"
-}
+    if [[ -f $state_file ]]; then awk '!/^DATA_SCHEMA=/' "$state_file" || return 1; fi
+  } > "$temporary"
+  mv -f -- "$temporary" "$state_file"
+)
 
 migrate_project_state() {
   local before after node_file credential
@@ -2860,7 +2912,7 @@ main() {
     links) show_all_links ;;
     firewall) open_enabled_inbound_ports ;;
     info) show_info ;;
-    config|change) change_menu ;;
+    config|change) change_menu "${2:-}" ;;
     link) show_connection "${2:-}" "${3:-}" ;;
     users) users_command "${@:2}" ;;
     client) export_client "${2:-}" ;;
@@ -2876,7 +2928,7 @@ main() {
     upgrade|update.sh) update_manager ;;
     migrate) migrate_project_state ;;
     rollback.sh) rollback_manager ;;
-    rotate) rotate_reality_keys ;;
+    rotate) rotate_reality_keys "${2:-}" ;;
     backup) manual_backup ;;
     restore) restore_latest ;;
     doctor) doctor ;;

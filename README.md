@@ -154,7 +154,7 @@ v2ray users set primary 5         # 兼容模式：直接设置链接总数
 v2ray firewall         # 放行已启用入站的本机 UFW/firewalld TCP 端口
 v2ray info             # 查看版本和连接信息
 v2ray version          # 查看管理脚本版本
-v2ray change           # 打开分级修改菜单
+v2ray change [入站ID]  # 修改指定入站；单入站自动选择，多入站提示选择
 v2ray config           # change 的兼容别名
 v2ray link             # 重新显示默认入站链接
 v2ray link primary edge.example.net # 用 CDN 域名导出，SNI/Host 仍使用原证书域名
@@ -173,7 +173,7 @@ v2ray update           # 更新 Xray Core，保留配置
 v2ray upgrade          # 一键更新项目脚本、迁移数据并保留现有链接
 v2ray update.sh        # upgrade 的兼容别名
 v2ray rollback.sh      # 恢复上一次更新前的管理脚本
-v2ray rotate           # 轮换 REALITY 密钥和 Short ID
+v2ray rotate [入站ID]  # 轮换所选入站的 REALITY 密钥和 Short ID
 v2ray backup           # 创建配置备份
 v2ray restore          # 恢复最近一份备份
 v2ray doctor           # 运行综合诊断

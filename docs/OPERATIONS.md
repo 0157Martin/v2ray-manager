@@ -14,9 +14,16 @@ certificate files and node state, then restarts the service and observes it for 
 
 ## Credential rotation
 
-`v2ray rotate` replaces the REALITY X25519 key pair and Short ID. Existing client profiles stop
-working immediately, so distribute the new link from `v2ray link` through an appropriate secure
-channel.
+`v2ray rotate [node-id]` replaces the selected inbound's REALITY X25519 key pair and Short ID.
+The sole enabled inbound is selected automatically; with multiple enabled inbounds, omitting
+the ID prompts for one. Existing client profiles for that inbound stop working immediately,
+so distribute the new link from `v2ray link node-id` through an appropriate secure channel.
+`v2ray change [node-id]` uses the same selection rules. Both commands read the current node
+registry, preserving user removals and other changes made since installation.
+
+Batch editing restores the pre-edit node registry, certificates and config on input, validation
+or restart failure, including interruption. After a restart attempt, rollback also restarts the
+restored configuration. A failed rollback reports the retained backup for manual recovery.
 
 ## Updating
 
