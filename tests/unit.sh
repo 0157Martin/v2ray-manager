@@ -170,7 +170,7 @@ valid_caddy_upstream '[::1]:3000' || fail 'IPv6 loopback upstream rejected'
 ! valid_caddy_upstream '127.0.0.1:70000' || fail 'invalid upstream port accepted'
 ! render_caddy_site static localhost '' "$caddy_static" || fail 'invalid Caddy domain accepted'
 render_caddy_site xray cdn.example.com 127.0.0.1:24443 "$caddy_xray" /a1b2c3 || fail 'Xray Caddy route did not render'
-grep -Fq '@xray path /a1b2c3 /a1b2c3/*' "$caddy_xray" || fail 'Xray Caddy path matcher mismatch'
+grep -Fq '@xray_0 path /a1b2c3 /a1b2c3/*' "$caddy_xray" || fail 'Xray Caddy path matcher mismatch'
 grep -Fq 'tls_server_name cdn.example.com' "$caddy_xray" || fail 'Xray upstream SNI mismatch'
 ! render_caddy_site xray cdn.example.com 127.0.0.1:24443 "$caddy_xray" '/bad path' || fail 'invalid transport path accepted'
 valid_transport_path /a1b2c3 || fail 'valid transport path rejected'
@@ -185,9 +185,19 @@ SERVER_NAME=tenglong.xyz
 PORT=25443
 PATH_VALUE=/matched-path
 EOF
+cat > "$caddy_node_dir/second.env" <<'EOF'
+PROFILE=vless-tls-ws
+SERVER_NAME=tenglong.xyz
+PORT=25444
+PATH_VALUE=/second-path
+EOF
 export CADDY_NODE_DIR_OVERRIDE=$caddy_node_dir
 IFS=$'\t' read -r matched_upstream matched_path < <(find_caddy_xray_defaults tenglong.xyz)
 [[ $matched_upstream == 127.0.0.1:25443 && $matched_path == /matched-path ]] || fail 'Caddy did not discover matching Xray inbound defaults'
+render_caddy_site xray tenglong.xyz 127.0.0.1:25443 "$caddy_xray" /matched-path || fail 'multi-route Caddy site did not render'
+grep -Fq '@xray_0 path /matched-path /matched-path/*' "$caddy_xray" || fail 'first Xray path route missing'
+grep -Fq '@xray_1 path /second-path /second-path/*' "$caddy_xray" || fail 'second Xray path route missing'
+grep -Fq 'reverse_proxy @xray_1 https://127.0.0.1:25444' "$caddy_xray" || fail 'second Xray upstream missing'
 rm -rf -- "$caddy_node_dir"
 unset CADDY_NODE_DIR_OVERRIDE
 rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray"
