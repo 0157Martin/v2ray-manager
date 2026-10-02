@@ -27,16 +27,6 @@ valid_route_target client.example.com || fail 'hostname route target rejected'
 ! valid_route_target 'https://example.com' || fail 'URL accepted as route target'
 ! valid_route_target 'example.com;id' || fail 'shell metacharacter accepted as route target'
 
-# The menu animation must be optional and never affect non-interactive runs.
-V2M_NO_ANIMATION=1 menu_animation > /dev/null || fail 'animation opt-out failed'
-menu_animation > /dev/null || fail 'animation should skip without a TTY'
-animation_output=$(V2M_ANIMATION=on menu_animation)
-[[ $animation_output == *'▀'* ]] || fail 'animation frames missing'
-if command -v base64 >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1; then
-  image_frame=$(menu_image_frame guardians)
-  [[ $image_frame == *$'\033['* && $image_frame == *'▀'* ]] || fail 'image-derived terminal frame missing'
-fi
-
 export ADDRESS=edge.example.com
 [[ $(server_address) == edge.example.com ]] || fail "explicit server domain should be used for exports"
 

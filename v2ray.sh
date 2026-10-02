@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.12"
+readonly MANAGER_VERSION="5.5.13"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -42,42 +42,6 @@ cyan_value() { printf '\033[36m%s\033[0m' "$*"; }
 step() { printf '\033[33m%s\033[0m  %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { red "错误：$*"; exit 1; }
 pause() { read -r -p "按 Enter 键返回菜单…" _; }
-
-# A short ANSI half-block animation sampled from the supplied bamboo scenes.
-# It deliberately avoids terminal image protocols so SSH and ordinary terminals
-# remain usable. Set V2M_NO_ANIMATION=1 or V2M_ANIMATION=off to suppress it.
-# V2M_ANIMATION=on is useful when a terminal multiplexer does not expose its TTY.
-menu_image_frame() {
-  local frame=$1 encoded
-  case "$frame" in
-    guardians) encoded='H4sIAH0wv2oC/8VXwW3DMAz8d4UsIeIECEFH6QzZoVN0wE5Sp2ls0jmKlGsnP4KgdRKPR9Knj3N5l1Iu31+fp6tdcTMhs6kjAO2u7TEidqMtEW2KeHRvNFd4L7GnBDnJynyqc/tnlsubG6bBhi+6R7prO+CwgyhyynkPdn85wgSh0EKC3Xu2fYnDMSQ/U12jKrqbCw1rhrQplKxE+i1ZQZoUFf6LgoiQZH6ErYIj2lwcLzT1fYKEi07YhCJlHmdOs3YFuR+ndBqZHtswIFgetczXGU9jjyY2oY4UPxq2T5B+APtahsaT0xN1WmFJ4pXQvbs24UoZDG8OAAvYMnT7UgXbwLTXVpPE7Q1ee9taN50GRwgR4+1q92y5STWV/rqaGaeINrAUPRJOn9XN2SuG5oy/XTtd1wi8kYsU167hBlM5b1S5VgRDW1BYs80QJMmucNOPlTjJIRxV6WEg0cxNPCHTR7j/H7vt6Kh3xeJp1RQUehLu7XBWa8ibFL5QzLH/Nq/+2i5U5wb/CBIfQn7vk/wK9wNtX46lTxAAAA==' ;;
-    dash) encoded='H4sIAH0wv2oC/7VXwXHEMAj8p4VrQgye0XiulKvhekgVKTCVxI7j84JAIJ/z2+QQlmF3wbcH851KeX5/fd4ecxF44g1iSCfcTVP/jlY7ZPn/HjJXjE7D5EUuwZkCLDF77ZIpIRyqvsPy/Fj+hp/oPu1nywuuZ+nUxfhc2WPIbrfYwS1tJLT4KaHJ4GrTTZWmhu3GRxZoDtReqWWo3hgRXliFUPdkJ3lIc4ETZzN5BuWyhpBFc5DEEWxb10tFEEatS3FoK3FXHc7CQaVbQw4d5vGABIbd+lxG0WdycI2qsrWIsRnO3TwSxq4R9At7dJAOHHcGKgIRGIyMVRcts5Mxzgv7pTbSr3e8ZmJHk3yzvHq8vJjgVNBzzo1zqx4uLkJVrcBwXLKAex9JtJQaj3eMJls2CokY7k4ZG63K65xHczXn4izxZDTxN0sdUI8hJKkpaqzYNuiOXZYLl0TP2dlUln48NfVV6xy5g8j0y4QFp2TFXad03EcPVDIFVCKxUW/FvXBUtcuBaxfkca2oIdT6gL1422+v7MMQH4uFngcmwJBtEnqis+8mZqWNzY0G+ULBtw1ej7xknQ3un2G8HWUWbo4+UN76Iq3xkhRVFkShyFq6zROr2w/E6sKmTRAAAA==' ;;
-    *) return 1 ;;
-  esac
-  printf '%s' "$encoded" | base64 -d 2>/dev/null | gzip -dc 2>/dev/null
-}
-
-menu_animation() (
-  [[ ${V2M_NO_ANIMATION:-0} != 1 ]] || return 0
-  case "${V2M_ANIMATION:-auto}" in
-    off) return 0 ;;
-    on) ;;
-    auto) [[ -t 0 && -t 1 && ${TERM:-dumb} != dumb ]] || return 0 ;;
-    *) return 0 ;;
-  esac
-  if command -v base64 >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 && menu_image_frame guardians; then
-    sleep 0.35
-    printf '\033[10A'
-    menu_image_frame dash
-    sleep 0.35
-    clear || true
-  else
-    printf '\033[38;5;108m\n  │  │  │     竹 影 守 护\n\033[38;5;222m      ◉      ──╲    ╱──\n\033[0m'
-    sleep 0.12
-    printf '\033[2A\033[38;5;108m  │  │  │     竹 影 守 护\n\033[38;5;220m  ────────╲  剑 光 突 进  ╱────────\n\033[0m'
-    sleep 0.12
-  fi
-)
 
 require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 root 运行：sudo bash $0"
@@ -2902,7 +2866,6 @@ show_about() {
 menu() {
   while :; do
     clear || true
-    menu_animation
     local core_version service_state caddy_state active_nodes disabled_nodes install_label
     core_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')
     if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi

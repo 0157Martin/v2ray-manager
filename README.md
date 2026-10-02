@@ -12,6 +12,11 @@
 Xray 客户端 JSON。一个 Xray 服务可以运行多个独立入站；每个入站还可以生成最多 10 条
 具有独立凭据、可同时使用的子链接。
 
+<p align="center">
+  <img src="assets/readme/bamboo-guardians.png" alt="竹林中的双人守护场景" width="49%">
+  <img src="assets/readme/bamboo-dash.png" alt="竹林中的剑光突进场景" width="49%">
+</p>
+
 快速导航：[选择协议](#如何选择协议) · [安装](#一行安装) · [管理命令](#管理命令) ·
 [Caddy](#caddy-网站伪装与反向代理) · [非交互安装](#非交互安装) ·
 [WARP](#warp-出站管理) · [连接排障](#导入后延迟为--1--无法连接) ·
@@ -179,8 +184,6 @@ v2ray restore          # 恢复最近一份备份
 v2ray doctor           # 运行综合诊断
 v2ray uninstall
 ```
-
-交互式主菜单会显示两帧轻量终端动画（“竹影守护”和“剑光突进”）。两帧由项目中的竹林角色图缩采样为 ANSI 半块字符，不使用图片协议，SSH 和普通终端可直接运行；缺少 `base64` 或 `gzip` 时会回退为文字动画。如需关闭，可使用 `V2M_NO_ANIMATION=1 v2ray` 或 `V2M_ANIMATION=off v2ray`。若终端复用器没有暴露 TTY，可使用 `V2M_ANIMATION=on v2ray` 强制显示。
 
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、WARP、维护诊断、卸载”分组，并显示
 Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不会自动输出凭据；需要分享链接
