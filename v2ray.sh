@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.15"
+readonly MANAGER_VERSION="5.5.16"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -1356,8 +1356,10 @@ find_free_port() {
 list_inbounds() (
   install -d -m 700 "$NODES_DIR"
   local node_file state node_id group wanted_group heading link_count
-  printf '\n%-22s %-7s %-30s %-8s %s\n' '入站 ID' '状态' '协议组合' '链接数' '端口'
-  printf '%s\n' '--------------------------------------------------------------------------------'
+  printf '\n'
+  ui_box_title '入站列表'
+  printf '  %-22s %-7s %-30s %-8s %s\n' '入站 ID' '状态' '协议组合' '链接数' '端口'
+  printf '  %s\n' '-------------------------------------------------------------------------------'
   for wanted_group in reality http-tls other; do
     case $wanted_group in
       reality) heading='REALITY 直连（灰云 / DNS only）' ;;
@@ -1380,6 +1382,7 @@ list_inbounds() (
       printf '%-22s %-7s %-30s %-8s %s\n' "$node_id" "$state" "$(profile_name)" "$link_count" "$PORT"
     done
   done
+  ui_box_bottom
   printf '\n'
 )
 
@@ -1743,9 +1746,17 @@ delete_inbound() {
 manage_inbounds_menu() {
   local choice
   while :; do
-    printf '\n%s\n' '----- 入站管理 -----'
-    printf '%s\n' '1) 查看入站列表' '2) 添加新入站' '3) 修改入站（支持批量）' '4) 停用入站（支持批量）' \
-      '5) 启用入站（支持批量）' '6) 删除入站（支持批量）' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title '入站管理'
+    ui_menu_item '1) 查看入站列表'
+    ui_menu_item '2) 添加新入站'
+    ui_menu_item '3) 修改入站（支持批量）'
+    ui_menu_item '4) 停用入站（支持批量）'
+    ui_menu_item '5) 启用入站（支持批量）'
+    ui_menu_item '6) 删除入站（支持批量）'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) list_inbounds; pause ;; 2) add_inbound; pause ;; 3) modify_inbound; pause ;;
@@ -1758,10 +1769,17 @@ manage_inbounds_menu() {
 export_menu() {
   local choice node_id cdn_address
   while :; do
-    printf '\n%s\n' '----- 连接与导出 -----'
-    printf '%s\n' '1) 查看入站列表' '2) 输出全部启用链接' '3) 输出指定入站链接' \
-      '4) 使用 Cloudflare/CDN 域名输出链接' '5) 子链接用户管理（增删改查）' \
-      '6) 导出 Xray 客户端 JSON' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title '连接与导出'
+    ui_menu_item '1) 查看入站列表'
+    ui_menu_item '2) 输出全部启用链接'
+    ui_menu_item '3) 输出指定入站链接'
+    ui_menu_item '4) 使用 Cloudflare/CDN 域名输出链接'
+    ui_menu_item '5) 子链接用户管理（增删改查）'
+    ui_menu_item '6) 导出 Xray 客户端 JSON'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) list_inbounds; pause ;;
