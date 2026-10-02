@@ -34,7 +34,8 @@ readonly SERVICE_NAME="xray"
 readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
 readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
-readonly CADDY_PAGES_DIST_PATH="web/caddy-pages/dist"
+readonly CADDY_PORTFOLIO_REPO="0157Martin/v2ray-portfolio-page"
+readonly CADDY_RESUME_REPO="0157Martin/v2ray-resume-page"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -2155,18 +2156,20 @@ landing_page_path() {
 
 download_caddy_page_assets() (
   set -Eeuo pipefail
-  local domain=$1 template=${2:-portfolio} root="$CADDY_WEB_ROOT/$1" revision base manifest path checksum temporary
+  local domain=$1 template=${2:-portfolio} root="$CADDY_WEB_ROOT/$1" revision base manifest path checksum temporary repository api
   valid_server_name "$domain" || return 1
   [[ $template == portfolio || $template == resume ]] || { red '网页模板必须是 portfolio 或 resume。' >&2; return 1; }
   if ! command -v curl >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
     red '安装网页模板需要 curl、jq 和 sha256sum。' >&2; return 1;
   fi
-  revision=${V2M_MANAGER_REF:-}
+  if [[ $template == portfolio ]]; then repository=$CADDY_PORTFOLIO_REPO; else repository=$CADDY_RESUME_REPO; fi
+  api="https://api.github.com/repos/$repository/commits/main"
+  revision=${V2M_CADDY_PAGE_REF:-}
   if [[ -z $revision ]]; then
-    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$MANAGER_API" | jq -r '.sha')
+    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$api" | jq -r '.sha')
   fi
   [[ $revision =~ ^[0-9a-f]{40}$ ]] || { red '无法取得网页模板的固定项目提交。' >&2; return 1; }
-  base="https://raw.githubusercontent.com/0157Martin/v2ray-manager/$revision/$CADDY_PAGES_DIST_PATH"
+  base="https://raw.githubusercontent.com/$repository/$revision/dist"
   temporary=$(mktemp -d) || return 1
   trap 'rm -rf -- "$temporary"' EXIT
   manifest="$temporary/deploy-manifest.json"

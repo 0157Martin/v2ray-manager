@@ -300,7 +300,7 @@ v2ray caddy status
 v2ray caddy log
 ```
 
-静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供两个 React/Vite 模板：`portfolio` 是深色作品集，`resume` 是浅色简历。安装不会覆盖已有页面，更新才会替换模板和随机内容；二者都不会改动 Caddy 路径反代或客户端链接。目标服务器只下载已构建的静态文件，不需要 Node.js、npm 或 Vite；每个文件均按固定项目提交下载并进行 SHA-256 校验。
+静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供两个独立仓库维护的 React/Vite 模板：[`portfolio`](https://github.com/0157Martin/v2ray-portfolio-page) 是深色作品集，[`resume`](https://github.com/0157Martin/v2ray-resume-page) 是浅色简历。安装不会覆盖已有页面，更新才会替换模板和随机内容；二者都不会改动 Caddy 路径反代或客户端链接。目标服务器只下载对应仓库已构建的静态文件，不需要 Node.js、npm 或 Vite；每个文件均按固定提交下载并进行 SHA-256 校验。
 
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，
