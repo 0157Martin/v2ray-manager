@@ -161,6 +161,13 @@ printf '%s\n' 'Route and latency command test passed.'
 caddy_static=$(mktemp)
 caddy_reverse=$(mktemp)
 caddy_xray=$(mktemp)
+personal_page=$(mktemp)
+render_personal_landing_page example.com "$personal_page" || fail 'personal Caddy page did not render'
+! render_personal_landing_page localhost "$personal_page" || fail 'personal page accepted invalid domain'
+grep -Fq '<html lang="zh-CN">' "$personal_page" || fail 'personal page missing document language'
+grep -Fq '正在记录' "$personal_page" || fail 'personal page missing content section'
+grep -Fq 'example.com' "$personal_page" || fail 'personal page missing domain footer'
+if grep -Fq '<script' "$personal_page"; then fail 'personal page must not require client-side scripts'; fi
 render_caddy_site static example.com '' "$caddy_static" || fail 'static Caddy site did not render'
 grep -Fq 'root * /var/www/v2ray-manager/example.com' "$caddy_static" || fail 'static Caddy root mismatch'
 render_caddy_site reverse proxy.example.com 127.0.0.1:8080 "$caddy_reverse" || fail 'reverse Caddy site did not render'
@@ -200,7 +207,7 @@ grep -Fq '@xray_1 path /second-path /second-path/*' "$caddy_xray" || fail 'secon
 grep -Fq 'reverse_proxy @xray_1 https://127.0.0.1:25444' "$caddy_xray" || fail 'second Xray upstream missing'
 rm -rf -- "$caddy_node_dir"
 unset CADDY_NODE_DIR_OVERRIDE
-rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray"
+rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray" "$personal_page"
 printf '%s\n' 'Caddy configuration tests passed.'
 
 warp_domains=$(normalize_warp_domains 'netflix.com, domain:openai.com,geosite:netflix')

@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.5.17"
+readonly MANAGER_VERSION="5.5.18"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2108,15 +2108,53 @@ ensure_caddy_import() {
   return 1
 }
 
-write_caddy_landing_page() {
-  local domain=$1 root="$CADDY_WEB_ROOT/$1"
-  install -d -m 755 "$root"
-  cat > "$root/index.html" <<EOF
+random_site_value() {
+  local index
+  local -a values=("$@")
+  (( $# > 0 )) || return 1
+  index=$((RANDOM % $#))
+  printf '%s' "${values[index]}"
+}
+
+render_personal_landing_page() {
+  local domain=$1 destination=$2 name role location focus project_one project_two project_three
+  valid_server_name "$domain" || return 1
+  name=$(random_site_value '林知远' '周予安' '陈若川' '许清和' '沈言川')
+  role=$(random_site_value '独立开发者' '产品设计师' '软件工程师' '数字创作者' '研究助理')
+  location=$(random_site_value '杭州' '成都' '厦门' '南京' '深圳')
+  focus=$(random_site_value '专注于把复杂问题变成清晰、可靠的体验。' '在软件、设计和日常记录之间寻找恰当的平衡。' '持续整理工具、想法与值得长期投入的小项目。')
+  project_one=$(random_site_value '阅读清单' '城市散步' '设计笔记' '开源工具')
+  project_two=$(random_site_value '周末摄影' '产品拆解' '个人知识库' '界面练习')
+  project_three=$(random_site_value '播客摘录' '慢跑记录' '旅行地图' '小型实验')
+  cat > "$destination" <<EOF
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>$domain</title><style>body{max-width:760px;margin:15vh auto;padding:0 24px;font:16px/1.7 system-ui;color:#243447}h1{font-size:2.2rem}</style></head>
-<body><h1>Welcome</h1><p>This site is online.</p></body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="$name 的个人主页">
+  <title>$name · $role</title>
+  <style>
+    :root{color-scheme:light;--ink:#1e293b;--muted:#64748b;--line:#e2e8f0;--accent:#0f766e}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#f8fafc,#f0fdf4);color:var(--ink);font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:920px;margin:0 auto;padding:64px 24px}header{padding:12px 0 52px;border-bottom:1px solid var(--line)}.eyebrow{letter-spacing:.12em;text-transform:uppercase;font-size:.74rem;color:var(--accent);font-weight:700}h1{margin:12px 0 4px;font:clamp(2.6rem,8vw,5.4rem)/.95 Georgia,"Times New Roman",serif;letter-spacing:-.05em}h2{font:1.45rem/1.2 Georgia,"Times New Roman",serif;margin:0 0 18px}.role{margin:0;color:var(--muted);font-size:1.05rem}.intro{max-width:620px;margin:38px 0 0;font-size:1.18rem}section{padding:46px 0;border-bottom:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{min-height:140px;padding:22px;border:1px solid var(--line);border-radius:14px;background:rgb(255 255 255/.72);box-shadow:0 8px 28px rgb(15 23 42/.04)}.card strong{display:block;margin-bottom:9px;font-size:1.05rem}.card span,.note{color:var(--muted);font-size:.92rem}footer{display:flex;justify-content:space-between;gap:20px;padding:32px 0;color:var(--muted);font-size:.9rem}@media(max-width:620px){main{padding:44px 20px}.grid{grid-template-columns:1fr}header{padding-bottom:40px}}
+  </style>
+</head>
+<body><main>
+  <header><div class="eyebrow">Personal notes · $location</div><h1>$name</h1><p class="role">$role</p><p class="intro">$focus</p></header>
+  <section><h2>正在记录</h2><div class="grid"><article class="card"><strong>$project_one</strong><span>一些持续更新的日常整理与实践。</span></article><article class="card"><strong>$project_two</strong><span>留给好奇心和慢慢打磨的时间。</span></article><article class="card"><strong>$project_three</strong><span>把片段收集起来，等待它们自然连接。</span></article></div></section>
+  <section><h2>关于这里</h2><p class="note">这是一个简洁的个人主页，用来放置近况、笔记和正在进行的小项目。</p></section>
+  <footer><span>© $(date +%Y) $name</span><span>$domain</span></footer>
+</main></body></html>
 EOF
+}
+
+write_caddy_landing_page() {
+  local domain=$1 root="$CADDY_WEB_ROOT/$1" temporary
+  valid_server_name "$domain" || return 1
+  install -d -m 755 "$root"
+  temporary=$(mktemp "$root/.index.XXXXXX") || return 1
+  render_personal_landing_page "$domain" "$temporary" || { rm -f -- "$temporary"; return 1; }
+  install -m 644 -o root -g root "$temporary" "$root/index.html" || { rm -f -- "$temporary"; return 1; }
+  rm -f -- "$temporary"
   chown -R caddy:caddy "$root"
 }
 
@@ -2205,8 +2243,8 @@ caddy_menu() {
   while :; do
     printf '\n%s\n' '----- Caddy 网站管理 -----'
     printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-      '4) 同步 Xray XHTTP/WS 路径反代' '5) 查看 Caddy 状态' '6) 查看 Caddy 日志' '0) 返回主菜单'
-    read -r -p '请选择 [0-6]:' choice
+      '4) 同步 Xray XHTTP/WS 路径反代' '5) 随机生成个人主页' '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
+    read -r -p '请选择 [0-7]:' choice
     case "$choice" in
       1) caddy_ports_available && install_caddy && green "Caddy 已安装。"; pause ;;
       2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain" || true; pause ;;
@@ -2234,8 +2272,13 @@ caddy_menu() {
         configure_caddy_site xray "$domain" "$upstream" "$path" || true
         pause
         ;;
-      5) systemctl --no-pager --full status caddy || true; pause ;;
-      6) journalctl -u caddy -n 100 --no-pager || true; pause ;;
+      5)
+        read -r -p '网站域名：' domain
+        write_caddy_landing_page "$domain" && green "已随机生成个人主页：https://$domain" || true
+        pause
+        ;;
+      6) systemctl --no-pager --full status caddy || true; pause ;;
+      7) journalctl -u caddy -n 100 --no-pager || true; pause ;;
       0) return ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -2250,6 +2293,7 @@ caddy_command() {
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
     xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
+    refresh) [[ -n $domain ]] || die "用法：v2ray caddy refresh <域名>"; write_caddy_landing_page "$domain" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -3023,7 +3067,7 @@ main() {
     uninstall) uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|refresh|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }
