@@ -407,6 +407,10 @@ CORE
         [[ $(tr ',' '\n' <<<"$EXTRA_UUIDS" | wc -l) == 2 ]] || fail 'sub-link credentials not persisted'
         jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'three users not applied to Xray config'
         [[ $(grep -c 'vless://' "$sandbox/output") == 3 ]] || fail 'three sub-links not exported'
+        if (replace_sub_link primary 4 > "$sandbox/missing-index-output" 2>&1); then
+          fail 'replace accepted a missing sub-link index'
+        fi
+        grep -Fq 'v2ray users add primary 1' "$sandbox/missing-index-output" || fail 'missing-index error did not explain how to add a link'
         old_primary=$UUID
         old_second=$(cut -d, -f1 <<<"$EXTRA_UUIDS")
         add_sub_links primary 2 > "$sandbox/add-output"

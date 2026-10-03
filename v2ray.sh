@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.0"
+readonly MANAGER_VERSION="5.7.1"
 readonly DATA_SCHEMA_VERSION="3"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -1534,7 +1534,7 @@ replace_sub_link() {
   local node_id=$1 index=$2 array_index credential
   [[ $index =~ ^([1-9]|10)$ ]] || die "链接序号必须是 1 到 10。"
   load_sub_link_credentials "$node_id"
-  (( index <= ${#SUB_LINK_CREDENTIALS[@]} )) || die "链接序号不存在：$index"
+  (( index <= ${#SUB_LINK_CREDENTIALS[@]} )) || die "链接序号不存在：$index；入站 $node_id 当前只有 ${#SUB_LINK_CREDENTIALS[@]} 条链接。新增链接请运行：v2ray users add $node_id 1"
   credential=$("$XRAY_BIN" uuid)
   valid_uuid "$credential" || die "Xray 生成了无效 UUID。"
   array_index=$((index - 1))
