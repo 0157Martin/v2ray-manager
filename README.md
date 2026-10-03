@@ -303,6 +303,8 @@ v2ray caddy log
 
 静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供三种选择：[`portfolio`](https://github.com/0157Martin/v2ray-portfolio-page) 是使用竹林角色背景的沉浸式个人博客，[`resume`](https://github.com/0157Martin/v2ray-resume-page) 是不使用背景图片的纸张排版个人博客，`default` 是主脚本内置的轻量默认网页，无需从 GitHub 下载模板。安装不会覆盖已有页面，更新才会替换模板和随机内容；三种网页都不会改动 Caddy 路径反代或客户端链接。服务器安装两个 React/Vite 博客时只下载对应仓库已经构建的静态文件，不需要 Node.js、npm 或 Vite；每个下载文件均按固定提交进行 SHA-256 校验。
 
+从 5.6.1 起，首次配置静态站点或 Xray 路径反代时默认生成内置网页，无需下载博客模板；已有页面保留。需要博客时在“个人网页设置 → 更新”中选择模板，或执行 `v2ray caddy page-update <真实域名> portfolio`。网页准备失败会恢复旧站点配置，不会报告部署成功。
+
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，
 新配置必须通过 `caddy validate` 才会 reload；失败时恢复旧站点配置。Caddy 自动 HTTPS
@@ -386,6 +388,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 `v2ray update` 在临时目录下载并校验新内核和 GeoData，用新内核检查当前配置后才替换文件。运行中的服务重启后会连续检查 5 秒；文件替换或健康检查失败时自动恢复旧内核与 GeoData。原先停止的服务保持停止。自动回退失败时，会输出保留的恢复文件目录。该检查用于发现启动故障，不代表已验证客户端到服务器的端到端连通性。
 
 `v2ray upgrade` 是服务器已安装项目的一键更新入口，`v2ray update.sh` 作为兼容别名继续可用。
+
+若更新报 `curl: (6) Could not resolve host: api.github.com`，表示该次域名解析失败，不能据此断定 WARP 故障。先查看 `ip -4 route get 1.1.1.1`，再用 `curl -4 --noproxy '*' -I --connect-timeout 5 --max-time 10 https://1.1.1.1` 测试不依赖 DNS 的 HTTPS 出站，并检查 `getent hosts api.github.com` 和 `/etc/resolv.conf`。`v2ray warp off` 仅撤销 Xray 的 WARP 分流，不停止 `warp-svc`，也不修复系统 DNS 或路由。保留 SSH 连接，在原因明确前不要清空路由、防火墙或反复重启。
 更新器通过 GitHub API 解析 `main` 的完整提交 SHA，再从该固定提交下载脚本，避免一次操作中
 版本漂移。新脚本通过 Bash 语法和项目标识检查后才会替换当前命令，然后自动执行数据迁移、
 重建 Xray 配置并比较更新前后的入站连接参数。UUID/密码、域名、端口、传输路径、TLS/REALITY

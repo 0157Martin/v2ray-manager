@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.6.0"
+readonly MANAGER_VERSION="5.6.1"
 readonly DATA_SCHEMA_VERSION="2"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2166,28 +2166,31 @@ download_caddy_page_assets() (
   api="https://api.github.com/repos/$repository/commits/main"
   revision=${V2M_CADDY_PAGE_REF:-}
   if [[ -z $revision ]]; then
-    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$api" | jq -r '.sha')
+    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$api" | jq -r '.sha') || return 1
   fi
   [[ $revision =~ ^[0-9a-f]{40}$ ]] || { red '无法取得网页模板的固定项目提交。' >&2; return 1; }
   base="https://raw.githubusercontent.com/$repository/$revision/dist"
   temporary=$(mktemp -d) || return 1
   trap 'rm -rf -- "$temporary"' EXIT
   manifest="$temporary/deploy-manifest.json"
-  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/deploy-manifest.json" -o "$manifest"
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/deploy-manifest.json" -o "$manifest" || return 1
   jq -e '.version == 1 and (.files | type == "array" and length > 0) and all(.files[]; (.path | type == "string" and test("^(index\\.html|site-config\\.json|favicon\\.svg|icons\\.svg|assets/[A-Za-z0-9._-]+)$")) and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))' "$manifest" >/dev/null || {
     red '网页模板清单无效。' >&2; return 1;
+  }
+  jq -e 'any(.files[]; .path == "index.html")' "$manifest" >/dev/null || {
+    red '网页模板清单缺少 index.html。' >&2; return 1;
   }
   while IFS=$'\t' read -r path checksum; do
     path=${path%$'\r'}
     checksum=${checksum%$'\r'}
-    mkdir -p "$temporary/$(dirname "$path")"
-    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/$path" -o "$temporary/$path"
+    mkdir -p "$temporary/$(dirname "$path")" || return 1
+    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/$path" -o "$temporary/$path" || return 1
     [[ $(sha256sum "$temporary/$path" | awk '{print $1}') == "$checksum" ]] || { red "网页模板文件校验失败：$path" >&2; return 1; }
   done < <(jq -r '.files[] | [.path, .sha256] | @tsv' "$manifest")
-  jq -n --arg template "$template" --arg domain "$domain" --arg seed "$(date +%s)-$RANDOM" '{template:$template,domain:$domain,seed:$seed}' > "$temporary/site-config.json"
-  install -d -m 755 "$root"
-  cp -a "$temporary/." "$root/"
-  chown -R caddy:caddy "$root"
+  jq -n --arg template "$template" --arg domain "$domain" --arg seed "$(date +%s)-$RANDOM" '{template:$template,domain:$domain,seed:$seed}' > "$temporary/site-config.json" || return 1
+  install -d -m 755 "$root" || return 1
+  cp -a "$temporary/." "$root/" || return 1
+  chown -R caddy:caddy "$root" || return 1
 )
 
 write_caddy_landing_page() {
@@ -2197,10 +2200,13 @@ write_caddy_landing_page() {
     root="$CADDY_WEB_ROOT/$domain"
     temporary=$(mktemp) || return 1
     if ! render_personal_landing_page "$domain" "$temporary"; then rm -f -- "$temporary"; return 1; fi
-    install -d -m 755 "$root"
-    install -m 644 "$temporary" "$root/index.html"
+    if ! install -d -m 755 "$root" || ! install -m 644 "$temporary" "$root/index.html"; then
+      rm -f -- "$temporary"
+      red '默认网页写入失败。' >&2
+      return 1
+    fi
     rm -f -- "$temporary"
-    chown -R caddy:caddy "$root"
+    chown caddy:caddy "$root" "$root/index.html" || return 1
     return 0
   fi
   download_caddy_page_assets "$domain" "$template"
@@ -2219,7 +2225,7 @@ install_caddy_landing_page() {
 ensure_caddy_landing_page() {
   local page
   page=$(landing_page_path "$1") || return 1
-  [[ -e $page ]] || install_caddy_landing_page "$1"
+  [[ -e $page ]] || install_caddy_landing_page "$1" default
 }
 
 update_caddy_landing_page() {
@@ -2262,7 +2268,13 @@ configure_caddy_site() {
     red "Caddy 配置校验失败，已恢复旧站点配置。" >&2
     return 1
   fi
-  if [[ $mode == static || $mode == xray ]]; then ensure_caddy_landing_page "$domain"; fi
+  if [[ $mode == static || $mode == xray ]]; then
+    if ! ensure_caddy_landing_page "$domain"; then
+      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
+      red '网页准备失败，已恢复旧站点配置，未重载 Caddy。' >&2
+      return 1
+    fi
+  fi
   open_local_firewall_port 80
   open_local_firewall_port 443
   if systemctl is-active --quiet caddy; then
@@ -2327,7 +2339,10 @@ caddy_page_menu() {
         read -r -p '网站域名：' domain
         printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
         read -r -p '选择模板 [1-3，默认 1]：' choice
-        template=portfolio; [[ $choice == 2 ]] && template=resume; [[ $choice == 3 ]] && template=default
+        case "$choice" in
+          ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
+          *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
+        esac
         install_caddy_landing_page "$domain" "$template" && green "个人主页已安装：https://$domain（$template）" || true
         pause
         ;;
@@ -2335,7 +2350,10 @@ caddy_page_menu() {
         read -r -p '网站域名：' domain
         printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
         read -r -p '选择模板 [1-3，默认 1]：' choice
-        template=portfolio; [[ $choice == 2 ]] && template=resume; [[ $choice == 3 ]] && template=default
+        case "$choice" in
+          ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
+          *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
+        esac
         if update_caddy_landing_page "$domain" "$template"; then
           green "个人主页已更新：https://$domain"
         fi
@@ -2576,12 +2594,13 @@ EOF
 
 disable_warp_policy() {
   [[ -x $XRAY_BIN && -r $CONFIG_FILE ]] || die "请先安装 Xray。"
-  [[ -f $WARP_STATE_FILE ]] || { yellow "Xray 当前没有启用 WARP 策略。"; return; }
+  [[ -f $WARP_STATE_FILE ]] || { yellow "Xray 当前没有启用 WARP 策略；此命令不停止 warp-svc，也不修复系统 DNS 或路由。"; return; }
   create_backup
   rm -f -- "$WARP_STATE_FILE"
   rebuild_or_restore
   restart_or_rollback
   green "全部协议已恢复使用服务器原生出口。"
+  yellow '仅关闭 Xray WARP 分流；warp-svc 仍可运行。系统 DNS/路由故障请单独诊断。'
 }
 
 show_warp_status() {
@@ -2993,7 +3012,10 @@ update_manager() (
   revision=${V2M_MANAGER_REF:-}
   if [[ -z $revision ]]; then
     revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
-      --max-time 60 "$MANAGER_API" | jq -r '.sha')
+      --max-time 60 "$MANAGER_API" | jq -r '.sha') || {
+      red '无法取得 GitHub 提交，管理脚本尚未替换。若 curl 报 Could not resolve host，请先检查 DNS 和 IP 出站；此错误不能单独证明 WARP 故障。' >&2
+      return 1
+    }
   fi
   [[ $revision =~ ^[0-9a-f]{40}$ ]] || die "管理脚本版本必须是完整的 Git 提交 SHA。"
   url="${MANAGER_URL%/main/v2ray.sh}/$revision/v2ray.sh"

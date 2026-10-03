@@ -14,7 +14,8 @@ if [[ ${1:-} != --case ]]; then
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot \
-    link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback; do
+    link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback \
+    caddy-default-page caddy-page-write-failure caddy-page-rollback caddy-menu-invalid caddy-download-failure; do
     mkdir "$sandbox/$scenario"
     if bash "$0" --case "$scenario" "$sandbox/$scenario"; then
       printf 'PASS: %s\n' "$scenario"
@@ -120,6 +121,42 @@ CORE
 }
 
 case "$scenario" in
+  caddy-download-failure)
+    export V2M_CADDY_PAGE_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    curl() { return 6; }
+    if download_caddy_page_assets example.com portfolio; then fail 'download failure reported success'; fi
+    [[ ! -e $CADDY_WEB_ROOT/example.com/index.html ]] || fail 'download failure installed a page'
+    ;;
+  caddy-default-page)
+    download_caddy_page_assets() { fail 'automatic page must not access network'; }
+    ensure_caddy_landing_page example.com
+    grep -Fq 'example.com' "$CADDY_WEB_ROOT/example.com/index.html" || fail 'default page missing'
+    printf 'custom-page' > "$CADDY_WEB_ROOT/example.com/index.html"
+    ensure_caddy_landing_page example.com
+    [[ $(cat "$CADDY_WEB_ROOT/example.com/index.html") == custom-page ]] || fail 'existing page overwritten'
+    ;;
+  caddy-page-write-failure)
+    install() { return 1; }
+    if write_caddy_landing_page example.com default; then fail 'failed page write reported success'; fi
+    ;;
+  caddy-menu-invalid)
+    install_caddy_landing_page() { fail 'invalid menu choice installed a page'; }
+    pause() { :; }
+    caddy_page_menu <<< $'1\nexample.com\n99\n0' > "$sandbox/output"
+    grep -Fq '无效模板' "$sandbox/output" || fail 'invalid menu choice not rejected'
+    ;;
+  caddy-page-rollback)
+    mkdir -p "$CADDY_SITE_DIR"
+    printf 'import %s/*.caddy\n' "$CADDY_SITE_DIR" > "$CADDY_CONFIG"
+    printf 'old-site\n' > "$CADDY_SITE_DIR/example.com.caddy"
+    ss() { :; }
+    getent() { :; }
+    caddy() { return 0; }
+    ensure_caddy_landing_page() { return 1; }
+    systemctl() { fail 'page failure must not reload Caddy'; }
+    if configure_caddy_site static example.com; then fail 'failed page preparation reported success'; fi
+    [[ $(cat "$CADDY_SITE_DIR/example.com.caddy") == old-site ]] || fail 'page failure lost old site'
+    ;;
   caddy-port-conflict)
     jq -n '{inbounds:[{port:443}]}' > "$CONFIG_FILE"
     ss() { fail 'listener inspection should not run after Xray config conflict'; }
