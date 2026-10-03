@@ -3176,7 +3176,7 @@ menu() {
       disabled_nodes=0
     fi
     if [[ -x $XRAY_BIN ]]; then install_label='检查/修复 Xray（保留现有入站）'; else install_label='安装 Xray Core（稍后手动添加协议）'; fi
-    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  ·  ${AUTHOR}"
+    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  by Martin & 林知远"
     printf '\033[38;5;39m│\033[0m  Xray: %s\n' "$core_version"
     printf '\033[38;5;39m│\033[0m  服务状态: '
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
