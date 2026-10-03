@@ -137,12 +137,62 @@ RAW、REALITY、VMess TCP 等任意 TCP 流量不能由普通橙云转发。确�
 Cloudflare 时，需要单独评估 Cloudflare Spectrum；任意 TCP/UDP 代理通常涉及 Enterprise
 套餐，不能把 Spectrum 能力等同于普通免费橙云。
 
+#### Cloudflare 控制台推荐配置
+
+下面以 `cdn.example.com` 作为 Caddy + XHTTP/WS 的公网域名。Cloudflare 控制台的名称可能
+随版本调整，但对应功能不变。先确保 Caddy 站点和 Xray 路径在灰云下能够正常连接，再开启
+橙云，这样出错时可以区分源站配置问题和 CDN 配置问题。
+
+1. 在 `DNS → Records` 新建 `A` 记录：名称填 `cdn`，IPv4 地址填 VPS 公网 IP，代理状态先设为
+   `DNS only`。如果服务器确实配置了可用的公网 IPv6，再添加 `AAAA`；没有配置 IPv6 时不要
+   添加占位 AAAA 记录。验证 Caddy 和节点正常后，把支持 CDN 的域名切换为 `Proxied`（橙云）。
+   REALITY、RAW 和普通 TCP 入站应使用另一个灰云子域名。
+2. 在 `SSL/TLS → Overview` 选择 `Full (strict)`。源站 Caddy 必须在 443 提供未过期、域名匹配、
+   受信任的证书；本项目默认使用 Caddy/Certbot 可用的公开 CA 证书。不要选择 `Flexible`，因为
+   它不会以 HTTPS 连接源站，并可能造成重定向循环。确认 `SSL/TLS → Edge Certificates` 中
+   Universal SSL 证书状态为 Active。最低 TLS 版本建议保留 `TLS 1.2`，兼顾常见客户端。
+3. 公网入口使用 `443`。虽然 Cloudflare 还代理 `2053`、`2083`、`2087`、`2096`、`8443` 等
+   HTTPS 端口，但项目用 CDN 域名导出的客户端入口固定为 443，Caddy 也按公网 443 设计。
+   Xray 的 `24443` 等端口只是本机后端，不应填写到 Cloudflare，也不应对公网开放。
+4. 使用 WebSocket 时，到 `Network → WebSockets` 确认开关为 On。使用 gRPC 时，还要打开
+   `Network → gRPC`；gRPC 域名必须是橙云，公网端点必须为 443，并支持 TLS、HTTP/2 和 ALPN。
+   未使用 gRPC 时不需要为 XHTTP/WS 专门开启它。XHTTP 当前没有独立的 Cloudflare 控制台开关。
+5. 在 `Caching → Cache Rules` 为节点传输路径建立 `Bypass cache` 规则。例如域名为
+   `cdn.example.com`、路径为 `/xhttp` 时，可匹配主路径及其子路径：
+
+   ```text
+   (http.host eq "cdn.example.com" and
+    (http.request.uri.path eq "/xhttp" or starts_with(http.request.uri.path, "/xhttp/")))
+   ```
+
+   不要对 XHTTP、WebSocket 或 gRPC 路径设置 `Cache Everything`。普通伪装站点的静态资源可以
+   使用默认缓存策略。`Always Use HTTPS` 可用于伪装网站，但节点链接本身已经固定使用 HTTPS。
+6. 先保持 WAF、自定义规则、Rate Limiting、Browser Integrity Check 和 Bot 功能的默认状态。
+   如果 Cloudflare `Security Events` 显示节点路径的合法请求被 Block 或 Challenge，只针对该域名
+   和精确路径创建例外或 `Skip` 规则，不要关闭整个站点的安全功能。免费套餐的 Bot Fight Mode
+   不能通过 WAF Skip 规则绕过；若它确认误伤节点连接，需要关闭 Bot Fight Mode 或把节点放到
+   不受该功能影响的独立域名/区域配置中。
+7. 可选的源站加固是在 VPS 或云安全组中，让公网 80/443 只接受 Cloudflare 官方 IP 段。但只有
+   当该端口上的全部服务都必须经过橙云，并且证书签发/续期方式已经验证时才这样做。同一服务器
+   还承载灰云直连、REALITY，或使用需要公网 HTTP-01 的证书验证时，直接封锁非 Cloudflare 来源
+   会导致直连或续期失败。橙云只隐藏正常 DNS 查询中的源站 IP，历史 DNS、邮件记录或其他灰云
+   子域名仍可能暴露同一 VPS 地址。
+
+配置完成后，用 [WhatsMyDNS](https://www.whatsmydns.net/) 查询 `A`/`AAAA`：橙云域名应返回
+Cloudflare 边缘 IP，灰云域名应返回 VPS IP。再运行 `curl -I https://cdn.example.com`；响应中
+出现 `server: cloudflare` 或 `cf-ray` 通常说明请求经过 Cloudflare。最后仍需用客户端测试实际
+XHTTP/WS/gRPC 路径，因为网页返回 200 不能证明 Xray 路径已经正确转发。
+
 Cloudflare 官方参考：
 
 - [代理状态与 DNS only](https://developers.cloudflare.com/dns/proxy-status/)
 - [Cloudflare 支持的 HTTP/HTTPS 端口](https://developers.cloudflare.com/fundamentals/reference/network-ports/)
 - [WebSocket 支持及限制](https://developers.cloudflare.com/network/websockets/)
 - [gRPC 要求与开启方式](https://developers.cloudflare.com/network/grpc-connections/)
+- [Full (strict) 加密模式](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/)
+- [缓存绕过规则](https://developers.cloudflare.com/cache/how-to/cache-rules/settings/)
+- [WAF Skip 规则](https://developers.cloudflare.com/waf/custom-rules/skip/)
+- [保护源站](https://developers.cloudflare.com/fundamentals/security/protect-your-origin-server/)
 - [Spectrum TCP/UDP 代理](https://developers.cloudflare.com/spectrum/)
 
 普通 TLS 入站需要有效证书。脚本不会自动修改 DNS、Caddy 或 Nginx；只有你主动进入
@@ -353,6 +403,12 @@ Caddy 入口，只会使用不同的 UUID 或密码。若两个入站使用相�
    ```
 
    灰云应解析到源站；橙云通常解析到 Cloudflare 边缘地址。解析成功不能单独证明 443 可达。
+
+   也可以使用 [WhatsMyDNS 在线 DNS 查询](https://www.whatsmydns.net/) 对比多个地区的
+   DNS 解析结果，检查修改是否已在这些查询节点生效。输入节点的完整域名（不带 `https://`
+   或路径），选择 `A` 查询 IPv4；如使用 IPv6，再选择 `AAAA` 查询。灰云时应核对是否返回
+   VPS 的公网 IP，橙云时应返回 Cloudflare 边缘 IP。不要只看绿色对勾，还要核对具体解析
+   值；网站查询结果不代表客户端本地缓存已更新，也不能证明 XHTTP/WS 节点可以连接。
 
 2. 确认 Caddy独占公网 443，Xray只监听本机内部端口：
 
