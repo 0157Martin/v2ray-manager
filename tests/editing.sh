@@ -108,7 +108,7 @@ cp "$CONFIG_FILE" "$sandbox/original.json"
 
 case "$scenario" in
   empty-state)
-    printf 'DATA_SCHEMA=2\n' > "$STATE_FILE"
+    printf 'DATA_SCHEMA=3\n' > "$STATE_FILE"
     mv "$NODES_DIR/primary.env" "$NODES_DIR/manual.env"
     rebuild_config_from_nodes
     unset PORT UUID EXTRA_UUIDS ADDRESS PROFILE SERVER_NAME PRIVATE_KEY PUBLIC_KEY SHORT_ID REMARK PATH_VALUE CERT_SOURCE KEY_SOURCE
@@ -208,7 +208,7 @@ case "$scenario" in
     write_data_schema_marker "$CONFIG_DIR/new-state.env"
     cmp "$sandbox/expected-state" "$CONFIG_DIR/new-state.env"
     write_data_schema_marker "$CONFIG_DIR/schema-only.env"
-    grep -qx 'DATA_SCHEMA=2' "$CONFIG_DIR/schema-only.env"
+    grep -qx 'DATA_SCHEMA=3' "$CONFIG_DIR/schema-only.env"
     assert_private "$CONFIG_DIR/schema-only.env" 600
     [[ -z $(find "$CONFIG_DIR" -name '*.next' -o -name 'new-state.env.*' -o -name 'schema-only.env.*') ]]
     ;;
