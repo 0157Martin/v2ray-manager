@@ -266,6 +266,13 @@ REALITY 直连、TLS HTTP/CDN、其他直连与旧版兼容分组，并直接显
 `v2ray link <入站ID>` 查看该入站的全部分享链接。旧命令 `v2ray users <入站ID> <数量>`
 继续可用，等同于 `v2ray users set <入站ID> <数量>`。
 
+入站 ID、链接序号和客户端备注是三个不同概念。例如入站列表中的 `Martin1-2` 可以是一个
+完整的独立入站 ID，并不表示 `Martin1` 的第 2 条链接。若 `Martin1-2` 的链接数为 1，轮换
+它的唯一 UUID 应执行 `v2ray users replace Martin1-2 1`；`v2ray users replace Martin1 2`
+表示轮换 `Martin1` 入站内部已经存在的第 2 条 UUID。需要新增 UUID 时使用
+`v2ray users add Martin1 1`。从 5.7.1 起，轮换不存在的序号会显示当前链接数并提示新增命令。
+客户端备注只用于显示，链接生成器会进行 URI 编码，不参与 Caddy 路由或 Xray认证。
+
 “维护与诊断 → 路由、丢包与延迟测试”使用 `ping` 和 10 轮 MTR 报告测试 VPS 到指定客户端
 公网 IP 或域名的回程方向，并显示逐跳丢包和平均延迟。首次使用会从系统仓库安装
 `mtr-tiny`、`iputils-ping` 和 `traceroute`。真实去程依赖客户端运营商网络，必须从客户端
@@ -333,6 +340,117 @@ Caddy 入口，只会使用不同的 UUID 或密码。若两个入站使用相�
 从 5.7.0 起，项目升级会把已有 VLESS-XHTTP-TLS 后端迁移为本机 h2c，并在已有 Caddy
 站点文件存在时自动同步路由。若服务器尚未配置该站点，升级会提示运行 `v2ray caddy` 并选择
 “同步 Xray XHTTP/WS 路径反代”；完成前 XHTTP 链接不会经过 Caddy 到达内部端口。
+
+### Caddy 与 XHTTP 验证流程
+
+网站能返回 `HTTP/2 200` 只证明根路径、TLS 和 Caddy进程正常，不能证明 XHTTP Path 已转发
+到正确后端。遇到第一条节点正常、第二条节点延迟 `-1` 时，按下面顺序检查。
+
+1. 查看域名解析：
+
+   ```bash
+   getent ahosts example.com
+   ```
+
+   灰云应解析到源站；橙云通常解析到 Cloudflare 边缘地址。解析成功不能单独证明 443 可达。
+
+2. 确认 Caddy独占公网 443，Xray只监听本机内部端口：
+
+   ```bash
+   ss -ltnp '( sport = :443 or sport = :24443 or sport = :24444 or sport = :24445 )'
+   ```
+
+   TLS-XHTTP 修复后的结构应类似：
+
+   ```text
+   *:443              caddy
+   127.0.0.1:24444    xray-core
+   127.0.0.1:24445    xray-core
+   ```
+
+   Caddy 与 Xray不能同时监听同一公网 443；XHTTP h2c 内部端口也不应监听 `0.0.0.0`。
+
+3. 校验完整 Caddy配置，包括 `import` 的站点文件：
+
+   ```bash
+   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile --pretty
+   ```
+
+   `validate` 检查 Caddyfile适配结果、指令、模块和参数，但不能证明后端当前可以连接；
+   `adapt` 用于确认 `/etc/caddy/conf.d/*.caddy` 已被主配置实际导入。
+
+4. 确认每个 XHTTP 入站都有独立 Path 和 h2c 后端：
+
+   ```bash
+   grep -RnsE '@xray|reverse_proxy|versions h2c|flush_interval' \
+     /etc/caddy/Caddyfile /etc/caddy/conf.d 2>/dev/null
+   ```
+
+   两个 XHTTP 入站应同时看到类似：
+
+   ```text
+   /path-a → h2c://127.0.0.1:24444
+   /path-b → h2c://127.0.0.1:24445
+   ```
+
+   只有第一条后端时，第一条客户端可以正常而第二条显示 `-1`。两个入站若使用相同 Path，
+   Caddy也无法判断应转发到哪个端口。运行 `v2ray caddy` 并选择“同步 Xray XHTTP/WS 路径
+   反代”，会扫描相同域名下的全部受支持入站并重新生成统一站点文件。
+
+5. 验证公网 TLS、SNI、证书和 HTTP/2：
+
+   ```bash
+   openssl s_client \
+     -connect example.com:443 \
+     -servername example.com \
+     -alpn h2 \
+     -verify_hostname example.com \
+     </dev/null
+   ```
+
+   直连 Caddy 时应看到 `ALPN protocol: h2` 和 `Verify return code: 0 (ok)`。橙云下该命令
+   验证的是 Cloudflare 边缘证书；排除 CDN变量时先切灰云测试。
+
+6. 查看 Xray内部配置是否与 Caddy成对匹配：
+
+   ```bash
+   jq -r '
+     .inbounds[]
+     | select(.streamSettings.network == "xhttp")
+     | [.tag, .listen, (.port|tostring),
+        (.streamSettings.security // "none"),
+        .streamSettings.xhttpSettings.path,
+        (.settings.clients|length|tostring)]
+     | @tsv
+   ' /etc/xray/config.json
+   ```
+
+   Caddy 的 `h2c://127.0.0.1:24444` 必须对应 Xray 的 `127.0.0.1:24444`、`security=none`
+   和相同 Path。Caddy使用 HTTPS 而后端是 h2c，或 Caddy使用 h2c 而后端仍开启 TLS，都会产生
+   502、EOF 或握手错误。
+
+7. 用真实客户端和双层日志进行最终验证：
+
+   ```bash
+   journalctl -u caddy -u xray -f
+   ```
+
+   普通 curl不携带 VLESS UUID 和 XHTTP 协议数据，因此只能测试网页或辅助观察 Path，不能
+   代替真实客户端认证。没有 Caddy日志表示请求没到 443；只有 Caddy日志通常表示 Path 或
+   后端问题；Xray报告 `invalid path` 表示三层 Path不一致；`invalid user` 表示 UUID 不在
+   请求最终到达的那个入站中。
+
+8. 校验通过后按依赖顺序应用：
+
+   ```bash
+   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && \
+   systemctl restart xray && \
+   systemctl reload caddy
+   ```
+
+   `&&` 保证前一步失败时停止：先阻止无效 Caddy配置上线，再启动 h2c 后端，最后加载指向这些
+   后端的 Caddy路由。完成后运行 `v2ray doctor`，再从外部客户端测试。
 
 自定义 Cloudflare/CDN 入口域名仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
 `v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
