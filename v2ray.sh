@@ -7,8 +7,8 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.6.1"
-readonly DATA_SCHEMA_VERSION="2"
+readonly MANAGER_VERSION="5.7.0"
+readonly DATA_SCHEMA_VERSION="3"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
 readonly BIN_DIR="/usr/local/bin"
@@ -190,6 +190,9 @@ valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
+# TLS-XHTTP terminates public TLS at Caddy. Its Xray listener is a loopback
+# h2c upstream, so it neither owns a certificate nor exposes its backend port.
+profile_requires_xray_tls() { [[ ${PROFILE:-} == *-tls-* && ${PROFILE:-} != vless-tls-xhttp ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
 
 profile_group() {
@@ -225,7 +228,7 @@ choose_profile() {
     '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]' \
     '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]' \
     '--- HTTP/CDN / Cloudflare 橙云（需要自有域名）---' \
-    '4) VLESS-XHTTP-TLS           [优先推荐：适合 Caddy/CDN]' \
+    '4) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]' \
     '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]' \
     '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]' \
     '--- 其他直连协议 ---' \
@@ -548,7 +551,7 @@ issue_tls_material() {
 }
 
 prepare_tls_material() {
-  profile_uses_tls || return 0
+  profile_requires_xray_tls || return 0
   valid_server_name "$SERVER_NAME" || die "TLS 需要有效域名。"
   command -v openssl >/dev/null || { apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y openssl; }
   if [[ -n ${CERT_SOURCE:-} || -n ${KEY_SOURCE:-} ]]; then
@@ -603,7 +606,7 @@ render_config() {
     --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-vless-reality-raw}" \
     --arg path "${PATH_VALUE:-}" \
-    --arg listen "$(if [[ ${ADDRESS:-} == *:* ]]; then printf '::'; else printf '0.0.0.0'; fi)" \
+    --arg listen "$(if [[ ${PROFILE:-} == vless-tls-xhttp ]]; then printf '127.0.0.1'; elif [[ ${ADDRESS:-} == *:* ]]; then printf '::'; else printf '0.0.0.0'; fi)" \
     --arg cert "${TLS_CERT_PATH_OVERRIDE:-$(tls_cert_path)}" \
     --arg key "${TLS_KEY_PATH_OVERRIDE:-$(tls_key_path)}" '{
       log: {loglevel: "warning"},
@@ -620,7 +623,7 @@ render_config() {
         } end),
         streamSettings: ({
           network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif ($profile | endswith("-grpc")) then "grpc" elif ($profile | endswith("-ws")) then "ws" else "raw" end),
-          security: (if ($profile | contains("-tls-")) then "tls" elif ($profile | contains("-reality-")) then "reality" else "none" end)
+          security: (if $profile == "vless-tls-xhttp" then "none" elif ($profile | contains("-tls-")) then "tls" elif ($profile | contains("-reality-")) then "reality" else "none" end)
         } + (if ($profile | contains("-reality-")) then {realitySettings: {
             show: false,
             target: ($server + ":443"),
@@ -628,8 +631,8 @@ render_config() {
             serverNames: [$server],
             privateKey: $private,
             shortIds: [$short]
-          }} elif ($profile | contains("-tls-")) then {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} else {} end)
-          + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path}}
+          }} elif ($profile | contains("-tls-") and $profile != "vless-tls-xhttp") then {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} else {} end)
+          + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path, mode: "auto"}}
             elif ($profile | endswith("-grpc")) then {grpcSettings: {serviceName: $path, multiMode: false}}
             elif ($profile | endswith("-ws")) then {wsSettings: {path: $path}}
             else {} end)),
@@ -1075,16 +1078,20 @@ show_connection() (
 # server certificates, private keys or REALITY target settings.
 render_client_config() {
   render_config /dev/stdout | jq --arg address "$(server_address)" \
-    --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" '
+    --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
+    --arg profile "${PROFILE:-}" '
     .inbounds[0] as $in |
     $in.settings.clients[0] as $user |
     ($in.streamSettings | del(.tlsSettings, .realitySettings) |
-      if .security == "reality" then .realitySettings = {
+      if $profile == "vless-tls-xhttp" then
+        .security = "tls"
+        | .tlsSettings = {serverName: $server, fingerprint: "chrome", alpn: ["h2"]}
+      elif .security == "reality" then .realitySettings = {
         serverName: $server, fingerprint: "chrome", password: $public, shortId: $short
       } elif .security == "tls" then .tlsSettings = {
         serverName: $server, fingerprint: "chrome"
       } else . end |
-      if .network == "xhttp" and .security == "tls" then .xhttpSettings.host = $server
+      if .network == "xhttp" and .security == "tls" then .xhttpSettings.host = $server | .xhttpSettings.mode = "auto"
       elif .network == "ws" and .security == "tls" then .wsSettings.headers.Host = $server
       else . end) as $stream |
     {
@@ -1096,7 +1103,7 @@ render_client_config() {
       outbounds: [{tag: "proxy", protocol: $in.protocol,
         settings: (if $in.protocol == "trojan" then {
           servers: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $in.port, password: $user.password}]
-        } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $in.port,
+        } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: (if $profile == "vless-tls-xhttp" then 443 else $in.port end),
           users: [($user + (if $in.protocol == "vless" then {encryption: "none"} else {security: "auto"} end))]}]} end),
         streamSettings: $stream
       }]
@@ -1169,7 +1176,7 @@ show_connection_loaded() (
     red "无法导出链接：REALITY 密钥对或 Short ID 无效，请从对应入站菜单修复或重新生成。" >&2
     return 1
   fi
-  if profile_uses_tls && ! tls_pair_valid "${TLS_CERT_PATH_OVERRIDE:-$(tls_cert_path)}" "${TLS_KEY_PATH_OVERRIDE:-$(tls_key_path)}"; then
+  if profile_requires_xray_tls && ! tls_pair_valid "${TLS_CERT_PATH_OVERRIDE:-$(tls_cert_path)}" "${TLS_KEY_PATH_OVERRIDE:-$(tls_key_path)}"; then
     red "无法导出链接：TLS 证书无效、过期、域名不符或私钥不匹配。" >&2
     return 1
   fi
@@ -1200,7 +1207,8 @@ show_connection_loaded() (
       ;;
     vless-tls-xhttp)
       transport=xhttp; security=tls; flow=none
-      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=auto"
+      client_port=443
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&alpn=h2&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=auto"
       ;;
     vless-tls-ws)
       transport=websocket; security=tls; flow=none
@@ -1993,14 +2001,15 @@ EOF
 # added for the same HTTPS domain.
 render_caddy_xray_site() {
   local domain=$1 upstream=$2 destination=$3 path=$4 node_dir=${CADDY_NODE_DIR_OVERRIDE:-$NODES_DIR}
-  local node_file PROFILE SERVER_NAME PORT PATH_VALUE route_upstream route_path existing index=0
-  local -a route_paths=() route_upstreams=()
+  local node_file PROFILE SERVER_NAME PORT PATH_VALUE route_upstream route_path route_profile existing index=0
+  local -a route_paths=() route_upstreams=() route_profiles=()
   declare -A seen_paths=()
   valid_caddy_upstream "$upstream" || return 1
   valid_transport_path "$path" || return 1
 
   route_paths+=("$path")
   route_upstreams+=("$upstream")
+  route_profiles+=("")
   seen_paths["$path"]=$upstream
 
   if [[ -d $node_dir ]]; then
@@ -2020,16 +2029,23 @@ render_caddy_xray_site() {
       fi
       route_upstream="127.0.0.1:$PORT"
       route_path=$PATH_VALUE
+      route_profile=$PROFILE
       existing=${seen_paths[$route_path]:-}
       if [[ -n $existing ]]; then
         [[ $existing == "$route_upstream" ]] || {
           red "同一 Caddy 路径 $route_path 对应多个 Xray 后端，拒绝覆盖。" >&2
           return 1
         }
+        for index in "${!route_paths[@]}"; do
+          if [[ ${route_paths[$index]} == "$route_path" && ${route_upstreams[$index]} == "$route_upstream" ]]; then
+            route_profiles[$index]=$route_profile
+          fi
+        done
         continue
       fi
       route_paths+=("$route_path")
       route_upstreams+=("$route_upstream")
+      route_profiles+=("$route_profile")
       seen_paths["$route_path"]=$route_upstream
     done
   fi
@@ -2038,8 +2054,13 @@ render_caddy_xray_site() {
     printf '%s {\n' "$domain"
     for index in "${!route_paths[@]}"; do
       printf '\t@xray_%s path %s %s/*\n' "$index" "${route_paths[$index]}" "${route_paths[$index]}"
-      printf '\treverse_proxy @xray_%s https://%s {\n' "$index" "${route_upstreams[$index]}"
-      printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n\t}\n' "$domain"
+      if [[ ${route_profiles[$index]} == vless-tls-xhttp ]]; then
+        printf '\treverse_proxy @xray_%s h2c://%s {\n' "$index" "${route_upstreams[$index]}"
+        printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\tversions h2c\n\t\t}\n\t}\n'
+      else
+        printf '\treverse_proxy @xray_%s https://%s {\n' "$index" "${route_upstreams[$index]}"
+        printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n\t}\n' "$domain"
+      fi
     done
     printf '\troot * %s/%s\n\tencode zstd gzip\n\tfile_server\n}\n' "$CADDY_WEB_ROOT" "$domain"
   } > "$destination"
@@ -2833,7 +2854,7 @@ doctor() {
       # shellcheck disable=SC1090
       . "$node_file"
       show_connection_loaded "$CONFIG_FILE" >/dev/null || exit 1
-      if profile_uses_tls && ! tls_chain_valid "$(tls_cert_path)"; then
+      if profile_requires_xray_tls && ! tls_chain_valid "$(tls_cert_path)"; then
         red "TLS 证书链未通过本机系统 CA 信任校验；检查完整链或客户端自建 CA 配置。" >&2
         exit 1
       fi
@@ -2938,7 +2959,7 @@ write_data_schema_marker() (
 )
 
 migrate_project_state() {
-  local before after node_file credential
+  local before after node_file credential domain upstream path has_tls_xhttp=0
   local -a extra_credentials
   [[ -d $NODES_DIR ]] || { green "项目脚本已更新；当前没有需要迁移的入站状态。"; return 0; }
   compgen -G "$NODES_DIR/*.env" >/dev/null || {
@@ -2965,6 +2986,7 @@ migrate_project_state() {
       restore_archive "$LAST_BACKUP"
       die "入站状态未通过迁移校验，已恢复更新前配置。"
     fi
+    [[ $PROFILE != vless-tls-xhttp ]] || has_tls_xhttp=1
     if [[ -n ${EXTRA_UUIDS:-} ]]; then
       IFS=',' read -r -a extra_credentials <<<"$EXTRA_UUIDS"
       (( ${#extra_credentials[@]} <= 9 )) || {
@@ -2985,9 +3007,33 @@ migrate_project_state() {
     restore_archive "$LAST_BACKUP"; die "更新后配置重建失败，已恢复更新前配置。"
   }
   after=$(config_connection_fingerprint "$CONFIG_FILE")
-  if [[ $before != "$after" ]]; then
+  if [[ $before != "$after" && $has_tls_xhttp != 1 ]]; then
     restore_archive "$LAST_BACKUP"
     die "迁移导致连接参数发生非预期变化，已恢复原配置和原链接。"
+  fi
+  if (( has_tls_xhttp )); then
+    restart_checked || {
+      restore_archive "$LAST_BACKUP"
+      restart_checked || true
+      die "XHTTP h2c 迁移后 Xray 启动失败，已恢复旧配置。"
+    }
+    while IFS= read -r domain; do
+      [[ -n $domain ]] || continue
+      if command -v caddy >/dev/null 2>&1 && [[ -f $CADDY_SITE_DIR/$domain.caddy ]]; then
+        IFS=$'\t' read -r upstream path < <(find_caddy_xray_defaults "$domain")
+        if ! configure_caddy_site xray "$domain" "$upstream" "$path"; then
+          yellow "Xray 已迁移到 h2c，但 $domain 的 Caddy 路由未能自动更新；请运行 v2ray caddy 后选择 Xray 路径反代。"
+        fi
+      else
+        yellow "$domain 的 XHTTP 后端已迁移为本机 h2c；请运行 v2ray caddy 后选择 Xray 路径反代。"
+      fi
+    done < <(for node_file in "$NODES_DIR"/*.env; do
+      [[ -f $node_file ]] || continue
+      PROFILE=''; SERVER_NAME=''
+      # shellcheck disable=SC1090
+      . "$node_file"
+      [[ $PROFILE == vless-tls-xhttp ]] && printf '%s\n' "$SERVER_NAME"
+    done | sort -u)
   fi
   green "项目数据已迁移到版本 $DATA_SCHEMA_VERSION；现有链接参数保持不变。"
 }

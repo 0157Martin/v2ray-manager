@@ -89,6 +89,24 @@ render_config "$temporary"
 jq -e '.inbounds[0].streamSettings.network == "xhttp"' "$temporary" >/dev/null || fail "xhttp network mismatch"
 jq -e '.inbounds[0].streamSettings.xhttpSettings.path == "/test-path"' "$temporary" >/dev/null || fail "xhttp path mismatch"
 
+PROFILE=vless-tls-xhttp
+SERVER_NAME=cdn.example.com
+ADDRESS=cdn.example.com
+PORT=24444
+REMARK=caddy-xhttp-test
+render_config "$temporary"
+jq -e '.inbounds[0].listen == "127.0.0.1"
+  and .inbounds[0].port == 24444
+  and .inbounds[0].streamSettings.security == "none"
+  and .inbounds[0].streamSettings.xhttpSettings.mode == "auto"
+  and (.inbounds[0].streamSettings | has("tlsSettings") | not)' "$temporary" >/dev/null || fail 'Caddy XHTTP backend is not loopback h2c'
+xhttp_link=$(show_connection_loaded "$temporary")
+[[ $xhttp_link == *'@cdn.example.com:443?'* && $xhttp_link == *'security=tls'* && $xhttp_link == *'alpn=h2'* && $xhttp_link == *'type=xhttp'* ]] || fail 'Caddy XHTTP public link is not TLS/H2 on port 443'
+render_client_config | jq -e '.outbounds[0].settings.vnext[0].port == 443
+  and .outbounds[0].streamSettings.security == "tls"
+  and .outbounds[0].streamSettings.tlsSettings.alpn == ["h2"]
+  and .outbounds[0].streamSettings.xhttpSettings.host == "cdn.example.com"' >/dev/null || fail 'Caddy XHTTP client config is inconsistent with public TLS endpoint'
+
 printf '%s\n' 'Unit tests passed.'
 
 # Exercise the existing certificate discovery validation with real certificate/key pairs.
@@ -203,6 +221,8 @@ IFS=$'\t' read -r matched_upstream matched_path < <(find_caddy_xray_defaults ten
 [[ $matched_upstream == 127.0.0.1:25443 && $matched_path == /matched-path ]] || fail 'Caddy did not discover matching Xray inbound defaults'
 render_caddy_site xray tenglong.xyz 127.0.0.1:25443 "$caddy_xray" /matched-path || fail 'multi-route Caddy site did not render'
 grep -Fq '@xray_0 path /matched-path /matched-path/*' "$caddy_xray" || fail 'first Xray path route missing'
+grep -Fq 'reverse_proxy @xray_0 h2c://127.0.0.1:25443' "$caddy_xray" || fail 'XHTTP h2c upstream missing'
+grep -Fq 'versions h2c' "$caddy_xray" || fail 'XHTTP h2c transport missing'
 grep -Fq '@xray_1 path /second-path /second-path/*' "$caddy_xray" || fail 'second Xray path route missing'
 grep -Fq 'reverse_proxy @xray_1 https://127.0.0.1:25444' "$caddy_xray" || fail 'second Xray upstream missing'
 rm -rf -- "$caddy_node_dir"

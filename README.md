@@ -70,7 +70,7 @@ flowchart LR
 | 1 | VLESS-REALITY-Vision-RAW | 推荐的高性能直连方案，无需自有证书 | 不支持 |
 | 2 | VLESS-REALITY-XHTTP | 使用 XHTTP 传输，但 REALITY 仍需直连 | 不支持 |
 | 3 | VLESS-REALITY-gRPC | 使用 gRPC 传输，但 REALITY 仍需直连 | 不支持 |
-| 4 | VLESS-XHTTP-TLS | 自有域名、证书、Caddy 或 HTTP CDN | 支持 |
+| 4 | VLESS-XHTTP-TLS | Caddy 在 443 终止 TLS，通过本机 h2c 转发到 Xray；支持 HTTP CDN | 支持 |
 | 5 | VLESS-WebSocket-TLS | 广泛兼容客户端和 HTTP CDN | 支持 |
 | 6 | VLESS-gRPC-TLS | 已有 HTTP/2 或 gRPC 反向代理 | 有条件支持 |
 | 7 | Trojan-REALITY-RAW | 需要 Trojan 客户端语义的 REALITY 直连 | 不支持 |
@@ -312,10 +312,12 @@ v2ray caddy log
 
 标准 Caddy 与 Xray 不能同时监听同一 TCP 80/443。若 Xray 或其他程序已占用其中任一端口，
 管理器会拒绝安装或配置 Caddy，不会停止现有服务。请先把 Xray 入站改到其他端口，再配置
-Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路径反向代理到使用同一
-域名证书的本机 Xray TLS 入站，并让其他路径显示静态伪装页。它不能代理 REALITY/RAW。
-建议 Xray 使用 `24443` 等高位端口，Caddy 独占公网 `80/443`。应用前应确认 Xray 的域名、
-证书和传输路径与 Caddy 参数完全一致。
+Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路径反向代理，并让
+其他路径显示静态伪装页。VLESS-XHTTP-TLS 只监听 `127.0.0.1`，由 Caddy 在公网 443
+终止 TLS，再以 HTTP/2 明文 `h2c` 转发；WS 等既有 TLS 入站继续使用 HTTPS 后端。该模式
+不能代理 REALITY/RAW。建议 Xray 使用 `24443` 等内部高位端口，Caddy 独占公网 `80/443`。
+XHTTP 客户端链接固定使用域名、443、TLS、ALPN h2、相同 Host/Path 和 `mode=auto`，不应
+直接连接内部端口。
 
 在菜单中创建 Xray XHTTP/WS 路径反代时，管理器会按输入的 TLS 域名查找已启用的对应
 入站，并自动填入它实际使用的本机端口和传输路径。直接按 Enter 会采用显示的值；没有
@@ -327,6 +329,10 @@ Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路�
 `127.0.0.1:端口` 后端；新增入站不会覆盖既有路径。一个入站的子链接仍共享该入站的路径与
 Caddy 入口，只会使用不同的 UUID 或密码。若两个入站使用相同路径，管理器会拒绝覆盖并要求先
 修改其中一个路径。
+
+从 5.7.0 起，项目升级会把已有 VLESS-XHTTP-TLS 后端迁移为本机 h2c，并在已有 Caddy
+站点文件存在时自动同步路由。若服务器尚未配置该站点，升级会提示运行 `v2ray caddy` 并选择
+“同步 Xray XHTTP/WS 路径反代”；完成前 XHTTP 链接不会经过 Caddy 到达内部端口。
 
 自定义 Cloudflare/CDN 入口域名仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
 `v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
