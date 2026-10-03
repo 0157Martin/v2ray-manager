@@ -2038,7 +2038,7 @@ render_caddy_xray_site() {
         }
         for index in "${!route_paths[@]}"; do
           if [[ ${route_paths[$index]} == "$route_path" && ${route_upstreams[$index]} == "$route_upstream" ]]; then
-            route_profiles[$index]=$route_profile
+            route_profiles[index]=$route_profile
           fi
         done
         continue
@@ -2364,7 +2364,9 @@ caddy_page_menu() {
           ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
           *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
         esac
-        install_caddy_landing_page "$domain" "$template" && green "个人主页已安装：https://$domain（$template）" || true
+        if install_caddy_landing_page "$domain" "$template"; then
+          green "个人主页已安装：https://$domain（$template）"
+        fi
         pause
         ;;
       2)

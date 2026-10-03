@@ -41,13 +41,16 @@ def check_export(folder, profile):
     inbound = server["inbounds"][0]
     stream = inbound["streamSettings"]
     user = inbound["settings"]["clients"][0]
+    caddy_xhttp = profile == "vless-tls-xhttp"
     assert data["address"] == "node.test.example"
-    assert data["port"] == inbound["port"]
+    assert data["port"] == (443 if caddy_xhttp else inbound["port"])
     assert data["protocol"] == inbound["protocol"]
     assert data["user"] == user.get("id", user.get("password"))
     assert data["flow"] == user.get("flow", "")
     assert {"tcp": "raw"}.get(data["network"], data["network"]) == stream["network"]
-    assert data["security"] == stream["security"]
+    assert data["security"] == ("tls" if caddy_xhttp else stream["security"])
+    if caddy_xhttp:
+        assert inbound["listen"] == "127.0.0.1" and stream["security"] == "none"
     assert data["remark"] == "test node & 中文"
     client = json.loads((folder / f"{profile}.client.json").read_text(encoding="utf-8"))
     outbound = client["outbounds"][0]
