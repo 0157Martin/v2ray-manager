@@ -706,7 +706,7 @@ refresh_tls_certificates() (
 )
 
 issue_tls_material() {
-  local webroot= site_file="$CADDY_SITE_DIR/$SERVER_NAME.caddy"
+  local webroot='' site_file="$CADDY_SITE_DIR/$SERVER_NAME.caddy"
   local -a challenge_args=(--standalone)
   if [[ -n ${V2M_ACME_WEBROOT:-} ]]; then
     [[ $V2M_ACME_WEBROOT == /* && -d $V2M_ACME_WEBROOT ]] || die "V2M_ACME_WEBROOT 必须是已有网站根目录的绝对路径。"
