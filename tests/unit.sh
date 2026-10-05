@@ -258,7 +258,13 @@ export MOCK_WARP_LISTENER=down
 if warp_proxy_ready; then fail 'missing WARP proxy was reported healthy'; fi
 if wait_for_warp_proxy; then fail 'missing WARP proxy listener was accepted'; fi
 warp_calls=$(mktemp)
-warp_cli() { printf '%s\n' "$*" >> "$warp_calls"; }
+warp_cli() {
+  if [[ -n ${MOCK_WARP_STATUS:-} ]]; then
+    printf '%s\n' "$MOCK_WARP_STATUS"
+  else
+    printf '%s\n' "$*" >> "$warp_calls"
+  fi
+}
 warp_trace() { :; }
 export MOCK_WARP_LISTENER=up
 configure_warp_proxy || fail 'mock WARP proxy configuration failed'
@@ -266,8 +272,8 @@ grep -Fxq 'tunnel protocol set MASQUE' "$warp_calls" || fail 'WARP Local Proxy d
 rm -f -- "$warp_calls"
 redacted=$(printf '%s\n' 'ERROR license: "secret-value", device_id=ee4f2dc1-4a4b-47a1-b0c8-78f8633a6e12, public_key: [1, 2, 3]' | redact_warp_log)
 [[ $redacted != *secret-value* && $redacted != *ee4f2dc1* && $redacted != *'[1, 2, 3]'* ]] || fail 'WARP diagnostic log leaked registration credentials'
-warp_cli() { printf '%s\n' 'Status update: Unable' 'Reason: Failed to perform happy eyeballs'; }
+MOCK_WARP_STATUS=$'Status update: Unable\nReason: Failed to perform happy eyeballs'
 warp_has_upstream_failure || fail 'Happy Eyeballs failure was not classified as an upstream failure'
-warp_cli() { printf '%s\n' 'Status update: Disconnected'; }
+MOCK_WARP_STATUS='Status update: Disconnected'
 if warp_has_upstream_failure; then fail 'ordinary disconnected status was classified as an upstream failure'; fi
 printf '%s\n' 'WARP startup wait tests passed.'
