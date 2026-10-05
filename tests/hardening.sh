@@ -125,9 +125,11 @@ unset TEST_SCENARIO
 
 printf 'authenticator = standalone\n' > "$ACME_RENEWAL_DIR/example.com.conf"
 if check_caddy_renewal_compatibility >/dev/null 2>&1; then exit 1; fi
+TEST_ACTIVE=1 check_caddy_activation_compatibility
+if TEST_ACTIVE=0 check_caddy_activation_compatibility >/dev/null 2>&1; then exit 1; fi
 printf 'authenticator = webroot\n' > "$ACME_RENEWAL_DIR/example.com.conf"
 check_caddy_renewal_compatibility
-printf 'PASS: incompatible standalone renewal rejected\n'
+printf 'PASS: standalone renewal blocks only a new Caddy activation\n'
 
 PORT=24444 PROFILE=vless-tls-xhttp PATH_VALUE=/xhttp
 save_current_node "$NODES_DIR/xhttp.env"

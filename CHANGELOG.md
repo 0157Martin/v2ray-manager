@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.7.3
+
+- 已运行的 Caddy 允许在项目升级时同步 XHTTP 路由；Certbot standalone 冲突继续由 `v2ray doctor` 报告，但只阻止会新启动 Caddy 并占用 TCP 80 的操作。
+
 ## 5.7.2
 
 - 默认阻止代理用户访问回环、私网、链路本地等敏感目标；域名目标也参与 IP 路由判断，WARP 不再绕过这一策略。

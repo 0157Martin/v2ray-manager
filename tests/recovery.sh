@@ -156,7 +156,10 @@ case "$scenario" in
     getent() { :; }
     caddy() { return 0; }
     ensure_caddy_landing_page() { return 1; }
-    systemctl() { fail 'page failure must not reload Caddy'; }
+    systemctl() {
+      [[ $1 == is-active ]] && return 0
+      fail 'page failure must not reload Caddy'
+    }
     if configure_caddy_site static example.com; then fail 'failed page preparation reported success'; fi
     [[ $(cat "$CADDY_SITE_DIR/example.com.caddy") == old-site ]] || fail 'page failure lost old site'
     ;;

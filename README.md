@@ -215,7 +215,8 @@ Cloudflare 官方参考：
 流程把相关证书迁移为 DNS 验证，或在已能提供 HTTP challenge 的网站上配置 webroot，并执行
 `certbot renew --dry-run`；仅在当前 shell 设置 `V2M_ACME_WEBROOT` 不会改变已有证书的续期配置。
 对已经存在的 Caddy/standalone 组合，`v2ray doctor` 会报告冲突；管理器不会擅自停止网站或修改
-外部证书账户来完成迁移。
+外部证书账户来完成迁移。已经运行的 Caddy 仍允许重载现有站点和同步升级所需的 XHTTP 路由；
+阻止重载无法释放已被 Caddy 占用的端口，反而会让 Xray 与 Caddy 停留在不一致的协议状态。
 
 ## 一行安装
 

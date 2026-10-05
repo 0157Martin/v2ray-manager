@@ -1,5 +1,11 @@
 # Validation status
 
+## 5.7.3 renewal-conflict scope fix — 2026-10-05
+
+- Regression coverage verifies that a standalone Certbot renewal configuration blocks a stopped/new
+  Caddy activation but does not block route synchronization when Caddy is already active.
+- `v2ray doctor` continues to report the underlying renewal conflict for an active deployment.
+
 ## 5.7.2 audit fixes — 2026-10-05
 
 Host: Windows / Git Bash; ShellCheck; Xray 26.3.27 Windows amd64.

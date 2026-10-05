@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.2"
+readonly MANAGER_VERSION="5.7.3"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -215,6 +215,15 @@ check_caddy_renewal_compatibility() {
       return 1
     fi
   done
+}
+
+# An already-active Caddy owns TCP 80 today, so blocking a config reload cannot
+# repair the existing renewal conflict and can prevent a required Xray/Caddy
+# migration. Keep reporting that conflict in doctor, but gate only transitions
+# that would newly start Caddy and take the HTTP challenge port.
+check_caddy_activation_compatibility() {
+  systemctl is-active --quiet caddy && return 0
+  check_caddy_renewal_compatibility
 }
 
 migration_connection_fingerprint() {
@@ -2263,8 +2272,8 @@ caddy_ports_available() {
 
 install_caddy() (
   local temporary
-  check_caddy_renewal_compatibility || return 1
   command -v caddy >/dev/null 2>&1 && return 0
+  check_caddy_renewal_compatibility || return 1
   caddy_ports_available || return 1
   step "安装 Caddy"
   apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -2450,7 +2459,7 @@ configure_caddy_site() {
     valid_caddy_upstream "$upstream" || { red "Xray 后端仅支持本机地址。" >&2; return 1; }
     valid_transport_path "$path" || { red "Xray 传输路径无效，必须以 / 开头且不能包含空格。" >&2; return 1; }
   fi
-  check_caddy_renewal_compatibility || return 1
+  check_caddy_activation_compatibility || return 1
   caddy_ports_available || return 1
   install_caddy || return 1
   ensure_caddy_import || { red "无法安全更新 Caddyfile import。" >&2; return 1; }
