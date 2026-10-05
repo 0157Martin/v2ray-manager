@@ -78,14 +78,15 @@ sleep() {
   printf '%s\n' "$((count+1))" > "$sandbox/ticks"
 }
 systemctl() {
-  local count=0
+  local count=0 version_output
   [[ ! -f $sandbox/ticks ]] || read -r count < "$sandbox/ticks"
   case "$1" in
     is-active)
       [[ $scenario != update-stopped && $scenario != tls-renew-stopped ]] || return 1
       [[ $scenario != delayed-crash || $count -lt 2 ]] || return 1
       if [[ $scenario == update-rollback || $scenario == rollback-failure ]]; then
-        [[ $("$XRAY_BIN" version) != candidate ]] || return 1
+        version_output=$("$XRAY_BIN" version)
+        [[ ${version_output%%$'\n'*} != candidate ]] || return 1
       fi
       ;;
     show)
@@ -237,6 +238,7 @@ case "$scenario" in
   delayed-crash|restarted-process)
     if service_healthy; then fail 'unhealthy process was accepted'; fi ;;
   invalid-core|download-failure|update-success|update-stopped|update-rollback|partial-copy|rollback-failure)
+    version_output=
     if [[ $scenario == invalid-core ]]; then export CANDIDATE_INVALID=1; fi
     if [[ $scenario == partial-copy || $scenario == rollback-failure ]]; then
       # Fail after the executable changed, leaving a mixed set to roll back.
@@ -256,7 +258,8 @@ case "$scenario" in
     bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core' > "$sandbox/output" 2>&1 || status=$?
     case "$scenario" in
       update-success|update-stopped)
-        [[ $status == 0 && $("$XRAY_BIN" version | head -n 1) == candidate ]] || { cat "$sandbox/output"; fail 'update did not succeed'; }
+        version_output=$("$XRAY_BIN" version)
+        [[ $status == 0 && ${version_output%%$'\n'*} == candidate ]] || { cat "$sandbox/output"; fail 'update did not succeed'; }
         grep -Fxq 'candidate' "$sandbox/output" || fail 'updated version was not reported'
         if grep -Fq 'additional version details' "$sandbox/output"; then fail 'version report was not limited to one line'; fi
         [[ $(cat "$ASSET_DIR/geoip.dat") == new-geoip ]] || fail 'new GeoData missing'
