@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.8"
+readonly MANAGER_VERSION="5.7.9"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2708,8 +2708,10 @@ configure_warp_proxy() {
   warp_trace >/dev/null
 }
 
-warp_is_connecting() {
-  warp_cli status 2>/dev/null | grep -qi 'Connecting'
+warp_has_upstream_failure() {
+  local status
+  status=$(warp_cli status 2>&1 || true)
+  grep -Eqi 'Connecting|perform(ing)?[[:space:]]+happy[[:space:]_-]*eyeballs|failed[[:space:]]+to[[:space:]]+perform[[:space:]]+happy[[:space:]_-]*eyeballs' <<<"$status"
 }
 
 redact_warp_log() {
@@ -2725,9 +2727,9 @@ warp_connectivity_diagnostics() {
   printf '系统时间同步：'
   timedatectl show -p NTPSynchronized --value 2>/dev/null || printf '未知\n'
   printf '%s\n' 'IPv4 路由：'
-  ip route get 162.159.198.2 2>&1 || true
+  ip route get 162.159.197.2 2>&1 || true
   printf '%s\n' 'IPv6 路由：'
-  ip -6 route get 2606:4700:103::2 2>&1 || true
+  ip -6 route get 2606:4700:102::2 2>&1 || true
   if command -v ufw >/dev/null 2>&1; then
     printf '%s\n' 'UFW 状态：'
     ufw status verbose 2>&1 || true
@@ -2742,8 +2744,9 @@ warp_connectivity_diagnostics() {
   else
     yellow "最近日志中没有匹配的连接错误。"
   fi
-  yellow "Local Proxy 使用 MASQUE。服务器和服务商出站防火墙需允许 Cloudflare WARP 的 UDP 443、500、1701、4500、4443、8443、8095；并允许 TCP 443 回退。"
-  yellow "状态卡在 Connecting/Happy Eyeballs 表示上游隧道未建立，不是 127.0.0.1:${WARP_PROXY_PORT} 本身的防火墙问题。"
+  yellow "Local Proxy 只能使用 MASQUE，不能回退到 WireGuard。服务器和服务商出站防火墙需允许 UDP 443、500、1701、4500、4443、8443、8095，并允许 TCP 443 回退。"
+  yellow "企业 WARP 的 MASQUE 地址范围为 162.159.197.0/24、2606:4700:102::/48；消费者 WARP 还可能使用 162.159.192.0/24。"
+  yellow "Connecting 或 Failed to perform happy eyeballs 表示 Cloudflare 上游隧道未建立；127.0.0.1:${WARP_PROXY_PORT} 未监听是结果，不应放行公网入站端口 40000。"
 }
 
 reregister_warp() {
@@ -2774,12 +2777,12 @@ install_warp() {
     timeout 45 warp-cli --accept-tos registration new || die "WARP 注册失败。"
   fi
   configure_warp_proxy || {
-    if warp_is_connecting; then
+    if warp_has_upstream_failure; then
       warp_connectivity_diagnostics
-      red "WARP 注册有效，但 MASQUE 上游连接被网络阻断或不可达；未重复注册设备。" >&2
+      red "WARP 注册有效，但 MASQUE 上游连接被网络阻断或不可达；已保留注册，未重复注册设备。" >&2
       return 1
     fi
-    yellow "首次连接失败且状态并非 Connecting，正在重新注册 WARP 设备…"
+    yellow "首次连接失败且未发现已知上游连通故障，正在重新注册 WARP 设备…"
     reregister_warp || { red "WARP 重新注册失败。" >&2; return 1; }
     configure_warp_proxy || { red "重新注册后 WARP 本机代理仍未启动。" >&2; return 1; }
   }
@@ -2932,9 +2935,9 @@ repair_warp() {
     timeout 45 warp-cli --accept-tos registration new || die "WARP 重新注册失败。"
   fi
   if ! configure_warp_proxy; then
-    if warp_is_connecting; then
+    if warp_has_upstream_failure; then
       warp_connectivity_diagnostics
-      die "MASQUE 上游连接仍停留在 Connecting；请先放行所列出站端口或联系 VPS 服务商。"
+      die "MASQUE 上游连接失败（Connecting/Happy Eyeballs）；请放行诊断列出的出站端口和地址范围，或联系 VPS 服务商。"
     fi
     yellow "现有 WARP 注册无法启动本机代理，正在重新注册免费 WARP 设备…"
     reregister_warp || die "WARP 重新注册失败。"

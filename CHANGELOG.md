@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 5.7.9
+
+- 将 `Failed to perform happy eyeballs` 识别为 MASQUE 上游连通故障，保留有效 WARP 注册，不再错误地删除并重新注册设备。
+- WARP 诊断改用 Cloudflare 当前公布的 MASQUE 路由目标，补充官方 IPv4/IPv6 地址范围、Local Proxy 必须使用 MASQUE，以及本机端口 40000 无需开放公网入站的说明。
+
 ## 5.7.8
 
 - 新增 XHTTP/WS TLS 入站后，如果同域名已有本项目管理的 Caddy 站点，自动合并新 Path 路由；Caddy 校验或 reload 失败时由外层事务恢复新增前状态。

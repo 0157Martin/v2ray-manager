@@ -266,4 +266,8 @@ grep -Fxq 'tunnel protocol set MASQUE' "$warp_calls" || fail 'WARP Local Proxy d
 rm -f -- "$warp_calls"
 redacted=$(printf '%s\n' 'ERROR license: "secret-value", device_id=ee4f2dc1-4a4b-47a1-b0c8-78f8633a6e12, public_key: [1, 2, 3]' | redact_warp_log)
 [[ $redacted != *secret-value* && $redacted != *ee4f2dc1* && $redacted != *'[1, 2, 3]'* ]] || fail 'WARP diagnostic log leaked registration credentials'
+warp_cli() { printf '%s\n' 'Status update: Unable' 'Reason: Failed to perform happy eyeballs'; }
+warp_has_upstream_failure || fail 'Happy Eyeballs failure was not classified as an upstream failure'
+warp_cli() { printf '%s\n' 'Status update: Disconnected'; }
+if warp_has_upstream_failure; then fail 'ordinary disconnected status was classified as an upstream failure'; fi
 printf '%s\n' 'WARP startup wait tests passed.'

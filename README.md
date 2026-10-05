@@ -680,10 +680,11 @@ DRM、设备认证或实际播放一定可用。流媒体平台会按账号地�
 [已知问题](https://developers.cloudflare.com/warp-client/known-issues-and-faq/) 说明了这些限制。
 
 安装和修复只有在 `127.0.0.1:40000` 开始监听、且 Cloudflare trace 返回 `warp=on` 后才会
-报告成功。`warp-cli connect` 完成较慢时最多等待 30 秒；现有注册无法启动代理时会自动断开
-并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
+报告成功。`warp-cli connect` 完成较慢时最多等待 30 秒；只有在状态不属于已知上游连通故障时，
+才会自动断开并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
 
-Local Proxy 会显式使用 MASQUE。如果状态长期停在 `Connecting` 或 `Performing happy eyeballs`，
+Local Proxy 会显式使用 MASQUE，且该模式不支持 WireGuard 回退。如果状态长期停在 `Connecting`、
+`Performing happy eyeballs` 或显示 `Failed to perform happy eyeballs`，
 脚本不会继续反复删除有效注册，而会运行上游诊断。也可手动执行：
 
 ```bash
@@ -695,7 +696,9 @@ v2ray warp diagnose
 公钥和 UUID；不要在公开截图中展示未经脱敏的 `journalctl -u warp-svc` 原始调试日志。
 服务器本机及服务商出站策略需要允许 WARP 的 UDP `443`、`500`、`1701`、`4500`、`4443`、
 `8443`、`8095`，以及 TCP `443` 回退。卡在 Happy Eyeballs 表示 Cloudflare 上游隧道尚未
-建立；此时 `127.0.0.1:40000` 不监听是结果，并不是需要开放公网入站 40000。
+建立；此时 `127.0.0.1:40000` 不监听是结果，并不是需要开放公网入站 40000。企业 WARP 的
+MASQUE 地址范围是 `162.159.197.0/24`、`2606:4700:102::/48`，消费者 WARP 还可能使用
+`162.159.192.0/24`。
 
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，本机和私有目标始终拒绝；这里的“全部”指所有协议产生的
