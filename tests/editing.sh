@@ -10,7 +10,7 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 if [[ $# == 0 ]]; then
   sandbox=$(mktemp -d)
   trap 'rm -rf -- "$sandbox"' EXIT
-  for scenario in empty-state revoked-user selected-node dotted-id batch-success batch-cancel \
+  for scenario in empty-state revoked-user selected-node dotted-id enable-all-active disable-all-disabled batch-success batch-cancel \
     batch-input-failure batch-signal batch-restart-failure pending-failure pending-signal secure-state; do
     mkdir "$sandbox/$scenario"
     status=0
@@ -149,6 +149,20 @@ case "$scenario" in
     for invalid in ../primary /primary 'a/b' 'a\b' 'a b' ''; do
       if valid_node_id "$invalid"; then fail "unsafe ID accepted: $invalid"; fi
     done
+    ;;
+  enable-all-active)
+    enable_inbound <<< 'all' > "$sandbox/no-op-output"
+    grep -Fq '所有入站已经启用，无需操作' "$sandbox/no-op-output" || fail 'enabled all no-op was not explained'
+    [[ -f $NODES_DIR/primary.env && ! -e $NODES_DIR/primary.disabled ]] || fail 'enabled node changed during no-op'
+    [[ ! -e $sandbox/restarts ]] || fail 'enabled all no-op restarted the service'
+    ;;
+  disable-all-disabled)
+    mv "$NODES_DIR/primary.env" "$NODES_DIR/primary.disabled"
+    rebuild_config_from_nodes
+    disable_inbound <<< 'all' > "$sandbox/no-op-output"
+    grep -Fq '所有入站已经停用，无需操作' "$sandbox/no-op-output" || fail 'disabled all no-op was not explained'
+    [[ -f $NODES_DIR/primary.disabled && ! -e $NODES_DIR/primary.env ]] || fail 'disabled node changed during no-op'
+    [[ ! -e $sandbox/restarts ]] || fail 'disabled all no-op restarted the service'
     ;;
   batch-*)
     PORT=24444; REMARK=secondary; save_current_node "$NODES_DIR/secondary.env"

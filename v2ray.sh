@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.5"
+readonly MANAGER_VERSION="5.7.6"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -1767,7 +1767,7 @@ sub_link_menu() {
 
 SELECTED_NODE_FILES=()
 select_node_files() {
-  local wanted_state=${1:-any} input node_id candidate
+  local wanted_state=${1:-any} allow_empty=${2:-0} input node_id candidate
   local -a requested candidates
   local -A seen=()
   SELECTED_NODE_FILES=()
@@ -1804,7 +1804,10 @@ select_node_files() {
       SELECTED_NODE_FILES+=("$candidate")
     done
   fi
-  (( ${#SELECTED_NODE_FILES[@]} > 0 )) || die '没有符合条件的入站。'
+  if (( ${#SELECTED_NODE_FILES[@]} == 0 )); then
+    (( allow_empty )) && return 0
+    die '没有符合条件的入站。'
+  fi
 }
 
 selected_node_names() {
@@ -1814,7 +1817,11 @@ selected_node_names() {
 
 disable_inbound() {
   local node_file
-  select_node_files enabled
+  select_node_files enabled 1
+  if (( ${#SELECTED_NODE_FILES[@]} == 0 )); then
+    green '所有入站已经停用，无需操作。'
+    return 0
+  fi
   create_backup
   for node_file in "${SELECTED_NODE_FILES[@]}"; do mv "$node_file" "${node_file%.env}.disabled"; done
   rebuild_or_restore
@@ -1920,7 +1927,11 @@ finish_inbound_edit() {
 
 enable_inbound() {
   local node_file
-  select_node_files disabled
+  select_node_files disabled 1
+  if (( ${#SELECTED_NODE_FILES[@]} == 0 )); then
+    green '所有入站已经启用，无需操作。'
+    return 0
+  fi
   create_backup
   for node_file in "${SELECTED_NODE_FILES[@]}"; do mv "$node_file" "${node_file%.disabled}.env"; done
   rebuild_or_restore
