@@ -156,6 +156,12 @@ def real_traffic(folder, core, server, data):
     server["log"]["loglevel"] = "debug"
     server["inbounds"][0]["port"] = server_port
     server["inbounds"][0]["streamSettings"]["realitySettings"]["target"] = f"127.0.0.1:{target.server_port}"
+    # Production now denies loopback destinations. Only this test HTTP endpoint
+    # is explicitly allowed; do not remove the remaining production deny rules.
+    server["routing"]["rules"].insert(0, {
+        "type": "field", "ip": ["127.0.0.1"],
+        "port": str(destination.server_port), "outboundTag": "direct"
+    })
     client = {
         "log": {"loglevel": "debug"},
         "inbounds": [{"listen": "127.0.0.1", "port": socks_port, "protocol": "socks", "settings": {"auth": "noauth"}}],

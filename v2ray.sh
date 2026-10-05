@@ -7,8 +7,8 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.1"
-readonly DATA_SCHEMA_VERSION="3"
+readonly MANAGER_VERSION="5.7.2"
+readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
 readonly BIN_DIR="/usr/local/bin"
@@ -26,6 +26,8 @@ readonly SERVICE_FILE="/etc/systemd/system/xray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly WARP_STATE_FILE="$CONFIG_DIR/warp.env"
 readonly WARP_PROXY_PORT="40000"
+readonly LOCK_FILE="/run/lock/v2ray-manager.lock"
+readonly ACME_RENEWAL_DIR="/etc/letsencrypt/renewal"
 readonly NODES_DIR="$CONFIG_DIR/nodes"
 readonly RELEASE_API="https://api.github.com/repos/XTLS/Xray-core/releases/latest"
 readonly MANAGER_URL="https://raw.githubusercontent.com/0157Martin/v2ray-manager/main/v2ray.sh"
@@ -55,6 +57,175 @@ require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || die "请使用 root 运行：sudo bash $0"
 }
 
+# Start a fresh Bash so an interactive caller's `|| true` cannot disable errexit
+# inside the mutation. Each operation owns one lock and one recovery snapshot.
+run_mutation() {
+  bash "${BASH_SOURCE[0]}" __mutation "$@"
+}
+
+acquire_mutation_lock() {
+  # The update -> new manager -> migrate child inherits FD 9, preventing deadlock.
+  if [[ ${V2M_LOCK_HELD:-0} == 1 && $(readlink /proc/self/fd/9 2>/dev/null) == "$LOCK_FILE" ]]; then
+    return 0
+  fi
+  command -v flock >/dev/null || die "缺少 flock，请安装 util-linux 后重试。"
+  exec 9>"$LOCK_FILE"
+  flock -x 9 || die "无法取得配置写锁。"
+  export V2M_LOCK_HELD=1
+}
+
+mutation_entry() {
+  local operation=${1:-}
+  case "$operation" in
+    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|install_caddy_landing_page|update_caddy_landing_page|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
+    *) die "不允许的内部修改操作。" ;;
+  esac
+  acquire_mutation_lock
+  begin_mutation_snapshot
+  if [[ $operation != migrate_project_state && $operation != uninstall_xray ]]; then
+    ensure_project_state_current menu
+  fi
+  "$@"
+}
+
+begin_mutation_snapshot() {
+  umask 077
+  install -d -m 700 "$BACKUP_DIR"
+  MUTATION_SNAPSHOT=$(mktemp -d "$BACKUP_DIR/transaction.XXXXXX")
+  local name path
+  for name in config caddy-main caddy-sites service; do
+    case "$name" in
+      config) path=$CONFIG_DIR ;;
+      caddy-main) path=$CADDY_CONFIG ;;
+      caddy-sites) path=$CADDY_SITE_DIR ;;
+      service) path=$SERVICE_FILE ;;
+    esac
+    if [[ -e $path ]]; then cp -a -- "$path" "$MUTATION_SNAPSHOT/$name"; fi
+  done
+  MUTATION_XRAY_ACTIVE=0; MUTATION_CADDY_ACTIVE=0
+  systemctl is-active --quiet "$SERVICE_NAME" && MUTATION_XRAY_ACTIVE=1
+  systemctl is-active --quiet caddy && MUTATION_CADDY_ACTIVE=1
+  trap 'finish_mutation "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+finish_mutation() {
+  local status=$1 name path failed=0 xray_changed=0 caddy_changed=0 unit_changed=0
+  trap - EXIT INT TERM
+  if (( status != 0 )); then
+    for name in config caddy-main caddy-sites service; do
+      case "$name" in
+        config) path=$CONFIG_DIR ;;
+        caddy-main) path=$CADDY_CONFIG ;;
+        caddy-sites) path=$CADDY_SITE_DIR ;;
+        service) path=$SERVICE_FILE ;;
+      esac
+      if diff -qr -- "$path" "$MUTATION_SNAPSHOT/$name" >/dev/null 2>&1; then continue; fi
+      [[ -e $path || -e $MUTATION_SNAPSHOT/$name ]] || continue
+      case "$name" in
+        config) xray_changed=1 ;;
+        service) xray_changed=1; unit_changed=1 ;;
+        caddy-*) caddy_changed=1 ;;
+      esac
+      # Preserve failed material for recovery when a subsequent restore fails.
+      if [[ -e $path ]]; then
+        mv -- "$path" "$MUTATION_SNAPSHOT/failed-$name" || { failed=1; continue; }
+      fi
+      if [[ -e $MUTATION_SNAPSHOT/$name ]]; then
+        cp -a -- "$MUTATION_SNAPSHOT/$name" "$path" || failed=1
+      fi
+    done
+    if (( unit_changed )); then systemctl daemon-reload || failed=1; fi
+    if (( MUTATION_XRAY_ACTIVE )); then
+      if (( xray_changed )) || ! systemctl is-active --quiet "$SERVICE_NAME"; then restart_checked || failed=1; fi
+    elif systemctl is-active --quiet "$SERVICE_NAME"; then
+      systemctl stop "$SERVICE_NAME" || failed=1
+    fi
+    if (( MUTATION_CADDY_ACTIVE )); then
+      if (( caddy_changed )) || ! systemctl is-active --quiet caddy; then systemctl restart caddy || failed=1; fi
+    elif systemctl is-active --quiet caddy; then
+      systemctl stop caddy || failed=1
+    fi
+    if (( failed )); then
+      red "自动恢复未完成；完整现场保留在 $MUTATION_SNAPSHOT。" >&2
+      exit 1
+    fi
+    yellow '操作失败，已恢复修改前的配置、证书、Caddy 路由和服务状态。' >&2
+  fi
+  rm -rf -- "$MUTATION_SNAPSHOT"
+  exit "$status"
+}
+
+publish_config() (
+  local source=$1 temporary
+  temporary=$(mktemp "${CONFIG_FILE}.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  install -m 640 -o root -g xray "$source" "$temporary" || return 1
+  mv -f -- "$temporary" "$CONFIG_FILE"
+)
+
+publish_tls_material() (
+  local target=$1 cert=$2 key=$3 staging committed=0 changed=0
+  staging=$(mktemp -d "$target/.publish.XXXXXX") || return 1
+  chmod 700 "$staging" || return 1
+  [[ ! -f $target/cert.pem ]] || cp -p "$target/cert.pem" "$staging/old-cert.pem" || return 1
+  [[ ! -f $target/key.pem ]] || cp -p "$target/key.pem" "$staging/old-key.pem" || return 1
+  trap '
+    status=$?
+    if (( changed && ! committed )); then
+      for name in cert key; do
+        if [[ -f $staging/old-$name.pem ]]; then
+          cp -p "$staging/old-$name.pem" "$target/$name.pem" || exit 1
+        else rm -f -- "$target/$name.pem" || exit 1; fi
+      done
+    fi
+    rm -rf -- "$staging"
+    exit "$status"
+  ' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  install -m 640 -o root -g xray "$cert" "$staging/cert.pem" || return 1
+  install -m 640 -o root -g xray "$key" "$staging/key.pem" || return 1
+  changed=1
+  mv -f -- "$staging/cert.pem" "$target/cert.pem" || return 1
+  mv -f -- "$staging/key.pem" "$target/key.pem" || return 1
+  committed=1
+)
+
+# Apply before WARP selection so neither direct nor SOCKS routing can bypass it.
+# IPOnDemand also checks domain destinations, not just literal IP requests.
+protect_outbound_targets() (
+  local config=$1 temporary
+  temporary=$(mktemp "${config}.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  jq '.routing = {domainStrategy:"IPOnDemand",rules:[
+    {type:"field",domain:["full:localhost","domain:localhost"],outboundTag:"block"},
+    {type:"field",ip:["0.0.0.0/8","10.0.0.0/8","100.64.0.0/10","127.0.0.0/8","169.254.0.0/16","172.16.0.0/12","192.168.0.0/16","224.0.0.0/4","240.0.0.0/4","::/128","::1/128","::/96","64:ff9b::/96","fc00::/7","fe80::/10","ff00::/8"],outboundTag:"block"}
+  ]}' "$config" > "$temporary" || return 1
+  cat "$temporary" > "$config"
+)
+
+check_caddy_renewal_compatibility() {
+  local renewal
+  for renewal in "$ACME_RENEWAL_DIR"/*.conf; do
+    [[ -f $renewal ]] || continue
+    if grep -Eq '^[[:space:]]*authenticator[[:space:]]*=[[:space:]]*standalone[[:space:]]*$' "$renewal"; then
+      red "拒绝占用 TCP 80：$renewal 仍使用 Certbot standalone 续期。请先迁移到 DNS 或可用 webroot 验证并通过 certbot renew --dry-run，再启用 Caddy。" >&2
+      return 1
+    fi
+  done
+}
+
+migration_connection_fingerprint() {
+  jq -cS '[.inbounds[] | {
+    tag, listen, port, protocol, settings, streamSettings
+  } | if .protocol == "vless" and .streamSettings.network == "xhttp" and
+    (.streamSettings.security == "tls" or .streamSettings.security == "none") then
+      .listen="127.0.0.1" | .streamSettings.security="none" | del(.streamSettings.tlsSettings)
+    else . end] | sort_by(.tag)' "$1" | sha256sum | awk '{print $1}'
+}
+
 require_supported_os() {
   [[ -r /etc/os-release ]] || die "无法识别系统。"
   # shellcheck disable=SC1091
@@ -66,7 +237,7 @@ require_supported_os() {
 install_dependencies() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y ca-certificates curl unzip jq coreutils iproute2 tar openssl gnupg
+  apt-get install -y ca-certificates curl unzip jq coreutils iproute2 tar openssl gnupg util-linux diffutils
 }
 
 # Only modify a firewall that is already explicitly active.  We deliberately do
@@ -565,8 +736,7 @@ prepare_tls_material() {
   fi
   local target="$TLS_DIR/$SERVER_NAME"
   install -d -m 750 -o root -g xray "$TLS_DIR" "$target"
-  [[ $(readlink -f "$CERT_SOURCE") == "$(readlink -f "$target/cert.pem" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$CERT_SOURCE" "$target/cert.pem"
-  [[ $(readlink -f "$KEY_SOURCE") == "$(readlink -f "$target/key.pem" 2>/dev/null || true)" ]] || install -m 640 -o root -g xray "$KEY_SOURCE" "$target/key.pem"
+  publish_tls_material "$target" "$CERT_SOURCE" "$KEY_SOURCE" || return 1
   if [[ $CERT_SOURCE == /etc/letsencrypt/live/*/fullchain.pem ]]; then
     printf '%s\n' "${CERT_SOURCE%/*}" > "$target/source"
     chmod 600 "$target/source"
@@ -595,8 +765,11 @@ ensure_port_available() {
   die "请选择其他端口，不会停止现有服务。"
 }
 
-render_config() {
-  local destination=$1
+render_config() (
+  umask 077
+  local destination=$1 rendered
+  rendered=$(mktemp) || return 1
+  trap 'rm -f -- "$rendered"' EXIT
   jq -n \
     --argjson port "$PORT" \
     --arg id "$UUID" \
@@ -642,11 +815,14 @@ render_config() {
         {protocol: "freedom", tag: "direct"},
         {protocol: "blackhole", tag: "block"}
       ]
-    }' > "$destination"
-}
+    }' > "$rendered" || return 1
+  protect_outbound_targets "$rendered" || return 1
+  cat "$rendered" > "$destination"
+)
 
 apply_warp_config() {
   local config_file=$1 mode domains strategy
+  protect_outbound_targets "$config_file" || return 1
   [[ -r $WARP_STATE_FILE ]] || return 0
   WARP_MODE=off
   WARP_DOMAINS=''
@@ -669,12 +845,13 @@ apply_warp_config() {
 
 inject_warp_config() {
   local config_file=$1 mode=$2 domains=${3:-} strategy=${4:-UseIPv4v6} temporary
+  protect_outbound_targets "$config_file" || return 1
   temporary=$(mktemp)
   jq --arg mode "$mode" --arg domains "$domains" --arg strategy "$strategy" --argjson port "$WARP_PROXY_PORT" '
     .outbounds += [{protocol:"socks",tag:"warp",targetStrategy:$strategy,settings:{servers:[{address:"127.0.0.1",port:$port}]}}]
     | .routing = {
-        domainStrategy:"AsIs",
-        rules: ([{type:"field",ip:["geoip:private"],outboundTag:"direct"}]
+        domainStrategy:"IPOnDemand",
+        rules: (.routing.rules
           + if $mode == "all" then
               [{type:"field",network:"tcp",outboundTag:"warp"}]
             else
@@ -716,7 +893,7 @@ validate_pending_config() (
   apply_warp_config "$temporary" || return 1
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$temporary" || return 1
   if [[ $mode == empty ]]; then
-    install -m 640 -o root -g xray "$temporary" "$CONFIG_FILE" || return 1
+    publish_config "$temporary" || return 1
   fi
 )
 
@@ -778,7 +955,7 @@ rebuild_config_from_nodes() (
   jq -n --slurpfile inbounds "$combined" '{log:{loglevel:"warning"},inbounds:$inbounds[0],outbounds:[{protocol:"freedom",tag:"direct"},{protocol:"blackhole",tag:"block"}]}' > "$work_dir/config.json" || return 1
   apply_warp_config "$work_dir/config.json" || return 1
   XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$work_dir/config.json" >/dev/null || { rm -rf "$work_dir"; red "多入站配置未通过 Xray 校验。"; return 1; }
-  install -m 640 -o root -g xray "$work_dir/config.json" "$CONFIG_FILE"
+  publish_config "$work_dir/config.json"
 )
 
 rebuild_or_restore() {
@@ -954,7 +1131,7 @@ restore_archive() (
     install -d -m 750 -o root -g xray "$TLS_DIR" || return 1
     cp -a "$temp_dir/tls/." "$TLS_DIR/" || return 1
   fi
-  install -m 640 -o root -g xray "$temp_dir/config.json" "$CONFIG_FILE" || return 1
+  publish_config "$temp_dir/config.json" || return 1
   install -m 600 -o root -g root "$temp_dir/manager.env" "$STATE_FILE" || return 1
   if [[ -f $temp_dir/warp.env ]]; then
     install -m 600 -o root -g root "$temp_dir/warp.env" "$WARP_STATE_FILE" || return 1
@@ -974,6 +1151,8 @@ restore_latest() {
   archive=$(list_backups | sed -n '1p')
   [[ -n "$archive" ]] || die "没有可恢复的配置备份。"
   restore_archive "$archive"
+  # Old archives must not reactivate the pre-hardening outbound policy.
+  migrate_project_state
   restart_checked || die "备份已恢复，但服务未通过健康检查，请运行 v2ray log。"
   green "已恢复备份：$(basename "$archive")"
   show_connection
@@ -1554,23 +1733,23 @@ sub_link_menu() {
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) read -r -p '请输入启用的入站 ID：' node_id; list_sub_links "$node_id"; pause ;;
-      2) read -r -p '请输入启用的入站 ID：' node_id; read -r -p '新增数量 [1]：' count; add_sub_links "$node_id" "${count:-1}"; pause ;;
+      2) read -r -p '请输入启用的入站 ID：' node_id; read -r -p '新增数量 [1]：' count; run_mutation add_sub_links "$node_id" "${count:-1}"; pause ;;
       3)
         read -r -p '请输入启用的入站 ID：' node_id; list_sub_links "$node_id"
         read -r -p '请输入要删除的链接序号：' index
         read -r -p "确认删除第 $index 条链接？[y/N] " answer
-        [[ ${answer,,} == y || ${answer,,} == yes ]] && delete_sub_link "$node_id" "$index"
+        [[ ${answer,,} == y || ${answer,,} == yes ]] && run_mutation delete_sub_link "$node_id" "$index"
         pause
         ;;
       4)
         read -r -p '请输入启用的入站 ID：' node_id; list_sub_links "$node_id"
         read -r -p '请输入要重新生成的链接序号：' index
         read -r -p "确认使第 $index 条旧链接失效并重新生成？[y/N] " answer
-        [[ ${answer,,} == y || ${answer,,} == yes ]] && replace_sub_link "$node_id" "$index"
+        [[ ${answer,,} == y || ${answer,,} == yes ]] && run_mutation replace_sub_link "$node_id" "$index"
         pause
         ;;
       5) read -r -p '请输入启用的入站 ID：' node_id; show_connection "$node_id"; pause ;;
-      6) read -r -p '请输入启用的入站 ID：' node_id; read -r -p '请输入链接总数 [1-10]：' count; set_sub_link_count "$node_id" "$count"; pause ;;
+      6) read -r -p '请输入启用的入站 ID：' node_id; read -r -p '请输入链接总数 [1-10]：' count; run_mutation set_sub_link_count "$node_id" "$count"; pause ;;
       0) return ;;
       *) yellow '无效选择。'; pause ;;
     esac
@@ -1769,8 +1948,8 @@ manage_inbounds_menu() {
     ui_box_bottom
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
-      1) list_inbounds; pause ;; 2) add_inbound; pause ;; 3) modify_inbound; pause ;;
-      4) disable_inbound; pause ;; 5) enable_inbound; pause ;; 6) delete_inbound; pause ;;
+      1) list_inbounds; pause ;; 2) run_mutation add_inbound; pause ;; 3) run_mutation modify_inbound; pause ;;
+      4) run_mutation disable_inbound; pause ;; 5) run_mutation enable_inbound; pause ;; 6) run_mutation delete_inbound; pause ;;
       0) return ;; *) yellow "无效选择。"; pause ;;
     esac
   done
@@ -1823,13 +2002,13 @@ users_command() {
     menu) sub_link_menu ;;
     list) if [[ -n ${2:-} ]]; then list_sub_links "$2"; else list_inbounds; fi ;;
     show) [[ -n ${2:-} ]] || die '用法：v2ray users show <入站ID>'; show_connection "$2" ;;
-    add) [[ -n ${2:-} ]] || die '用法：v2ray users add <入站ID> [数量]'; add_sub_links "$2" "${3:-1}" ;;
-    delete|del|remove) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users delete <入站ID> <序号>'; delete_sub_link "$2" "$3" ;;
-    replace|reset) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users replace <入站ID> <序号>'; replace_sub_link "$2" "$3" ;;
-    set) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users set <入站ID> <1-10>'; set_sub_link_count "$2" "$3" ;;
+    add) [[ -n ${2:-} ]] || die '用法：v2ray users add <入站ID> [数量]'; run_mutation add_sub_links "$2" "${3:-1}" ;;
+    delete|del|remove) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users delete <入站ID> <序号>'; run_mutation delete_sub_link "$2" "$3" ;;
+    replace|reset) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users replace <入站ID> <序号>'; run_mutation replace_sub_link "$2" "$3" ;;
+    set) [[ -n ${2:-} && -n ${3:-} ]] || die '用法：v2ray users set <入站ID> <1-10>'; run_mutation set_sub_link_count "$2" "$3" ;;
     *)
       if [[ -n ${2:-} && $2 =~ ^([1-9]|10)$ ]]; then
-        set_sub_link_count "$1" "$2"
+        run_mutation set_sub_link_count "$1" "$2"
       else
         die '用法：v2ray users [list [入站ID]|show <入站ID>|add <入站ID> [数量]|delete <入站ID> <序号>|replace <入站ID> <序号>|set <入站ID> <1-10>]'
       fi
@@ -2084,6 +2263,7 @@ caddy_ports_available() {
 
 install_caddy() (
   local temporary
+  check_caddy_renewal_compatibility || return 1
   command -v caddy >/dev/null 2>&1 && return 0
   caddy_ports_available || return 1
   step "安装 Caddy"
@@ -2270,6 +2450,7 @@ configure_caddy_site() {
     valid_caddy_upstream "$upstream" || { red "Xray 后端仅支持本机地址。" >&2; return 1; }
     valid_transport_path "$path" || { red "Xray 传输路径无效，必须以 / 开头且不能包含空格。" >&2; return 1; }
   fi
+  check_caddy_renewal_compatibility || return 1
   caddy_ports_available || return 1
   install_caddy || return 1
   ensure_caddy_import || { red "无法安全更新 Caddyfile import。" >&2; return 1; }
@@ -2364,7 +2545,7 @@ caddy_page_menu() {
           ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
           *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
         esac
-        if install_caddy_landing_page "$domain" "$template"; then
+        if run_mutation install_caddy_landing_page "$domain" "$template"; then
           green "个人主页已安装：https://$domain（$template）"
         fi
         pause
@@ -2377,7 +2558,7 @@ caddy_page_menu() {
           ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
           *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
         esac
-        if update_caddy_landing_page "$domain" "$template"; then
+        if run_mutation update_caddy_landing_page "$domain" "$template"; then
           green "个人主页已更新：https://$domain"
         fi
         pause
@@ -2396,12 +2577,12 @@ caddy_menu() {
       '4) 同步 Xray XHTTP/WS 路径反代' '5) 个人网页设置' '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
     read -r -p '请选择 [0-7]:' choice
     case "$choice" in
-      1) caddy_ports_available && install_caddy && green "Caddy 已安装。"; pause ;;
-      2) read -r -p '网站域名：' domain; configure_caddy_site static "$domain" || true; pause ;;
+      1) caddy_ports_available && run_mutation install_caddy && green "Caddy 已安装。"; pause ;;
+      2) read -r -p '网站域名：' domain; run_mutation configure_caddy_site static "$domain" || true; pause ;;
       3)
         read -r -p '网站域名：' domain
         read -r -p '本机后端 [127.0.0.1:8080]：' upstream
-        configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}" || true; pause
+        run_mutation configure_caddy_site reverse "$domain" "${upstream:-127.0.0.1:8080}" || true; pause
         ;;
       4)
         read -r -p 'TLS 域名：' domain
@@ -2419,7 +2600,7 @@ caddy_menu() {
           pause
           continue
         fi
-        configure_caddy_site xray "$domain" "$upstream" "$path" || true
+        run_mutation configure_caddy_site xray "$domain" "$upstream" "$path" || true
         pause
         ;;
       5) caddy_page_menu ;;
@@ -2435,12 +2616,12 @@ caddy_command() {
   local action=${1:-menu} domain=${2:-} upstream=${3:-} path=${4:-}
   case "$action" in
     menu) caddy_menu ;;
-    install) caddy_ports_available && install_caddy ;;
-    static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; configure_caddy_site static "$domain" ;;
-    reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; configure_caddy_site reverse "$domain" "$upstream" ;;
-    xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; configure_caddy_site xray "$domain" "$upstream" "$path" ;;
-    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume|default]"; install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
-    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume|default]"; update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
+    install) caddy_ports_available && run_mutation install_caddy ;;
+    static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; run_mutation configure_caddy_site static "$domain" ;;
+    reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; run_mutation configure_caddy_site reverse "$domain" "$upstream" ;;
+    xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; run_mutation configure_caddy_site xray "$domain" "$upstream" "$path" ;;
+    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume|default]"; run_mutation install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
+    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume|default]"; run_mutation update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -2590,7 +2771,7 @@ normalize_warp_domains() {
 set_warp_policy() {
   local mode=$1 domains=${2:-} strategy=UseIPv4v6
   [[ -x $XRAY_BIN && -r $CONFIG_FILE ]] || die "请先安装 Xray。"
-  warp_trace >/dev/null
+  warp_trace >/dev/null || return 1
   [[ $mode == selective || $mode == all ]] || die "WARP 策略模式无效。"
   [[ $mode == all ]] || domains=$(normalize_warp_domains "$domains")
   if [[ -r $WARP_STATE_FILE ]]; then
@@ -2609,7 +2790,7 @@ EOF
   rebuild_or_restore
   restart_or_rollback
   if [[ $mode == all ]]; then
-    green "全部协议的公网 TCP 流量已统一通过 WARP；UDP 和私有地址仍使用直连。"
+    green "全部协议的公网 TCP 流量已统一通过 WARP；UDP 使用直连；本机及私有目标默认拒绝。"
   else
     green "全部协议已统一应用 WARP 域名分流：$domains"
   fi
@@ -2668,9 +2849,9 @@ warp_ip_strategy_menu() {
   printf '%s\n' '1) 自动双栈（IPv4 优先，失败后尝试 IPv6）' '2) 仅 IPv4' '3) 仅 IPv6' '0) 返回'
   read -r -p '请选择 [0-3]：' choice
   case "$choice" in
-    1) set_warp_ip_strategy UseIPv4v6 ;;
-    2) set_warp_ip_strategy UseIPv4 ;;
-    3) set_warp_ip_strategy UseIPv6 ;;
+    1) run_mutation set_warp_ip_strategy UseIPv4v6 ;;
+    2) run_mutation set_warp_ip_strategy UseIPv4 ;;
+    3) run_mutation set_warp_ip_strategy UseIPv6 ;;
     0) return ;;
     *) yellow "无效选择。" ;;
   esac
@@ -2740,25 +2921,25 @@ warp_menu() {
       '7) 停用 WARP 策略' '8) 修复/重新生成配置' '9) 卸载 WARP' '0) 返回主菜单'
     read -r -p '请选择 [0-9]：' choice
     case "$choice" in
-      1) (install_warp) || true; pause ;;
+      1) run_mutation install_warp || true; pause ;;
       2) show_warp_status; (warp_trace) || true; pause ;;
       3)
         read -r -p '确认让全部协议的公网 TCP 流量通过 WARP？[y/N] ' answer
-        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then (set_warp_policy all) || true; fi
+        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then (run_mutation set_warp_policy all) || true; fi
         pause
         ;;
       4)
         read -r -p '域名规则，逗号分隔 [geosite:netflix,domain:openai.com,domain:chatgpt.com]：' domains
-        (set_warp_policy selective "${domains:-geosite:netflix,domain:openai.com,domain:chatgpt.com}") || true
+        (run_mutation set_warp_policy selective "${domains:-geosite:netflix,domain:openai.com,domain:chatgpt.com}") || true
         pause
         ;;
       5) (warp_ip_strategy_menu) || true; pause ;;
       6) (check_warp_services) || true; pause ;;
-      7) (disable_warp_policy) || true; pause ;;
-      8) (repair_warp) || true; pause ;;
+      7) run_mutation disable_warp_policy || true; pause ;;
+      8) run_mutation repair_warp || true; pause ;;
       9)
         read -r -p '确认卸载 WARP 并恢复原生出口？[y/N] ' answer
-        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then (uninstall_warp) || true; fi
+        if [[ ${answer,,} == y || ${answer,,} == yes ]]; then run_mutation uninstall_warp || true; fi
         pause
         ;;
       0) return ;;
@@ -2771,19 +2952,19 @@ warp_command() {
   local action=${1:-menu}
   case "$action" in
     menu) warp_menu ;;
-    install) install_warp ;;
+    install) run_mutation install_warp ;;
     status) show_warp_status ;;
     test) warp_trace ;;
     diagnose) warp_connectivity_diagnostics ;;
     check) check_warp_services ;;
-    repair) repair_warp ;;
-    ipv4) set_warp_ip_strategy UseIPv4 ;;
-    ipv6) set_warp_ip_strategy UseIPv6 ;;
-    dual) set_warp_ip_strategy UseIPv4v6 ;;
-    selective) [[ -n ${2:-} ]] || die "用法：v2ray warp selective <逗号分隔的域名规则>"; set_warp_policy selective "$2" ;;
-    all) set_warp_policy all ;;
-    off) disable_warp_policy ;;
-    uninstall) uninstall_warp ;;
+    repair) run_mutation repair_warp ;;
+    ipv4) run_mutation set_warp_ip_strategy UseIPv4 ;;
+    ipv6) run_mutation set_warp_ip_strategy UseIPv6 ;;
+    dual) run_mutation set_warp_ip_strategy UseIPv4v6 ;;
+    selective) [[ -n ${2:-} ]] || die "用法：v2ray warp selective <逗号分隔的域名规则>"; run_mutation set_warp_policy selective "$2" ;;
+    all) run_mutation set_warp_policy all ;;
+    off) run_mutation disable_warp_policy ;;
+    uninstall) run_mutation uninstall_warp ;;
     *) die "未知 WARP 操作：$action" ;;
   esac
 }
@@ -2803,6 +2984,14 @@ doctor() {
     ((failures+=1))
   fi
   if systemctl is-active --quiet "$SERVICE_NAME"; then green "[通过] xray.service 正在运行"; else red "[失败] xray.service 未运行"; ((failures+=1)); fi
+
+  if systemctl is-active --quiet caddy; then
+    if check_caddy_renewal_compatibility; then
+      green "[通过] 未发现 Caddy 与 Certbot standalone 的端口冲突配置"
+    else
+      ((failures+=1))
+    fi
+  fi
 
   if [[ -r $WARP_STATE_FILE ]]; then
     if warp_proxy_ready; then
@@ -2960,8 +3149,11 @@ write_data_schema_marker() (
   mv -f -- "$temporary" "$state_file"
 )
 
-migrate_project_state() {
-  local before after node_file credential domain upstream path has_tls_xhttp=0
+migrate_project_state() (
+  local before after node_file credential domain upstream path has_tls_xhttp=0 was_active=0
+  local migration_dir
+  migration_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$migration_dir"' EXIT
   local -a extra_credentials
   [[ -d $NODES_DIR ]] || { green "项目脚本已更新；当前没有需要迁移的入站状态。"; return 0; }
   compgen -G "$NODES_DIR/*.env" >/dev/null || {
@@ -2969,7 +3161,9 @@ migrate_project_state() {
     return 0
   }
   [[ -r $CONFIG_FILE && -x $XRAY_BIN ]] || die "更新后迁移需要现有 Xray 配置和内核。"
-  before=$(config_connection_fingerprint "$CONFIG_FILE")
+  systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
+  cp "$CONFIG_FILE" "$migration_dir/before.json" || return 1
+  before=$(migration_connection_fingerprint "$CONFIG_FILE")
   create_backup
   [[ -n ${LAST_BACKUP:-} ]] || die "无法创建更新前配置备份，已停止迁移。"
 
@@ -3008,26 +3202,31 @@ migrate_project_state() {
   rebuild_config_from_nodes || {
     restore_archive "$LAST_BACKUP"; die "更新后配置重建失败，已恢复更新前配置。"
   }
-  after=$(config_connection_fingerprint "$CONFIG_FILE")
-  if [[ $before != "$after" && $has_tls_xhttp != 1 ]]; then
+  after=$(migration_connection_fingerprint "$CONFIG_FILE")
+  if [[ $before != "$after" ]]; then
     restore_archive "$LAST_BACKUP"
     die "迁移导致连接参数发生非预期变化，已恢复原配置和原链接。"
   fi
-  if (( has_tls_xhttp )); then
+  if (( was_active )); then
     restart_checked || {
       restore_archive "$LAST_BACKUP"
       restart_checked || true
-      die "XHTTP h2c 迁移后 Xray 启动失败，已恢复旧配置。"
+      die "迁移后 Xray 启动失败，已恢复旧配置。"
     }
+  fi
+  if (( has_tls_xhttp )); then
     while IFS= read -r domain; do
       [[ -n $domain ]] || continue
       if command -v caddy >/dev/null 2>&1 && [[ -f $CADDY_SITE_DIR/$domain.caddy ]]; then
         IFS=$'\t' read -r upstream path < <(find_caddy_xray_defaults "$domain")
         if ! configure_caddy_site xray "$domain" "$upstream" "$path"; then
-          yellow "Xray 已迁移到 h2c，但 $domain 的 Caddy 路由未能自动更新；请运行 v2ray caddy 后选择 Xray 路径反代。"
+          die "迁移失败：$domain 的 Caddy 路由同步失败，正在恢复升级前配置。"
         fi
       else
-        yellow "$domain 的 XHTTP 后端已迁移为本机 h2c；请运行 v2ray caddy 后选择 Xray 路径反代。"
+        if jq -e 'any(.inbounds[]; .protocol == "vless" and .streamSettings.network == "xhttp" and .streamSettings.security == "tls")' "$migration_dir/before.json" >/dev/null; then
+          die "迁移失败：$domain 缺少 Caddy 入口，不能移除现有 TLS 监听。"
+        fi
+        yellow "$domain 尚未配置 Caddy 入口；本次不改变其客户端参数。"
       fi
     done < <(for node_file in "$NODES_DIR"/*.env; do
       [[ -f $node_file ]] || continue
@@ -3037,8 +3236,9 @@ migrate_project_state() {
       [[ $PROFILE == vless-tls-xhttp ]] && printf '%s\n' "$SERVER_NAME"
     done | sort -u)
   fi
-  green "项目数据已迁移到版本 $DATA_SCHEMA_VERSION；现有链接参数保持不变。"
-}
+  rm -rf -- "$migration_dir"
+  green "项目数据已迁移到版本 $DATA_SCHEMA_VERSION；已核验各入站连接参数。"
+)
 
 ensure_project_state_current() {
   local command_name=${1:-menu} node_file schema
@@ -3049,7 +3249,7 @@ ensure_project_state_current() {
   schema=$(awk -F= '/^DATA_SCHEMA=/{print $2; exit}' "$node_file")
   [[ $schema == "$DATA_SCHEMA_VERSION" ]] && return 0
   yellow "检测到旧版项目数据，正在自动迁移并保护现有链接…"
-  migrate_project_state
+  run_mutation migrate_project_state
 }
 
 update_manager() (
@@ -3111,7 +3311,7 @@ runtime_menu() {
     printf '%s\n' '1) 启动服务' '2) 停止服务' '3) 重启服务' '4) 查看状态' '5) 查看日志' '0) 返回主菜单'
     read -r -p '请选择 [0-5]:' choice
     case "$choice" in
-      1) service_action start; pause ;; 2) service_action stop; pause ;; 3) service_action restart; pause ;;
+      1) run_mutation service_action start; pause ;; 2) run_mutation service_action stop; pause ;; 3) run_mutation service_action restart; pause ;;
       4) show_status; pause ;; 5) show_logs; pause ;; 0) return ;; *) yellow "无效选择。"; pause ;;
     esac
   done
@@ -3127,9 +3327,9 @@ maintenance_menu() {
       '10) 查看项目信息' '0) 返回主菜单'
     read -r -p '请选择 [0-10]:' choice
     case "$choice" in
-      1) update_core; pause ;; 2) update_manager; pause ;; 3) doctor || true; pause ;;
-      4) open_enabled_inbound_ports; pause ;; 5) manual_backup; pause ;; 6) restore_latest; pause ;;
-      7) rotate_reality_keys; pause ;; 8) rollback_manager; pause ;; 9) route_test_menu ;;
+      1) run_mutation update_core; pause ;; 2) run_mutation update_manager; pause ;; 3) doctor || true; pause ;;
+      4) run_mutation open_enabled_inbound_ports; pause ;; 5) run_mutation manual_backup; pause ;; 6) run_mutation restore_latest; pause ;;
+      7) run_mutation rotate_reality_keys; pause ;; 8) run_mutation rollback_manager; pause ;; 9) route_test_menu ;;
       10) show_about; pause ;; 0) return ;; *) yellow "无效选择。"; pause ;;
     esac
   done
@@ -3195,14 +3395,14 @@ menu() {
     ui_box_bottom
     read -r -p '请选择 [0-8]：' choice
     case "$choice" in
-      1) install_xray; pause ;;
+      1) run_mutation install_xray; pause ;;
       2) manage_inbounds_menu ;;
       3) export_menu ;;
       4) runtime_menu ;;
       5) caddy_menu ;;
       6) warp_menu ;;
       7) maintenance_menu ;;
-      8) uninstall_xray; pause ;;
+      8) run_mutation uninstall_xray; pause ;;
       0) exit 0 ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -3210,37 +3410,38 @@ menu() {
 }
 
 main() {
-  if [[ ${1:-} != migrate || ${V2M_INTERNAL_MIGRATION:-0} != 1 ]]; then require_root; fi
+  require_root
+  if [[ ${1:-} == __mutation ]]; then shift; mutation_entry "$@"; return; fi
   ensure_project_state_current "${1:-menu}"
   case "${1:-menu}" in
     menu) menu ;;
-    install) install_xray ;;
-    add) add_inbound ;;
+    install) run_mutation install_xray ;;
+    add) run_mutation add_inbound ;;
     inbounds) list_inbounds ;;
     links) show_all_links ;;
-    firewall) open_enabled_inbound_ports ;;
+    firewall) run_mutation open_enabled_inbound_ports ;;
     info) show_info ;;
-    config|change) change_menu "${2:-}" ;;
+    config|change) run_mutation change_menu "${2:-}" ;;
     link) show_connection "${2:-}" "${3:-}" ;;
     users) users_command "${@:2}" ;;
     client) export_client "${2:-}" ;;
-    cert-refresh) refresh_tls_certificates "${2:-}" ;;
+    cert-refresh) run_mutation refresh_tls_certificates "${2:-}" ;;
     status) show_status ;;
-    start|stop|restart) service_action "$1" ;;
+    start|stop|restart) run_mutation service_action "$1" ;;
     log) show_logs ;;
     speedtest|speettest) run_speedtest ;;
     route) if [[ -n ${2:-} ]]; then route_latency_test "$2"; else route_test_menu; fi ;;
     caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
     warp) warp_command "${2:-menu}" "${3:-}" ;;
-    update) update_core ;;
-    upgrade|update.sh) update_manager ;;
-    migrate) migrate_project_state ;;
-    rollback.sh) rollback_manager ;;
-    rotate) rotate_reality_keys "${2:-}" ;;
-    backup) manual_backup ;;
-    restore) restore_latest ;;
+    update) run_mutation update_core ;;
+    upgrade|update.sh) run_mutation update_manager ;;
+    migrate) run_mutation migrate_project_state ;;
+    rollback.sh) run_mutation rollback_manager ;;
+    rotate) run_mutation rotate_reality_keys "${2:-}" ;;
+    backup) run_mutation manual_backup ;;
+    restore) run_mutation restore_latest ;;
     doctor) doctor ;;
-    uninstall) uninstall_xray ;;
+    uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
     help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install <域名> [portfolio|resume|default]|page-update <域名> [portfolio|resume|default]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;

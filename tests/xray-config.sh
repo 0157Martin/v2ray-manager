@@ -15,8 +15,11 @@ if [[ -n ${GITHUB_TOKEN:-} ]]; then
   api_headers+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
 fi
 
-tag=$(curl --fail --silent --show-error --location "${api_headers[@]}" \
-  https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
+tag=${XRAY_TEST_TAG:-}
+if [[ -z $tag ]]; then
+  tag=$(curl --fail --silent --show-error --location "${api_headers[@]}" \
+    https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name')
+fi
 [[ -n "$tag" && "$tag" != null ]]
 case "$(uname -s)" in
   MINGW*|MSYS*)
@@ -29,8 +32,13 @@ case "$(uname -s)" in
   *) printf 'Unsupported test host: %s\n' "$(uname -s)" >&2; exit 1 ;;
 esac
 url="https://github.com/XTLS/Xray-core/releases/download/${tag}/${asset}"
-curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip" "$url"
-curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip.dgst" "${url}.dgst"
+if [[ -n ${XRAY_TEST_ARCHIVE:-} ]]; then
+  cp "$XRAY_TEST_ARCHIVE" "$temporary_dir/xray.zip"
+  cp "${XRAY_TEST_ARCHIVE}.dgst" "$temporary_dir/xray.zip.dgst"
+else
+  curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip" "$url"
+  curl --fail --silent --show-error --location --retry 3 -o "$temporary_dir/xray.zip.dgst" "${url}.dgst"
+fi
 expected=$(awk -F '= ' '/256=/ {gsub(/\r/, "", $2); print $2; exit}' "$temporary_dir/xray.zip.dgst")
 actual=$(sha256sum "$temporary_dir/xray.zip" | awk '{print $1}')
 [[ -n "$expected" && "${expected,,}" == "$actual" ]]
@@ -121,3 +129,4 @@ jq -e '.routing.rules[] | select(.outboundTag == "warp") | .network == "tcp"' "$
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/warp-all.json"
 
 printf 'Xray %s accepted the empty state, all protocol profiles, combined inbounds, and shared WARP routing.\n' "$tag"
+"${PYTHON:-python3}" "$repo_dir/tests/private-routing.py" "$temporary_dir" "$core_binary"

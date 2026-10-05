@@ -45,6 +45,15 @@ flowchart LR
 
 ## 功能概览
 
+**5.7.2 运维变更：**代理用户默认不能访问服务器回环、私网或链路本地目标，包括本机 Caddy
+管理端口；此策略对原生出口和 WARP 都生效，`warp off` 不会解除隔离。已有入站会迁移到数据
+版本 4，原先运行的 Xray 会重启以应用策略；原先停止的服务保持停止。确实需要内网代理的部署
+应先评估访问白名单，不应直接移除全部保护规则。
+
+配置修改、证书部署、升级和恢复使用同一进程间写锁；菜单空闲时不占锁。修改失败会恢复
+Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出保留现场的位置。此事务不回滚
+系统软件包安装、外部 ACME 账户或 WARP 设备注册，也不能保证 SIGKILL/断电后的自动恢复。
+
 - 安装或更新 Xray Core，并校验官方发布包的 SHA-256 摘要。
 - 交互选择 12 种协议组合；安装过程不会静默创建或输出默认链接。
 - 管理多个入站，包括添加、修改、启用、停用、删除和批量导出。
@@ -200,6 +209,13 @@ Cloudflare 官方参考：
 证书和私钥；未提供时，脚本先查找匹配证书，找不到才使用 Certbot。自动申请要求域名指向
 本机且公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认 standalone 模式要求
 本机 80 空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html` 使用 webroot 验证。
+
+如果先申请 standalone 证书、后安装 Caddy，后续 Certbot 续期会与 Caddy 争用 TCP 80。
+管理器现在会检查 `/etc/letsencrypt/renewal/*.conf` 并拒绝这种组合。请先使用受支持的 Certbot
+流程把相关证书迁移为 DNS 验证，或在已能提供 HTTP challenge 的网站上配置 webroot，并执行
+`certbot renew --dry-run`；仅在当前 shell 设置 `V2M_ACME_WEBROOT` 不会改变已有证书的续期配置。
+对已经存在的 Caddy/standalone 组合，`v2ray doctor` 会报告冲突；管理器不会擅自停止网站或修改
+外部证书账户来完成迁移。
 
 ## 一行安装
 
@@ -387,9 +403,9 @@ XHTTP 客户端链接固定使用域名、443、TLS、ALPN h2、相同 Host/Path
 Caddy 入口，只会使用不同的 UUID 或密码。若两个入站使用相同路径，管理器会拒绝覆盖并要求先
 修改其中一个路径。
 
-从 5.7.0 起，项目升级会把已有 VLESS-XHTTP-TLS 后端迁移为本机 h2c，并在已有 Caddy
-站点文件存在时自动同步路由。若服务器尚未配置该站点，升级会提示运行 `v2ray caddy` 并选择
-“同步 Xray XHTTP/WS 路径反代”；完成前 XHTTP 链接不会经过 Caddy 到达内部端口。
+项目升级会把旧 VLESS-XHTTP-TLS 后端迁移为本机 h2c，并同步已有 Caddy 站点。从 5.7.2 起，
+Caddy 同步失败会使整个迁移失败并恢复配置；旧 TLS 监听缺少必要的 Caddy 入口时也会拒绝迁移。
+本来已经是 h2c、但还没有 Caddy 的新入站仍需手动配置入口，不会因此被声明为已完成连通验证。
 
 ### Caddy 与 XHTTP 验证流程
 
@@ -679,7 +695,7 @@ v2ray warp diagnose
 建立；此时 `127.0.0.1:40000` 不监听是结果，并不是需要开放公网入站 40000。
 
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
-访问内网时绕过边界，`geoip:private` 始终使用原生直连；这里的“全部”指所有协议产生的
+访问内网时绕过边界，本机和私有目标始终拒绝；这里的“全部”指所有协议产生的
 公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
 QUIC 或其他 UDP 连接被错误送入代理后超时。运行 `v2ray warp off` 可让全部协议恢复原生出口，`v2ray warp uninstall`
 会先恢复原生出口再移除 WARP 客户端。

@@ -208,7 +208,7 @@ case "$scenario" in
     write_data_schema_marker "$CONFIG_DIR/new-state.env"
     cmp "$sandbox/expected-state" "$CONFIG_DIR/new-state.env"
     write_data_schema_marker "$CONFIG_DIR/schema-only.env"
-    grep -qx 'DATA_SCHEMA=3' "$CONFIG_DIR/schema-only.env"
+    grep -qx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$CONFIG_DIR/schema-only.env"
     assert_private "$CONFIG_DIR/schema-only.env" 600
     [[ -z $(find "$CONFIG_DIR" -name '*.next' -o -name 'new-state.env.*' -o -name 'schema-only.env.*') ]]
     ;;

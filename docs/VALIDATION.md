@@ -1,5 +1,22 @@
 # Validation status
 
+## 5.7.2 audit fixes — 2026-10-05
+
+Host: Windows / Git Bash; ShellCheck; Xray 26.3.27 Windows amd64.
+
+- Bash syntax/layout, ShellCheck, unit/bootstrap/editing/recovery tests are covered by the local verification script.
+- New `tests/hardening.sh` exercises the real mutation child-process boundary with sandboxed paths and mocked service operations: WARP failure, certificate copy/preflight failure, TERM interruption, Caddy migration failure, unrelated-node drift and standalone renewal conflict.
+- New `tests/private-routing.py` ran real Xray: loopback IPv4, IPv4-mapped IPv6, localhost and a domain mapped to a private IP were blocked. A separate exact-port positive control reached the same local HTTP server.
+- All 12 server/client profiles, link-field comparisons, combined inbounds and WARP routing were accepted by the real core. The REALITY handshake/traffic portion was explicitly skipped with `CONFIGURATION_ONLY=1`; the independent private-routing traffic test still ran.
+- Real flock concurrency and inherited-lock tests are present in `hardening.sh` and wired into Ubuntu CI, but explicitly skipped on Windows. They are not claimed as locally passed. Linux ownership/systemd and live ACME issuance/renewal were not exercised here.
+
+Reproduce against a selected core release with `XRAY_TEST_TAG=v26.3.27 bash tests/xray-config.sh`.
+The default still resolves the latest stable release. `XRAY_TEST_ARCHIVE` optionally reuses a downloaded
+ZIP and its adjacent `.dgst`; the same SHA-256 verification is always applied. CI uses the full REALITY
+traffic test by default. This validation does not establish production Caddy/CDN/client interoperability.
+
+## Earlier validation record
+
 Host: Windows, Git Bash, ShellCheck 0.11.0, Xray 26.3.27 (Windows amd64).
 
 Passed:

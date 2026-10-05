@@ -41,6 +41,7 @@ jobs:
           bash tests/recovery.sh
           bash tests/bootstrap.sh
           bash tests/editing.sh
+          bash tests/hardening.sh
 
   xray-config:
     runs-on: ubuntu-24.04

@@ -43,6 +43,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   "$repo_dir/v2ray.sh" > "$sandbox/manager.sh"
 # shellcheck disable=SC1091
 source "$sandbox/manager.sh"
+# These tests isolate individual functions. Transaction/re-exec behavior is
+# exercised separately in hardening.sh with a fully sandboxed child process.
+run_mutation() { "$@"; }
 mkdir -p "$BIN_DIR" "$ASSET_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
 
 install_dependencies() { :; }
@@ -269,7 +272,8 @@ case "$scenario" in
     esac
     ;;
   manager-update|manager-invalid|manager-rollback)
-    cp "$repo_dir/v2ray.sh" "$MANAGER_BIN"
+    # shellcheck disable=SC2016
+    sed '/^if \[\[ "${BASH_SOURCE\[0\]}"/i require_root() { :; }\nrun_mutation() { "$@"; }' "$sandbox/manager.sh" > "$MANAGER_BIN"
     cp "$MANAGER_BIN" "$sandbox/original"
     curl() {
       local output=

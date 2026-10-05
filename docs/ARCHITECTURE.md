@@ -13,12 +13,29 @@ modules. Supporting directories have separate responsibilities:
 
 Configuration changes follow this sequence:
 
-1. Back up the current configuration and manager state.
-2. Render a new configuration to a temporary file.
-3. Validate it with the installed Xray Core.
-4. Install it atomically with restrictive ownership and permissions.
-5. Restart the service.
-6. Restore the backup automatically if restart fails.
+1. Start a fresh mutation process and acquire the shared flock before reading mutable state.
+2. Snapshot the complete configuration directory, Caddy main/site files, unit file and running states.
+3. Stage certificate/key pairs and render a candidate configuration.
+4. Validate it with the installed Xray Core.
+5. Publish JSON through a same-directory rename with restrictive ownership and permissions.
+6. Restart the service and synchronize any migration-dependent Caddy routes.
+7. Restore the snapshot and original running states on failure or INT/TERM. Retain the snapshot if recovery fails.
+
+Interactive menus invoke the same fresh-process boundary as CLI commands, preventing an enclosing
+`|| true` from suppressing Bash errexit inside a mutation. Idle menus do not hold the lock. The
+manager-update/migration subprocess inherits FD 9; its descriptor path is checked before reusing
+the lock. The snapshot transaction covers managed configuration, not apt packages, ACME accounts,
+WARP registrations or arbitrary external effects. SIGKILL and power loss cannot execute EXIT traps.
+
+Routing defaults deny loopback, private, link-local, multicast and selected address-translation
+ranges before selecting direct/WARP. IPOnDemand includes resolved domain destinations in the
+policy. This is an application routing boundary, not a replacement for operating-system isolation
+or separately protecting management endpoints. No private-network access whitelist is exposed yet.
+
+Migration compares per-tag canonical connection fields. Only VLESS TLS-XHTTP's server-side TLS
+removal and loopback binding are normalized; authentication, ports, paths and other inbounds remain
+strictly compared. A Caddy synchronization failure is fatal. Standalone Certbot renewal configurations
+must be migrated before Caddy can take port 80.
 
 Core downloads follow Xray's stable GitHub Release endpoint. Both the archive and its `.dgst`
 file are downloaded, and the SHA-256 digest is verified before extraction.
