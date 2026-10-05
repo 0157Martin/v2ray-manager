@@ -13,7 +13,7 @@ if [[ ${1:-} != --case ]]; then
     update-success update-stopped update-rollback partial-copy rollback-failure \
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
-    tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot \
+    tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot acme-caddy-webroot \
     link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback \
     caddy-default-page caddy-page-write-failure caddy-page-rollback caddy-menu-invalid caddy-download-failure; do
     mkdir "$sandbox/$scenario"
@@ -220,18 +220,27 @@ case "$scenario" in
         ;;
     esac
     ;;
-  acme-webroot)
+  acme-webroot|acme-caddy-webroot)
     mkdir -p "$sandbox/web root"
-    V2M_ACME_WEBROOT="$sandbox/web root"
     SERVER_NAME=example.com
     getent() { return 0; }
-    ss() { fail 'webroot mode must not require port 80 to be unused'; }
     open_local_firewall_port() { :; }
-    systemctl() { :; }
     certbot() { printf '%s\n' "$@" > "$sandbox/certbot-args"; }
+    if [[ $scenario == acme-webroot ]]; then
+      V2M_ACME_WEBROOT="$sandbox/web root"
+      ss() { fail 'explicit webroot mode must not require port 80 to be unused'; }
+      systemctl() { :; }
+    else
+      unset V2M_ACME_WEBROOT
+      mkdir -p "$CADDY_SITE_DIR" "$CADDY_WEB_ROOT/$SERVER_NAME"
+      printf '%s {\n\troot * %s/%s\n\tfile_server\n}\n' "$SERVER_NAME" "$CADDY_WEB_ROOT" "$SERVER_NAME" > "$CADDY_SITE_DIR/$SERVER_NAME.caddy"
+      systemctl() { [[ $1 == is-active && $3 == caddy ]] || [[ $1 == enable ]]; }
+      ss() { printf '%s\n' 'LISTEN 0 4096 *:80'; }
+    fi
     issue_tls_material >/dev/null
     grep -Fx -- --webroot "$sandbox/certbot-args" >/dev/null || fail 'webroot mode missing'
-    grep -Fx -- "$V2M_ACME_WEBROOT" "$sandbox/certbot-args" >/dev/null || fail 'webroot path split'
+    if [[ $scenario == acme-webroot ]]; then expected_webroot=$V2M_ACME_WEBROOT; else expected_webroot="$CADDY_WEB_ROOT/$SERVER_NAME"; fi
+    grep -Fx -- "$expected_webroot" "$sandbox/certbot-args" >/dev/null || fail 'webroot path split'
     if grep -Fx -- --standalone "$sandbox/certbot-args" >/dev/null; then fail 'standalone used with webroot'; fi
     ;;
   healthy) service_healthy ;;

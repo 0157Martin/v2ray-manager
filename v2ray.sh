@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.6"
+readonly MANAGER_VERSION="5.7.7"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -706,12 +706,20 @@ refresh_tls_certificates() (
 )
 
 issue_tls_material() {
+  local webroot= site_file="$CADDY_SITE_DIR/$SERVER_NAME.caddy"
   local -a challenge_args=(--standalone)
   if [[ -n ${V2M_ACME_WEBROOT:-} ]]; then
     [[ $V2M_ACME_WEBROOT == /* && -d $V2M_ACME_WEBROOT ]] || die "V2M_ACME_WEBROOT 必须是已有网站根目录的绝对路径。"
-    challenge_args=(--webroot --webroot-path "$V2M_ACME_WEBROOT")
+    webroot=$V2M_ACME_WEBROOT
+  elif systemctl is-active --quiet caddy && [[ -f $site_file && -d $CADDY_WEB_ROOT/$SERVER_NAME ]] &&
+       grep -Fq "root * $CADDY_WEB_ROOT/$SERVER_NAME" "$site_file"; then
+    webroot="$CADDY_WEB_ROOT/$SERVER_NAME"
+    green "检测到由本项目管理的 Caddy 站点，使用 webroot 申请证书：$webroot"
+  fi
+  if [[ -n $webroot ]]; then
+    challenge_args=(--webroot --webroot-path "$webroot")
   else
-    [[ -z $(ss -H -lnt 'sport = :80') ]] || die "TCP 80 已占用；设置 V2M_ACME_WEBROOT 使用现有网站根目录申请证书，或提供已有证书。"
+    [[ -z $(ss -H -lnt 'sport = :80') ]] || die "TCP 80 已占用且未确认当前域名的 Caddy webroot；请先用 v2ray caddy 配置该域名、设置 V2M_ACME_WEBROOT，或提供已有证书。"
   fi
   getent ahosts "$SERVER_NAME" >/dev/null || die "域名无法解析，请先将 $SERVER_NAME 解析到本服务器。"
   if ! command -v certbot >/dev/null 2>&1; then

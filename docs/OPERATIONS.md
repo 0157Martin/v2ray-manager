@@ -57,7 +57,7 @@ and start the service. Do not remove that directory until recovery succeeds.
 Explicit `V2M_CERT_FILE` and `V2M_KEY_FILE` take precedence. Otherwise, the manager looks for a valid
 matching certificate before using Certbot's standalone HTTP challenge. Set `V2M_SERVER_NAME` to a
 domain you control; its DNS must point to this server and public TCP 80 must be reachable.
-Standalone mode requires port 80 to be free. For an existing web server set `V2M_ACME_WEBROOT`
+Standalone mode requires port 80 to be free. A domain already managed by this project's Caddy site automatically uses its verified webroot. For another existing web server set `V2M_ACME_WEBROOT`
 to its absolute document-root path and allow HTTP access to `.well-known/acme-challenge/`.
 The manager does not stop an existing web server. Automatic issuance accepts Let's Encrypt's terms;
 `V2M_ACME_EMAIL` optionally supplies the account email. Certbot renewals use a deploy hook to copy
