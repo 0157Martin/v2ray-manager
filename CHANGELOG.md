@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.7.8
+
+- 新增 XHTTP/WS TLS 入站后，如果同域名已有本项目管理的 Caddy 站点，自动合并新 Path 路由；Caddy 校验或 reload 失败时由外层事务恢复新增前状态。
+
 ## 5.7.7
 
 - 新增 TLS 入站时，如果 TCP 80 已由本项目管理的 Caddy 站点占用，自动验证域名站点文件和根目录后改用 Certbot webroot 申请证书；无法确认归属时仍拒绝抢占端口。

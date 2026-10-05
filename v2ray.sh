@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.7"
+readonly MANAGER_VERSION="5.7.8"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -706,14 +706,12 @@ refresh_tls_certificates() (
 )
 
 issue_tls_material() {
-  local webroot='' site_file="$CADDY_SITE_DIR/$SERVER_NAME.caddy"
+  local webroot=''
   local -a challenge_args=(--standalone)
   if [[ -n ${V2M_ACME_WEBROOT:-} ]]; then
     [[ $V2M_ACME_WEBROOT == /* && -d $V2M_ACME_WEBROOT ]] || die "V2M_ACME_WEBROOT 必须是已有网站根目录的绝对路径。"
     webroot=$V2M_ACME_WEBROOT
-  elif systemctl is-active --quiet caddy && [[ -f $site_file && -d $CADDY_WEB_ROOT/$SERVER_NAME ]] &&
-       grep -Fq "root * $CADDY_WEB_ROOT/$SERVER_NAME" "$site_file"; then
-    webroot="$CADDY_WEB_ROOT/$SERVER_NAME"
+  elif webroot=$(managed_caddy_webroot "$SERVER_NAME"); then
     green "检测到由本项目管理的 Caddy 站点，使用 webroot 申请证书：$webroot"
   fi
   if [[ -n $webroot ]]; then
@@ -736,6 +734,15 @@ issue_tls_material() {
   CERT_SOURCE="/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem"
   KEY_SOURCE="/etc/letsencrypt/live/$SERVER_NAME/privkey.pem"
   systemctl enable --now certbot.timer
+}
+
+managed_caddy_webroot() {
+  local domain=$1 site_file="$CADDY_SITE_DIR/$1.caddy" webroot="$CADDY_WEB_ROOT/$1"
+  valid_server_name "$domain" || return 1
+  systemctl is-active --quiet caddy || return 1
+  [[ -f $site_file && -d $webroot ]] || return 1
+  grep -Fq "root * $webroot" "$site_file" || return 1
+  printf '%s\n' "$webroot"
 }
 
 prepare_tls_material() {
@@ -1606,9 +1613,22 @@ add_inbound() {
   save_current_node "$NODES_DIR/$node_id.env"
   rebuild_or_restore
   restart_or_rollback
+  sync_managed_caddy_route || die "新增入站后同步 Caddy 路由失败，正在恢复修改前状态。"
   green "已添加入站：$node_id"
   open_enabled_inbound_ports
   show_connection_loaded "$CONFIG_FILE"
+}
+
+sync_managed_caddy_route() {
+  case "$PROFILE" in
+    vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws) ;;
+    *) return 0 ;;
+  esac
+  if ! managed_caddy_webroot "$SERVER_NAME" >/dev/null; then
+    yellow "尚未发现由本项目管理的 $SERVER_NAME Caddy 站点；请使用 v2ray caddy 同步 $PATH_VALUE 路由。"
+    return 0
+  fi
+  configure_caddy_site xray "$SERVER_NAME" "127.0.0.1:$PORT" "$PATH_VALUE"
 }
 
 show_all_links() (

@@ -236,6 +236,7 @@ case "$scenario" in
       printf '%s {\n\troot * %s/%s\n\tfile_server\n}\n' "$SERVER_NAME" "$CADDY_WEB_ROOT" "$SERVER_NAME" > "$CADDY_SITE_DIR/$SERVER_NAME.caddy"
       systemctl() { [[ $1 == is-active && $3 == caddy ]] || [[ $1 == enable ]]; }
       ss() { printf '%s\n' 'LISTEN 0 4096 *:80'; }
+      [[ $(managed_caddy_webroot "$SERVER_NAME") == "$CADDY_WEB_ROOT/$SERVER_NAME" ]] || fail 'managed Caddy webroot was not detected'
     fi
     issue_tls_material >/dev/null
     grep -Fx -- --webroot "$sandbox/certbot-args" >/dev/null || fail 'webroot mode missing'
