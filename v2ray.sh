@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.4"
+readonly MANAGER_VERSION="5.7.5"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -3081,8 +3081,18 @@ show_info() {
   load_state
   printf '作者：%s\n' "$AUTHOR"
   printf '管理器版本：%s\n' "$MANAGER_VERSION"
-  printf '内核版本：%s\n' "$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '不可用')"
+  printf '内核版本：%s\n' "$(command_version_line "$XRAY_BIN" '不可用')"
   show_connection
+}
+
+command_version_line() {
+  local executable=$1 fallback=${2:-不可用} output
+  [[ -x $executable ]] || { printf '%s\n' "$fallback"; return 0; }
+  if ! output=$("$executable" version 2>/dev/null) || [[ -z $output ]]; then
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  printf '%s\n' "${output%%$'\n'*}"
 }
 
 update_core() (
@@ -3368,14 +3378,14 @@ show_help() {
 show_about() {
   printf '\n%s\n' "----------- ${APP_NAME} -----------"
   printf '作者: %s\n版本: %s\n内核: %s\n协议: VLESS + REALITY/TLS + RAW/XHTTP/gRPC/WebSocket\n仓库: https://github.com/0157Martin/v2ray-manager\n\n' \
-    "$AUTHOR" "$MANAGER_VERSION" "$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')"
+    "$AUTHOR" "$MANAGER_VERSION" "$(command_version_line "$XRAY_BIN" '未安装')"
 }
 
 menu() {
   while :; do
     clear || true
     local core_version service_state caddy_state active_nodes disabled_nodes install_label
-    core_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 || printf '未安装')
+    core_version=$(command_version_line "$XRAY_BIN" '未安装')
     if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi
     if systemctl is-active --quiet caddy; then caddy_state='running'; else caddy_state='stopped'; fi
     if [[ -d $NODES_DIR ]]; then

@@ -9,6 +9,18 @@ source "$repo_dir/v2ray.sh"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
+mock_version_bin=$(mktemp)
+cat > "$mock_version_bin" <<'EOF'
+#!/usr/bin/env bash
+printf 'Xray test-version\nadditional details\n'
+EOF
+chmod +x "$mock_version_bin"
+[[ $(command_version_line "$mock_version_bin" '未安装') == 'Xray test-version' ]] || fail 'multiline version output produced a false unavailable state'
+printf '#!/usr/bin/env bash\nexit 1\n' > "$mock_version_bin"
+[[ $(command_version_line "$mock_version_bin" '不可用') == '不可用' ]] || fail 'failed version command did not use fallback'
+rm -f "$mock_version_bin"
+[[ $(command_version_line "$mock_version_bin" '未安装') == '未安装' ]] || fail 'missing executable did not use fallback'
+
 valid_port 1 || fail "port 1 should be valid"
 valid_port 65535 || fail "port 65535 should be valid"
 ! valid_port 0 || fail "port 0 should be invalid"
