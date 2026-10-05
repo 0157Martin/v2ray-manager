@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 5.7.4
+
+- 修复 Xray Core 更新成功后，版本输出被 `head` 提前关闭而在 `pipefail` 下误判失败并触发事务回滚的问题。
+
 ## 5.7.3
 
 - 已运行的 Caddy 允许在项目升级时同步 XHTTP 路由；Certbot standalone 冲突继续由 `v2ray doctor` 报告，但只阻止会新启动 Caddy 并占用 TCP 80 的操作。

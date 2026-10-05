@@ -115,7 +115,7 @@ fetch_core() {
   mkdir "$1/core"
   cat > "$1/core/xray" <<'CORE'
 #!/usr/bin/env bash
-if [[ $1 == version ]]; then printf 'candidate\n'; exit; fi
+if [[ $1 == version ]]; then printf 'candidate\nadditional version details\n'; exit; fi
 [[ ${CANDIDATE_INVALID:-0} != 1 ]]
 CORE
   chmod +x "$1/core/xray"
@@ -256,7 +256,9 @@ case "$scenario" in
     bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core' > "$sandbox/output" 2>&1 || status=$?
     case "$scenario" in
       update-success|update-stopped)
-        [[ $status == 0 && $("$XRAY_BIN" version) == candidate ]] || { cat "$sandbox/output"; fail 'update did not succeed'; }
+        [[ $status == 0 && $("$XRAY_BIN" version | head -n 1) == candidate ]] || { cat "$sandbox/output"; fail 'update did not succeed'; }
+        grep -Fxq 'candidate' "$sandbox/output" || fail 'updated version was not reported'
+        if grep -Fq 'additional version details' "$sandbox/output"; then fail 'version report was not limited to one line'; fi
         [[ $(cat "$ASSET_DIR/geoip.dat") == new-geoip ]] || fail 'new GeoData missing'
         if [[ $scenario == update-stopped ]]; then [[ ! -e $sandbox/service-actions ]] || fail 'stopped service was started'; fi
         ;;

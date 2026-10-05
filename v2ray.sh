@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.3"
+readonly MANAGER_VERSION="5.7.4"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -3088,7 +3088,7 @@ show_info() {
 update_core() (
   set -Eeuo pipefail
   [[ -x "$XRAY_BIN" && -r "$CONFIG_FILE" ]] || die "尚未安装。"
-  local transaction changed=0 committed=0 was_active=0
+  local transaction version_output changed=0 committed=0 was_active=0
   install_dependencies
   install -d -m 700 "$BACKUP_DIR"
   transaction=$(mktemp -d "$BACKUP_DIR/core-update.XXXXXX")
@@ -3109,7 +3109,8 @@ update_core() (
   fi
   committed=1
   green "Xray Core 已更新；原先停止的服务会保持停止。"
-  "$XRAY_BIN" version | head -n 1
+  version_output=$("$XRAY_BIN" version)
+  printf '%s\n' "${version_output%%$'\n'*}"
 )
 
 # Called only by update_core's EXIT trap.
