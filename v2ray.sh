@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.0.2"
+readonly MANAGER_VERSION="6.0.3"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -3143,6 +3143,16 @@ command_version_line() {
   printf '%s\n' "${output%%$'\n'*}"
 }
 
+xray_version_short() {
+  local executable=${1:-$XRAY_BIN} fallback=${2:-未安装} line
+  line=$(command_version_line "$executable" "$fallback")
+  if [[ $line =~ ^Xray[[:space:]]+([^[:space:]]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf '%s\n' "$line"
+  fi
+}
+
 update_core() (
   set -Eeuo pipefail
   [[ -x "$XRAY_BIN" && -r "$CONFIG_FILE" ]] || die "尚未安装。"
@@ -3426,7 +3436,7 @@ menu() {
   while :; do
     clear || true
     local core_version service_state caddy_state active_nodes disabled_nodes install_label
-    core_version=$(command_version_line "$XRAY_BIN" '未安装')
+    core_version=$(xray_version_short)
     if systemctl is-active --quiet "$SERVICE_NAME"; then service_state='running'; else service_state='stopped'; fi
     if systemctl is-active --quiet caddy; then caddy_state='running'; else caddy_state='stopped'; fi
     if [[ -d $NODES_DIR ]]; then
