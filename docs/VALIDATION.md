@@ -1,5 +1,18 @@
 # Validation status
 
+## 6.0.0 architecture cleanup — 2026-10-06
+
+- Removed themed page downloads and their menu, mutation and recovery branches; generic placeholder
+  creation, write failure and existing-content preservation remain covered.
+- Link and native client JSON tests cover one shared entry-port policy for managed Caddy WebSocket,
+  direct WebSocket, explicit CDN override and TLS-XHTTP.
+- A regression test rejects a false managed-route match when the requested path and backend occur in
+  different Caddy matchers.
+- Ubuntu 24.04 CI passed ShellCheck, unit/bootstrap/editing/recovery/hardening tests and the complete
+  latest-stable Xray configuration matrix: [run 37419583252](https://github.com/0157Martin/v2ray-manager/actions/runs/37419583252).
+- Existing website preservation is established by sandboxed filesystem tests. Live Caddy reload,
+  public DNS/CDN behavior and production client interoperability still require deployment validation.
+
 ## 5.7.3 renewal-conflict scope fix — 2026-10-05
 
 - Regression coverage verifies that a standalone Certbot renewal configuration blocks a stopped/new
