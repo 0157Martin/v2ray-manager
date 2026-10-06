@@ -323,11 +323,13 @@ Caddy 不负责：
 
 ## 10. WARP 的作用和边界
 
-WARP 改变的是 Xray 到目标网站的出站路径。主项目只管理策略并调用后端，不内置具体隧道实现。
+WARP 改变的是 Xray 到目标网站的出站路径。`v2ray-manager` 是主干控制器，统一管理策略，并负责
+选择、下载、校验、调用、切换和回滚分支项目；主干不内置具体隧道实现。
 `warp-wireguard-manager` 提供 WGCF + WireProxy，`warp-masque-manager` 提供 Cloudflare 官方
 Linux 客户端 Local Proxy（优先 MASQUE，并测试官方客户端支持的 WireGuard 回退）。两者都向
 Xray 提供 `127.0.0.1:40000` SOCKS5，不接管服务器默认路由，因此不会主动改变 SSH、Caddy 和
-系统更新的出口。后端可以独立安装、验证、卸载和升级，不需要修改 Xray 主体代码。
+系统更新的出口。两个仓库属于主干控制的功能分支项目，并非 Git branch；它们各自拥有安装、
+验证、运行、修复和卸载命令，也可以脱离主干独立部署，不需要修改 Xray 主体代码。
 
 项目对全部入站协议统一应用 WARP 策略，可选择：
 

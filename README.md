@@ -638,7 +638,8 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 ## WARP 出站管理
 
 主菜单的“WARP 出站管理”对全部启用的 VLESS、VMess 和 Trojan 入站统一生效，不需要逐个
-选择协议。WARP 实现已拆成两个独立代码仓库，主项目只调用统一的本机 SOCKS5 契约：
+选择协议。在项目体系中，`v2ray-manager` 是主干控制器，负责选择、下载、校验、调用、切换和
+回滚功能分支项目。WARP 实现位于两个分支项目仓库，主干通过统一的本机 SOCKS5 契约控制它们：
 
 - [`warp-wireguard-manager`](https://github.com/0157Martin/warp-wireguard-manager)：WGCF + WireProxy，适合 MASQUE 受限的机房，默认推荐。
 - [`warp-masque-manager`](https://github.com/0157Martin/warp-masque-manager)：Cloudflare 官方客户端 Local Proxy；优先 MASQUE，失败时测试固定 IPv4/备用端口及官方客户端支持的 WireGuard 协议。
@@ -646,7 +647,8 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 两种后端都只监听 `127.0.0.1:40000`，不修改系统默认路由；Xray 根据路由规则使用代理，因此不会
 接管 SSH、Caddy、软件更新或其他系统进程。后端策略可独立更新，不需要修改 Xray 主体代码。
 
-两个后端仓库都可脱离主项目独立安装、验收和卸载，便于在空白 VPS 上判断问题属于后端实现还是
+这里的“分支项目”表示由主干统一编排、但拥有独立生命周期的功能项目，并非 Git branch。
+两个 WARP 分支项目都可脱离主干独立安装、验证、运行和卸载，便于在空白 VPS 上判断问题属于分支实现还是
 机房出站限制。以下命令使用默认端口 `40000`；自定义端口可作为最后一个参数传入：
 
 | 后端 | 安装 | 验证 | 卸载 |

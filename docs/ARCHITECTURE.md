@@ -18,13 +18,15 @@ an existing index during upgrade or route synchronization. An explicit `caddy pa
 deploy an optional page from an allowlisted repository after commit pinning, manifest validation and
 per-file digest verification; publication swaps the staged directory only after every check succeeds.
 
-WARP transport implementations live in the separate `warp-wireguard-manager` and
-`warp-masque-manager` repositories. The main project selects and invokes a backend through the common
+`v2ray-manager` is the trunk controller for the project family. WARP transport implementations are
+branch projects (independent repositories, not Git branches) named `warp-wireguard-manager` and
+`warp-masque-manager`. The trunk selects, downloads, verifies, invokes, switches and rolls back a branch through the common
 `install/status/test/start/stop/diagnose/repair/uninstall/version` command contract. Each backend must
 bind a loopback SOCKS5 listener (default `127.0.0.1:40000`) and must verify real traffic with a
 Cloudflare trace response containing `warp=on`; a process, registration or listener alone is not a
-successful installation. Backend state is independent from Xray policy state, so a failed switch can
-restart the previous backend without rewriting inbound definitions.
+successful installation. Each branch also retains its own installer, verifier, uninstaller and
+standalone runtime. Backend state is independent from Xray policy state, so a failed switch can restart
+the previous backend without rewriting inbound definitions.
 
 Client-facing ports are derived by one policy function. TLS-XHTTP uses Caddy 443; TLS WebSocket
 profiles use 443 only when the managed site contains the matching domain, path and Xray backend.
