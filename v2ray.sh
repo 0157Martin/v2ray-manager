@@ -3107,13 +3107,6 @@ validate_manager() {
     grep -Eq '^readonly MANAGER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$script"
 }
 
-config_connection_fingerprint() {
-  local config_file=$1
-  jq -cS '[.inbounds[] | {
-    tag, listen, port, protocol, settings, streamSettings
-  }]' "$config_file" | sha256sum | awk '{print $1}'
-}
-
 write_data_schema_marker() (
   umask 077
   local state_file=$1 temporary
@@ -3408,7 +3401,7 @@ main() {
     status) show_status ;;
     start|stop|restart) run_mutation service_action "$1" ;;
     log) show_logs ;;
-    speedtest|speettest) run_speedtest ;;
+    speedtest) run_speedtest ;;
     route) if [[ -n ${2:-} ]]; then route_latency_test "$2"; else route_test_menu; fi ;;
     caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
     warp) warp_command "${2:-menu}" "${3:-}" ;;
