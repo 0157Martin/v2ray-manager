@@ -2453,10 +2453,10 @@ deploy_caddy_page() (
   if [[ $template == default ]]; then
     render_caddy_placeholder_page "$domain" "$stage/index.html" || return 1
   else
-    command -v curl >/dev/null && command -v jq >/dev/null && command -v sha256sum >/dev/null || {
+    if ! command -v curl >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
       red '安装可选网页需要 curl、jq 和 sha256sum。' >&2
       return 1
-    }
+    fi
     api="https://api.github.com/repos/$repository/commits/main"
     revision=${V2M_CADDY_PAGE_REF:-}
     if [[ -z $revision ]]; then
