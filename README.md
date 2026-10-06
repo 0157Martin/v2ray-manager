@@ -210,7 +210,7 @@ Cloudflare 官方参考：
 本机且公网 TCP 80 可达，并会接受 Let's Encrypt 服务条款。默认 standalone 模式要求
 本机 80 空闲；已有网站可设置 `V2M_ACME_WEBROOT=/var/www/html` 使用 webroot 验证。如果目标域名已经由本项目生成的 Caddy 站点管理，且站点根目录仍与配置一致，管理器会自动使用该 webroot，不会要求停止 Caddy。
 
-新增 XHTTP 或 WebSocket TLS 入站时，如果相同域名已经由本项目管理，管理器会在 Xray 配置生效后自动把新 Path 合并到现有 Caddy 站点。Caddy 配置校验或 reload 失败会使新增操作整体回滚。未检测到受管站点时会保留入站并提示使用 `v2ray caddy` 手动配置公网入口。
+新增 XHTTP 或 WebSocket TLS 入站时，如果相同域名已经由本项目管理，管理器会在 Xray 配置生效后自动把新 Path 合并到现有 Caddy 站点。Caddy 配置校验或 reload 失败会使新增操作整体回滚。未检测到受管站点时会保留入站并提示使用 `v2ray caddy` 手动配置公网入口。分享链接会核对受管站点中的域名、Path 和 Xray 后端端口；匹配成功时，客户端入口自动导出为 Caddy 的公网 TCP `443`，不会把 `24443`、`24444` 等本机后端端口交给客户端。
 
 如果先申请 standalone 证书、后安装 Caddy，后续 Certbot 续期会与 Caddy 争用 TCP 80。
 管理器现在会检查 `/etc/letsencrypt/renewal/*.conf` 并拒绝这种组合。请先使用受支持的 Certbot

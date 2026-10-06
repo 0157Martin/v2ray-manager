@@ -145,6 +145,20 @@ REMARK=cdn-export-test
 export TLS_CERT_PATH_OVERRIDE="$tls_test_dir/cert.pem"
 export TLS_KEY_PATH_OVERRIDE="$tls_test_dir/key.pem"
 render_config "$temporary"
+managed_route_dir=$(mktemp -d)
+cat > "$managed_route_dir/example.com.caddy" <<'EOF'
+example.com {
+	@xray_0 path /cdn-test /cdn-test/*
+	reverse_proxy @xray_0 https://127.0.0.1:24443
+}
+EOF
+export CADDY_SITE_DIR_OVERRIDE=$managed_route_dir
+managed_link=$(show_connection_loaded "$temporary")
+[[ $managed_link == *'@example.com:443?'* ]] || fail 'managed Caddy WebSocket link did not use public port 443'
+managed_client=$(render_client_config)
+jq -e '.outbounds[0].settings.vnext[0].port == 443' <<<"$managed_client" >/dev/null || fail 'managed Caddy client JSON did not use public port 443'
+rm -rf -- "$managed_route_dir"
+unset CADDY_SITE_DIR_OVERRIDE
 cdn_link=$(show_connection_loaded "$temporary" edge.cdn.example.com)
 [[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@edge.cdn.example.com:443?'* ]] || fail 'CDN export did not use override domain and port 443'
 [[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'

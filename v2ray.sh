@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.9"
+readonly MANAGER_VERSION="5.7.10"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -1280,7 +1280,9 @@ show_connection() (
 # Build client transport from the same profile as the server; never export
 # server certificates, private keys or REALITY target settings.
 render_client_config() {
-  render_config /dev/stdout | jq --arg address "$(server_address)" \
+  local client_port=$PORT
+  profile_uses_managed_caddy_route && client_port=443
+  render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-}" '
     .inbounds[0] as $in |
@@ -1305,8 +1307,8 @@ render_client_config() {
       ],
       outbounds: [{tag: "proxy", protocol: $in.protocol,
         settings: (if $in.protocol == "trojan" then {
-          servers: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $in.port, password: $user.password}]
-        } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: (if $profile == "vless-tls-xhttp" then 443 else $in.port end),
+          servers: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $clientPort, password: $user.password}]
+        } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $clientPort,
           users: [($user + (if $in.protocol == "vless" then {encryption: "none"} else {security: "auto"} end))]}]} end),
         streamSettings: $stream
       }]
@@ -1350,6 +1352,23 @@ connection_matches_config() {
   ' >/dev/null
 }
 
+managed_caddy_route_exists() {
+  local domain=$1 port=$2 path=$3 site_dir=${CADDY_SITE_DIR_OVERRIDE:-$CADDY_SITE_DIR} site_file
+  valid_server_name "$domain" && valid_port "$port" && valid_transport_path "$path" || return 1
+  site_file="$site_dir/$domain.caddy"
+  [[ -r $site_file ]] || return 1
+  grep -Fq "path $path $path/*" "$site_file" && grep -Fq "127.0.0.1:$port" "$site_file"
+}
+
+profile_uses_managed_caddy_route() {
+  case "${PROFILE:-}" in
+    vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws)
+      managed_caddy_route_exists "$SERVER_NAME" "$PORT" "$PATH_VALUE"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 show_connection_loaded() (
   local address uri_address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload client_port
   local credential link_name index=0
@@ -1357,7 +1376,7 @@ show_connection_loaded() (
   local cdn_address=${2:-}
   address=${cdn_address:-$(server_address)}
   client_port=$PORT
-  [[ -z $cdn_address ]] || client_port=443
+  if [[ -n $cdn_address ]] || profile_uses_managed_caddy_route; then client_port=443; fi
   if ! valid_server_name "$address"; then
     red "无法导出链接：入口必须是域名，不能输出公网 IP。请把域名解析到服务器，并在入站配置中填写该域名。" >&2
     return 1
@@ -1470,7 +1489,7 @@ show_connection_loaded() (
     cyan_value "$link"; printf '\n'
   done
   printf '%s\n\n' '---------------------- END ----------------------'
-  yellow "请确认云服务商安全组已放行 TCP ${PORT}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
+  yellow "请确认云服务商安全组已放行客户端入口 TCP ${client_port}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
 )
 
 # manager.env may have stale or no connection data; edits use the node registry.
