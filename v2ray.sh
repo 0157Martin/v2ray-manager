@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.0.3"
+readonly MANAGER_VERSION="6.0.4"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -408,23 +408,28 @@ profile_name() {
 
 choose_profile() {
   local choice default_path
-  printf '%s\n' \
-    '--- 直连 / Cloudflare 灰云 DNS（不能经过普通橙云）---' \
-    '1) VLESS-REALITY-Vision-RAW  [高级：目标站/客户端兼容性通过检测后使用]' \
-    '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]' \
-    '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]' \
-    '--- HTTP/CDN / Cloudflare 橙云（需要自有域名）---' \
-    '4) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]' \
-    '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]' \
-    '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]' \
-    '--- 其他直连协议 ---' \
-    '7) Trojan-REALITY-RAW        [Trojan 兼容；REALITY 仍须直连]' \
-    '--- 旧版兼容（非默认推荐）---' \
-    '8) VMess-TCP                 [无 TLS，仅限兼容或可信链路]' \
-    '9) VMess-WebSocket-TLS       [老客户端及 CDN 兼容]' \
-    '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反向代理]' \
-    '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]' \
-    '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
+  printf '\n'
+  ui_box_title '选择协议组合'
+  ui_menu_item '直连 / Cloudflare 灰云 DNS（不能经过普通橙云）'
+  ui_menu_item '1) VLESS-REALITY-Vision-RAW  [高级：目标站/客户端兼容性通过检测后使用]'
+  ui_menu_item '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]'
+  ui_menu_item '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]'
+  ui_box_divider
+  ui_menu_item 'HTTP/CDN / Cloudflare 橙云（需要自有域名）'
+  ui_menu_item '4) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]'
+  ui_menu_item '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]'
+  ui_menu_item '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]'
+  ui_box_divider
+  ui_menu_item '其他直连协议'
+  ui_menu_item '7) Trojan-REALITY-RAW        [Trojan 兼容；REALITY 仍须直连]'
+  ui_box_divider
+  ui_menu_item '旧版兼容（非默认推荐）'
+  ui_menu_item '8) VMess-TCP                 [无 TLS，仅限兼容或可信链路]'
+  ui_menu_item '9) VMess-WebSocket-TLS       [老客户端及 CDN 兼容]'
+  ui_menu_item '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反向代理]'
+  ui_menu_item '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]'
+  ui_menu_item '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
+  ui_box_bottom
   read -r -p '请选择协议组合 [1-12]:' choice
   case "$choice" in
     1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
@@ -1545,10 +1550,18 @@ change_menu() {
   [[ -x "$XRAY_BIN" ]] || die "尚未安装。"
   load_edit_node "${1:-}"
   printf '\n当前选择: %s\n\n' "$(profile_name)"
-  printf '%s\n' '请选择更改:' \
-    '1) 更改协议组合' '2) 更改端口' '3) 更改服务器地址' '4) 更改目标域名 / SNI' \
-    '5) 更改 UUID' '6) 更改备注' '7) 轮换 REALITY 密钥' \
-    '8) 重新输入全部配置' '0) 返回'
+  ui_box_title '修改入站配置'
+  ui_menu_item '1) 更改协议组合'
+  ui_menu_item '2) 更改端口'
+  ui_menu_item '3) 更改服务器地址'
+  ui_menu_item '4) 更改目标域名 / SNI'
+  ui_menu_item '5) 更改 UUID'
+  ui_menu_item '6) 更改备注'
+  ui_menu_item '7) 轮换 REALITY 密钥'
+  ui_menu_item '8) 重新输入全部配置'
+  ui_box_divider
+  ui_menu_item '0) 返回'
+  ui_box_bottom
   read -r -p '请选择 [0-8]:' choice
   case "$choice" in
     1) choose_profile ;;
@@ -1791,11 +1804,18 @@ replace_sub_link() {
 sub_link_menu() {
   local choice node_id count index answer
   while :; do
-    printf '\n%s\n' '----- 子链接用户管理 -----'
+    printf '\n'
     list_inbounds
-    printf '%s\n' '1) 查看指定入站的链接用户' '2) 新增链接用户' '3) 删除指定链接用户' \
-      '4) 重新生成指定链接凭据' '5) 输出指定入站全部链接' '6) 兼容模式：设置链接总数' \
-      '0) 返回连接与导出'
+    ui_box_title '子链接用户管理'
+    ui_menu_item '1) 查看指定入站的链接用户'
+    ui_menu_item '2) 新增链接用户'
+    ui_menu_item '3) 删除指定链接用户'
+    ui_menu_item '4) 重新生成指定链接凭据'
+    ui_menu_item '5) 输出指定入站全部链接'
+    ui_menu_item '6) 兼容模式：设置链接总数'
+    ui_box_divider
+    ui_menu_item '0) 返回连接与导出'
+    ui_box_bottom
     read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) read -r -p '请输入启用的入站 ID：' node_id; list_sub_links "$node_id"; pause ;;
@@ -2193,9 +2213,14 @@ show_forward_test_commands() (
 route_test_menu() {
   local choice target
   while :; do
-    printf '\n%s\n' '----- 路由与延迟测试 -----'
-    printf '%s\n' '1) 测试 VPS → 目标的回程路由、丢包和延迟' \
-      '2) 显示客户端 → VPS 去程测试命令' '3) Speedtest 带宽测速' '0) 返回维护菜单'
+    printf '\n'
+    ui_box_title '路由与延迟测试'
+    ui_menu_item '1) 测试 VPS → 目标的回程路由、丢包和延迟'
+    ui_menu_item '2) 显示客户端 → VPS 去程测试命令'
+    ui_menu_item '3) Speedtest 带宽测速'
+    ui_box_divider
+    ui_menu_item '0) 返回维护菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-3]:' choice
     case "$choice" in
       1)
@@ -2588,7 +2613,12 @@ normalize_caddy_path() {
 caddy_page_menu() {
   local domain choice template
   read -r -p '网站域名：' domain
-  printf '%s\n' '1) Portfolio 博客' '2) Resume 博客' '3) 通用占位页'
+  printf '\n'
+  ui_box_title '选择可选网页'
+  ui_menu_item '1) Portfolio 博客'
+  ui_menu_item '2) Resume 博客'
+  ui_menu_item '3) 通用占位页'
+  ui_box_bottom
   read -r -p '选择网页 [1-3]：' choice
   case "$choice" in
     1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
@@ -2605,10 +2635,18 @@ caddy_page_menu() {
 caddy_menu() {
   local choice domain upstream path suggested_upstream suggested_path
   while :; do
-    printf '\n%s\n' '----- Caddy 网站管理 -----'
-    printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-      '4) 同步 Xray XHTTP/WS 路径反代' '5) 安装/更新可选网页' \
-      '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title 'Caddy 网站管理'
+    ui_menu_item '1) 安装 Caddy'
+    ui_menu_item '2) 创建静态伪装网站'
+    ui_menu_item '3) 创建本机反向代理'
+    ui_menu_item '4) 同步 Xray XHTTP/WS 路径反代'
+    ui_menu_item '5) 安装/更新可选网页'
+    ui_menu_item '6) 查看 Caddy 状态'
+    ui_menu_item '7) 查看 Caddy 日志'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-7]:' choice
     case "$choice" in
       1) caddy_ports_available && run_mutation install_caddy && green "Caddy 已安装。"; pause ;;
@@ -2882,7 +2920,14 @@ EOF
 
 warp_ip_strategy_menu() {
   local choice
-  printf '%s\n' '1) 自动双栈（IPv4 优先，失败后尝试 IPv6）' '2) 仅 IPv4' '3) 仅 IPv6' '0) 返回'
+  printf '\n'
+  ui_box_title 'WARP IPv4 / IPv6 出站策略'
+  ui_menu_item '1) 自动双栈（IPv4 优先，失败后尝试 IPv6）'
+  ui_menu_item '2) 仅 IPv4'
+  ui_menu_item '3) 仅 IPv6'
+  ui_box_divider
+  ui_menu_item '0) 返回'
+  ui_box_bottom
   read -r -p '请选择 [0-3]：' choice
   case "$choice" in
     1) run_mutation set_warp_ip_strategy UseIPv4v6 ;;
@@ -2950,11 +2995,20 @@ uninstall_warp() {
 warp_menu() {
   local choice domains answer
   while :; do
-    printf '\n%s\n' '----- WARP 出站管理（对全部协议生效）-----'
-    printf '%s\n' '1) 安装/初始化 WARP' '2) 查看 WARP 状态与出口 IP' \
-      '3) 全部协议的公网 TCP 使用 WARP' '4) 指定域名使用 WARP（推荐）' \
-      '5) IPv4 / IPv6 出站策略' '6) 流媒体与 ChatGPT 可用性检测' \
-      '7) 停用 WARP 策略' '8) 修复/重新生成配置' '9) 卸载 WARP' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title 'WARP 出站管理（对全部协议生效）'
+    ui_menu_item '1) 安装/初始化 WARP'
+    ui_menu_item '2) 查看 WARP 状态与出口 IP'
+    ui_menu_item '3) 全部协议的公网 TCP 使用 WARP'
+    ui_menu_item '4) 指定域名使用 WARP（推荐）'
+    ui_menu_item '5) IPv4 / IPv6 出站策略'
+    ui_menu_item '6) 流媒体与 ChatGPT 可用性检测'
+    ui_menu_item '7) 停用 WARP 策略'
+    ui_menu_item '8) 修复/重新生成配置'
+    ui_menu_item '9) 卸载 WARP'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-9]：' choice
     case "$choice" in
       1) run_mutation install_warp || true; pause ;;
@@ -3378,8 +3432,16 @@ uninstall_xray() {
 runtime_menu() {
   local choice
   while :; do
-    printf '\n%s\n' '----- Xray 服务管理 -----'
-    printf '%s\n' '1) 启动服务' '2) 停止服务' '3) 重启服务' '4) 查看状态' '5) 查看日志' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title 'Xray 服务管理'
+    ui_menu_item '1) 启动服务'
+    ui_menu_item '2) 停止服务'
+    ui_menu_item '3) 重启服务'
+    ui_menu_item '4) 查看状态'
+    ui_menu_item '5) 查看日志'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-5]:' choice
     case "$choice" in
       1) run_mutation service_action start; pause ;; 2) run_mutation service_action stop; pause ;; 3) run_mutation service_action restart; pause ;;
@@ -3391,11 +3453,21 @@ runtime_menu() {
 maintenance_menu() {
   local choice
   while :; do
-    printf '\n%s\n' '----- 维护与诊断 -----'
-    printf '%s\n' '1) 更新 Xray Core' '2) 一键更新项目脚本并迁移数据' '3) 运行综合诊断' \
-      '4) 检查并放行本机防火墙' '5) 备份配置' '6) 恢复最近备份' \
-      '7) 轮换 REALITY 密钥' '8) 恢复上一版管理脚本' '9) 路由、丢包与延迟测试' \
-      '10) 查看项目信息' '0) 返回主菜单'
+    printf '\n'
+    ui_box_title '维护与诊断'
+    ui_menu_item '1) 更新 Xray Core'
+    ui_menu_item '2) 一键更新项目脚本并迁移数据'
+    ui_menu_item '3) 运行综合诊断'
+    ui_menu_item '4) 检查并放行本机防火墙'
+    ui_menu_item '5) 备份配置'
+    ui_menu_item '6) 恢复最近备份'
+    ui_menu_item '7) 轮换 REALITY 密钥'
+    ui_menu_item '8) 恢复上一版管理脚本'
+    ui_menu_item '9) 路由、丢包与延迟测试'
+    ui_menu_item '10) 查看项目信息'
+    ui_box_divider
+    ui_menu_item '0) 返回主菜单'
+    ui_box_bottom
     read -r -p '请选择 [0-10]:' choice
     case "$choice" in
       1) run_mutation update_core; pause ;; 2) run_mutation update_manager; pause ;; 3) doctor || true; pause ;;
