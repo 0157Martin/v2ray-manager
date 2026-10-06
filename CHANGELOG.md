@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 6.0.2
+
+- 主菜单标题使用统一的 `AUTHOR` 项目元数据重新显示作者：`by 0157Martin`。
+
 ## 6.0.1
 
 - 恢复用户需要的可选个人网页安装能力，以单一 `v2ray caddy page <域名> [portfolio|resume|default]` 命令和一个菜单入口取代原先重复的安装/更新流程。

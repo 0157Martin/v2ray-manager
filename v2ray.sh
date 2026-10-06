@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.0.1"
+readonly MANAGER_VERSION="6.0.2"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -3437,7 +3437,7 @@ menu() {
       disabled_nodes=0
     fi
     if [[ -x $XRAY_BIN ]]; then install_label='检查/修复 Xray（保留现有入站）'; else install_label='安装 Xray Core（稍后手动添加协议）'; fi
-    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  ·  通用 Xray 管理器"
+    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  ·  通用 Xray 管理器  ·  by ${AUTHOR}"
     printf '\033[38;5;39m│\033[0m  Xray: %s\n' "$core_version"
     printf '\033[38;5;39m│\033[0m  服务状态: '
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
