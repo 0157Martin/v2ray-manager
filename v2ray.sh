@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.1.0"
+readonly MANAGER_VERSION="6.1.1"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2793,7 +2793,6 @@ install_warp() {
   local backend=${1:-wireguard} previous command
   valid_warp_backend "$backend" || die 'WARP 后端必须是 wireguard 或 masque。'
   previous=$(active_warp_backend)
-  install_dependencies
   install_warp_backend_command "$backend"
   command=$(warp_backend_bin "$backend")
   if [[ $previous != none && $previous != "$backend" ]]; then stop_warp_backend "$previous"; fi

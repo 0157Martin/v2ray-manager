@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 6.1.1
+
+- 移除主项目安装 WARP 后端前重复执行的通用依赖安装；依赖现在只由对应后端仓库负责。
+- WireGuard 后端在监听端口启动后又消失时也会输出脱敏的 systemd 状态和日志，便于直接定位服务退出原因。
+
 ## 6.1.0
 
 - 将 WARP 实现拆分到独立的 `warp-wireguard-manager` 与 `warp-masque-manager` 代码仓库；主项目只负责下载、校验、调用和记录当前后端。
