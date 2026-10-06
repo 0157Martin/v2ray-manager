@@ -6,6 +6,11 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
+config_connection_fingerprint() {
+  jq -cS '[.inbounds[] | {tag, listen, port, protocol, settings, streamSettings}]' "$1" |
+    sha256sum | awk '{print $1}'
+}
+
 if [[ ${1:-} != --case ]]; then
   sandbox=$(mktemp -d)
   trap 'rm -rf -- "$sandbox"' EXIT
