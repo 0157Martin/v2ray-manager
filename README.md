@@ -370,16 +370,14 @@ v2ray caddy install
 v2ray caddy static www.example.com
 v2ray caddy reverse app.example.com 127.0.0.1:8080
 v2ray caddy xray cdn.example.com 127.0.0.1:24443 /a1b2c3
-v2ray caddy page-install cdn.example.com portfolio
-v2ray caddy page-update cdn.example.com resume
-v2ray caddy page-update cdn.example.com default
 v2ray caddy status
 v2ray caddy log
 ```
 
-静态站点和 Xray 路径反代站点会在首次配置时自动安装一页独立的个人主页。Caddy 菜单的“个人网页设置”提供三种选择：[`portfolio`](https://github.com/0157Martin/v2ray-portfolio-page) 是使用竹林角色背景的沉浸式个人博客，[`resume`](https://github.com/0157Martin/v2ray-resume-page) 是不使用背景图片的纸张排版个人博客，`default` 是主脚本内置的轻量默认网页，无需从 GitHub 下载模板。安装不会覆盖已有页面，更新才会替换模板和随机内容；三种网页都不会改动 Caddy 路径反代或客户端链接。服务器安装两个 React/Vite 博客时只下载对应仓库已经构建的静态文件，不需要 Node.js、npm 或 Vite；每个下载文件均按固定提交进行 SHA-256 校验。
-
-从 5.6.1 起，首次配置静态站点或 Xray 路径反代时默认生成内置网页，无需下载博客模板；已有页面保留。需要博客时在“个人网页设置 → 更新”中选择模板，或执行 `v2ray caddy page-update <真实域名> portfolio`。网页准备失败会恢复旧站点配置，不会报告部署成功。
+静态站点和 Xray 路径反代站点首次配置时生成一页不含个人信息的通用占位页，不访问第三方页面
+仓库。已有的 `/var/www/v2ray-manager/<域名>/index.html` 及其他静态资源始终保留，项目升级不会
+覆盖或删除。需要自定义网站时，直接把自己的静态文件部署到该目录；Caddy 路由同步只更新站点
+配置，不操作网页内容。占位页准备失败会恢复旧站点配置，不会报告部署成功。
 
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，
@@ -394,6 +392,10 @@ Caddy。普通 `reverse` 面向 HTTP Web 应用；`xray` 模式按 XHTTP/WS 路�
 不能代理 REALITY/RAW。建议 Xray 使用 `24443` 等内部高位端口，Caddy 独占公网 `80/443`。
 XHTTP 客户端链接固定使用域名、443、TLS、ALPN h2、相同 Host/Path 和 `mode=auto`，不应
 直接连接内部端口。
+
+从 6.0.0 起，项目统一计算客户端实际入口端口：TLS-XHTTP 固定使用 Caddy 443；WS+TLS 在
+受管 Caddy 文件中的域名、Path 和后端端口全部匹配时使用 443，否则保留直连端口。`doctor`
+会单独报告受管 Caddy 公网入口，避免“内部端口监听正常”被误认为完整代理链路正常。
 
 在菜单中创建 Xray XHTTP/WS 路径反代时，管理器会按输入的 TLS 域名查找已启用的对应
 入站，并自动填入它实际使用的本机端口和传输路径。直接按 Enter 会采用显示的值；没有

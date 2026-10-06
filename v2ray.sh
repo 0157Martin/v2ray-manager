@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="5.7.10"
+readonly MANAGER_VERSION="6.0.0"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -36,8 +36,6 @@ readonly SERVICE_NAME="xray"
 readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
 readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
-readonly CADDY_PORTFOLIO_REPO="0157Martin/v2ray-portfolio-page"
-readonly CADDY_RESUME_REPO="0157Martin/v2ray-resume-page"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -77,7 +75,7 @@ acquire_mutation_lock() {
 mutation_entry() {
   local operation=${1:-}
   case "$operation" in
-    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|install_caddy_landing_page|update_caddy_landing_page|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
+    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
     *) die "不允许的内部修改操作。" ;;
   esac
   acquire_mutation_lock
@@ -374,6 +372,12 @@ profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 # h2c upstream, so it neither owns a certificate nor exposes its backend port.
 profile_requires_xray_tls() { [[ ${PROFILE:-} == *-tls-* && ${PROFILE:-} != vless-tls-xhttp ]]; }
 profile_uses_reality() { [[ ${PROFILE:-vless-reality-raw} == *-reality-* ]]; }
+profile_supports_caddy_route() {
+  case "${1:-${PROFILE:-}}" in
+    vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 profile_group() {
   case ${PROFILE:-vless-reality-raw} in
@@ -1280,8 +1284,8 @@ show_connection() (
 # Build client transport from the same profile as the server; never export
 # server certificates, private keys or REALITY target settings.
 render_client_config() {
-  local client_port=$PORT
-  if [[ ${PROFILE:-} == vless-tls-xhttp ]] || profile_uses_managed_caddy_route; then client_port=443; fi
+  local client_port
+  client_port=$(client_entry_port)
   render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-}" '
@@ -1357,16 +1361,25 @@ managed_caddy_route_exists() {
   valid_server_name "$domain" && valid_port "$port" && valid_transport_path "$path" || return 1
   site_file="$site_dir/$domain.caddy"
   [[ -r $site_file ]] || return 1
-  grep -Fq "path $path $path/*" "$site_file" && grep -Fq "127.0.0.1:$port" "$site_file"
+  awk -v wanted_path="$path" -v wanted_backend="127.0.0.1:$port" '
+    $1 ~ /^@/ && $2 == "path" && $3 == wanted_path && $4 == wanted_path "/*" { matcher=$1; next }
+    matcher != "" && $1 == "reverse_proxy" && $2 == matcher && index($3, wanted_backend) { found=1 }
+    END { exit(found ? 0 : 1) }
+  ' "$site_file"
 }
 
 profile_uses_managed_caddy_route() {
-  case "${PROFILE:-}" in
-    vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws)
-      managed_caddy_route_exists "$SERVER_NAME" "$PORT" "$PATH_VALUE"
-      ;;
-    *) return 1 ;;
-  esac
+  profile_supports_caddy_route || return 1
+  managed_caddy_route_exists "$SERVER_NAME" "$PORT" "$PATH_VALUE"
+}
+
+client_entry_port() {
+  local address_override=${1:-}
+  if [[ -n $address_override || ${PROFILE:-} == vless-tls-xhttp ]] || profile_uses_managed_caddy_route; then
+    printf '443'
+  else
+    printf '%s' "$PORT"
+  fi
 }
 
 show_connection_loaded() (
@@ -1375,8 +1388,7 @@ show_connection_loaded() (
   local -a credentials extra_credentials
   local cdn_address=${2:-}
   address=${cdn_address:-$(server_address)}
-  client_port=$PORT
-  if [[ -n $cdn_address ]] || profile_uses_managed_caddy_route; then client_port=443; fi
+  client_port=$(client_entry_port "$cdn_address")
   if ! valid_server_name "$address"; then
     red "无法导出链接：入口必须是域名，不能输出公网 IP。请把域名解析到服务器，并在入站配置中填写该域名。" >&2
     return 1
@@ -1429,7 +1441,6 @@ show_connection_loaded() (
       ;;
     vless-tls-xhttp)
       transport=xhttp; security=tls; flow=none
-      client_port=443
       query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&alpn=h2&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=auto"
       ;;
     vless-tls-ws)
@@ -1639,10 +1650,7 @@ add_inbound() {
 }
 
 sync_managed_caddy_route() {
-  case "$PROFILE" in
-    vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws) ;;
-    *) return 0 ;;
-  esac
+  profile_supports_caddy_route || return 0
   if ! managed_caddy_webroot "$SERVER_NAME" >/dev/null; then
     yellow "尚未发现由本项目管理的 $SERVER_NAME Caddy 站点；请使用 v2ray caddy 同步 $PATH_VALUE 路由。"
     return 0
@@ -2265,10 +2273,7 @@ render_caddy_xray_site() {
       # Node files are generated by this script with mode 0600.
       # shellcheck disable=SC1090
       . "$node_file"
-      case "$PROFILE" in
-        vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws) ;;
-        *) continue ;;
-      esac
+      profile_supports_caddy_route "$PROFILE" || continue
       [[ $SERVER_NAME == "$domain" ]] || continue
       if ! valid_port "$PORT" || ! valid_transport_path "$PATH_VALUE"; then
         continue
@@ -2378,42 +2383,23 @@ ensure_caddy_import() {
   return 1
 }
 
-random_site_value() {
-  local index
-  local -a values=("$@")
-  (( $# > 0 )) || return 1
-  index=$((RANDOM % $#))
-  printf '%s' "${values[index]}"
-}
-
-render_personal_landing_page() {
-  local domain=$1 destination=$2 name role location focus project_one project_two project_three
+render_caddy_placeholder_page() {
+  local domain=$1 destination=$2
   valid_server_name "$domain" || return 1
-  name=$(random_site_value '林知远' '周予安' '陈若川' '许清和' '沈言川')
-  role=$(random_site_value '独立开发者' '产品设计师' '软件工程师' '数字创作者' '研究助理')
-  location=$(random_site_value '杭州' '成都' '厦门' '南京' '深圳')
-  focus=$(random_site_value '专注于把复杂问题变成清晰、可靠的体验。' '在软件、设计和日常记录之间寻找恰当的平衡。' '持续整理工具、想法与值得长期投入的小项目。')
-  project_one=$(random_site_value '阅读清单' '城市散步' '设计笔记' '开源工具')
-  project_two=$(random_site_value '周末摄影' '产品拆解' '个人知识库' '界面练习')
-  project_three=$(random_site_value '播客摘录' '慢跑记录' '旅行地图' '小型实验')
   cat > "$destination" <<EOF
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="$name 的个人主页">
-  <title>$name · $role</title>
+  <meta name="robots" content="noindex,nofollow">
+  <title>Service available</title>
   <style>
-    :root{color-scheme:light;--ink:#1e293b;--muted:#64748b;--line:#e2e8f0;--accent:#0f766e}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#f8fafc,#f0fdf4);color:var(--ink);font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:920px;margin:0 auto;padding:64px 24px}header{padding:12px 0 52px;border-bottom:1px solid var(--line)}.eyebrow{letter-spacing:.12em;text-transform:uppercase;font-size:.74rem;color:var(--accent);font-weight:700}h1{margin:12px 0 4px;font:clamp(2.6rem,8vw,5.4rem)/.95 Georgia,"Times New Roman",serif;letter-spacing:-.05em}h2{font:1.45rem/1.2 Georgia,"Times New Roman",serif;margin:0 0 18px}.role{margin:0;color:var(--muted);font-size:1.05rem}.intro{max-width:620px;margin:38px 0 0;font-size:1.18rem}section{padding:46px 0;border-bottom:1px solid var(--line)}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{min-height:140px;padding:22px;border:1px solid var(--line);border-radius:14px;background:rgb(255 255 255/.72);box-shadow:0 8px 28px rgb(15 23 42/.04)}.card strong{display:block;margin-bottom:9px;font-size:1.05rem}.card span,.note{color:var(--muted);font-size:.92rem}footer{display:flex;justify-content:space-between;gap:20px;padding:32px 0;color:var(--muted);font-size:.9rem}@media(max-width:620px){main{padding:44px 20px}.grid{grid-template-columns:1fr}header{padding-bottom:40px}}
+    :root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#dbeafe;font:16px/1.6 system-ui,sans-serif}main{width:min(92%,560px);padding:40px;border:1px solid #24324a;border-radius:18px;background:#111b2e;box-shadow:0 24px 70px #0006}h1{margin:0 0 12px;font-size:1.7rem}p{margin:0;color:#94a3b8}code{color:#7dd3fc}
   </style>
 </head>
-<body><main>
-  <header><div class="eyebrow">Personal notes · $location</div><h1>$name</h1><p class="role">$role</p><p class="intro">$focus</p></header>
-  <section><h2>正在记录</h2><div class="grid"><article class="card"><strong>$project_one</strong><span>一些持续更新的日常整理与实践。</span></article><article class="card"><strong>$project_two</strong><span>留给好奇心和慢慢打磨的时间。</span></article><article class="card"><strong>$project_three</strong><span>把片段收集起来，等待它们自然连接。</span></article></div></section>
-  <section><h2>关于这里</h2><p class="note">这是一个简洁的个人主页，用来放置近况、笔记和正在进行的小项目。</p></section>
-  <footer><span>© $(date +%Y) $name</span><span>$domain</span></footer>
-</main></body></html>
+<body><main><h1>Service available</h1><p>The HTTPS endpoint for <code>$domain</code> is online.</p></main></body>
+</html>
 EOF
 }
 
@@ -2422,88 +2408,28 @@ landing_page_path() {
   printf '%s/%s/index.html' "$CADDY_WEB_ROOT" "$1"
 }
 
-download_caddy_page_assets() (
-  set -Eeuo pipefail
-  local domain=$1 template=${2:-portfolio} root="$CADDY_WEB_ROOT/$1" revision base manifest path checksum temporary repository api
+install_caddy_placeholder_page() {
+  local domain=$1 root page temporary
   valid_server_name "$domain" || return 1
-  [[ $template == portfolio || $template == resume ]] || { red '网页模板必须是 portfolio 或 resume。' >&2; return 1; }
-  if ! command -v curl >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
-    red '安装网页模板需要 curl、jq 和 sha256sum。' >&2; return 1;
-  fi
-  if [[ $template == portfolio ]]; then repository=$CADDY_PORTFOLIO_REPO; else repository=$CADDY_RESUME_REPO; fi
-  api="https://api.github.com/repos/$repository/commits/main"
-  revision=${V2M_CADDY_PAGE_REF:-}
-  if [[ -z $revision ]]; then
-    revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$api" | jq -r '.sha') || return 1
-  fi
-  [[ $revision =~ ^[0-9a-f]{40}$ ]] || { red '无法取得网页模板的固定项目提交。' >&2; return 1; }
-  base="https://raw.githubusercontent.com/$repository/$revision/dist"
-  temporary=$(mktemp -d) || return 1
-  trap 'rm -rf -- "$temporary"' EXIT
-  manifest="$temporary/deploy-manifest.json"
-  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/deploy-manifest.json" -o "$manifest" || return 1
-  jq -e '.version == 1 and (.files | type == "array" and length > 0) and all(.files[]; (.path | type == "string" and test("^(index\\.html|site-config\\.json|favicon\\.svg|icons\\.svg|assets/[A-Za-z0-9._-]+)$")) and (.sha256 | type == "string" and test("^[0-9a-f]{64}$")))' "$manifest" >/dev/null || {
-    red '网页模板清单无效。' >&2; return 1;
-  }
-  jq -e 'any(.files[]; .path == "index.html")' "$manifest" >/dev/null || {
-    red '网页模板清单缺少 index.html。' >&2; return 1;
-  }
-  while IFS=$'\t' read -r path checksum; do
-    path=${path%$'\r'}
-    checksum=${checksum%$'\r'}
-    mkdir -p "$temporary/$(dirname "$path")" || return 1
-    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 "$base/$path" -o "$temporary/$path" || return 1
-    [[ $(sha256sum "$temporary/$path" | awk '{print $1}') == "$checksum" ]] || { red "网页模板文件校验失败：$path" >&2; return 1; }
-  done < <(jq -r '.files[] | [.path, .sha256] | @tsv' "$manifest")
-  jq -n --arg template "$template" --arg domain "$domain" --arg seed "$(date +%s)-$RANDOM" '{template:$template,domain:$domain,seed:$seed}' > "$temporary/site-config.json" || return 1
-  install -d -m 755 "$root" || return 1
-  cp -a "$temporary/." "$root/" || return 1
-  chown -R caddy:caddy "$root" || return 1
-)
-
-write_caddy_landing_page() {
-  local domain=$1 template=${2:-portfolio} root temporary
-  valid_server_name "$domain" || return 1
-  if [[ $template == default ]]; then
-    root="$CADDY_WEB_ROOT/$domain"
-    temporary=$(mktemp) || return 1
-    if ! render_personal_landing_page "$domain" "$temporary"; then rm -f -- "$temporary"; return 1; fi
-    if ! install -d -m 755 "$root" || ! install -m 644 "$temporary" "$root/index.html"; then
-      rm -f -- "$temporary"
-      red '默认网页写入失败。' >&2
-      return 1
-    fi
-    rm -f -- "$temporary"
-    chown caddy:caddy "$root" "$root/index.html" || return 1
-    return 0
-  fi
-  download_caddy_page_assets "$domain" "$template"
-}
-
-install_caddy_landing_page() {
-  local domain=$1 template=${2:-portfolio} page
-  page=$(landing_page_path "$domain") || return 1
-  if [[ -e $page ]]; then
-    yellow "个人主页已存在：$page；请使用更新个人主页保留 Caddy 路由并生成新页面。" >&2
+  root="$CADDY_WEB_ROOT/$domain"
+  page="$root/index.html"
+  [[ ! -e $page ]] || return 0
+  temporary=$(mktemp) || return 1
+  if ! render_caddy_placeholder_page "$domain" "$temporary" ||
+     ! install -d -m 755 "$root" ||
+     ! install -m 644 "$temporary" "$page" ||
+     ! chown caddy:caddy "$root" "$page"; then
+    rm -f -- "$temporary" "$page"
+    red '通用占位页写入失败。' >&2
     return 1
   fi
-  write_caddy_landing_page "$domain" "$template"
+  rm -f -- "$temporary"
 }
 
 ensure_caddy_landing_page() {
   local page
   page=$(landing_page_path "$1") || return 1
-  [[ -e $page ]] || install_caddy_landing_page "$1" default
-}
-
-update_caddy_landing_page() {
-  local domain=$1 template=${2:-portfolio} page
-  page=$(landing_page_path "$domain") || return 1
-  if [[ ! -e $page ]]; then
-    yellow '未找到已安装的个人主页，请先选择安装随机个人主页。' >&2
-    return 1
-  fi
-  write_caddy_landing_page "$domain" "$template"
+  [[ -e $page ]] || install_caddy_placeholder_page "$1"
 }
 
 configure_caddy_site() {
@@ -2574,10 +2500,7 @@ find_caddy_xray_defaults() {
     # Node files are generated by this script with mode 0600.
     # shellcheck disable=SC1090
     . "$node_file"
-    case "$PROFILE" in
-      vless-tls-xhttp|vless-tls-ws|vmess-tls-ws|trojan-tls-ws) ;;
-      *) continue ;;
-    esac
+    profile_supports_caddy_route "$PROFILE" || continue
     [[ $SERVER_NAME == "$wanted_domain" ]] || continue
     if ! valid_port "$PORT" || ! valid_transport_path "$PATH_VALUE"; then continue; fi
     printf '127.0.0.1:%s\t%s\n' "$PORT" "$PATH_VALUE"
@@ -2593,56 +2516,13 @@ normalize_caddy_path() {
   printf '%s' "$path"
 }
 
-caddy_page_menu() {
-  local choice domain template
-  while :; do
-    ui_box_title '个人网页设置'
-    ui_menu_item '1) 安装随机个人主页'
-    ui_menu_item '2) 更新随机个人主页'
-    ui_box_divider
-    ui_menu_item '0) 返回 Caddy 网站管理'
-    ui_box_bottom
-    read -r -p '请选择 [0-2]：' choice
-    case "$choice" in
-      1)
-        read -r -p '网站域名：' domain
-        printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
-        read -r -p '选择模板 [1-3，默认 1]：' choice
-        case "$choice" in
-          ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
-          *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
-        esac
-        if run_mutation install_caddy_landing_page "$domain" "$template"; then
-          green "个人主页已安装：https://$domain（$template）"
-        fi
-        pause
-        ;;
-      2)
-        read -r -p '网站域名：' domain
-        printf '%s\n' '1) 竹林背景博客（Portfolio）' '2) 纸张排版博客（Resume）' '3) 内置默认网页（无需下载模板）'
-        read -r -p '选择模板 [1-3，默认 1]：' choice
-        case "$choice" in
-          ''|1) template=portfolio ;; 2) template=resume ;; 3) template=default ;;
-          *) yellow '无效模板，请选择 1、2 或 3。'; pause; continue ;;
-        esac
-        if run_mutation update_caddy_landing_page "$domain" "$template"; then
-          green "个人主页已更新：https://$domain"
-        fi
-        pause
-        ;;
-      0) return ;;
-      *) yellow '无效选择。'; pause ;;
-    esac
-  done
-}
-
 caddy_menu() {
   local choice domain upstream path suggested_upstream suggested_path
   while :; do
     printf '\n%s\n' '----- Caddy 网站管理 -----'
     printf '%s\n' '1) 安装 Caddy' '2) 创建静态伪装网站' '3) 创建本机反向代理' \
-      '4) 同步 Xray XHTTP/WS 路径反代' '5) 个人网页设置' '6) 查看 Caddy 状态' '7) 查看 Caddy 日志' '0) 返回主菜单'
-    read -r -p '请选择 [0-7]:' choice
+      '4) 同步 Xray XHTTP/WS 路径反代' '5) 查看 Caddy 状态' '6) 查看 Caddy 日志' '0) 返回主菜单'
+    read -r -p '请选择 [0-6]:' choice
     case "$choice" in
       1) caddy_ports_available && run_mutation install_caddy && green "Caddy 已安装。"; pause ;;
       2) read -r -p '网站域名：' domain; run_mutation configure_caddy_site static "$domain" || true; pause ;;
@@ -2670,9 +2550,8 @@ caddy_menu() {
         run_mutation configure_caddy_site xray "$domain" "$upstream" "$path" || true
         pause
         ;;
-      5) caddy_page_menu ;;
-      6) systemctl --no-pager --full status caddy || true; pause ;;
-      7) journalctl -u caddy -n 100 --no-pager || true; pause ;;
+      5) systemctl --no-pager --full status caddy || true; pause ;;
+      6) journalctl -u caddy -n 100 --no-pager || true; pause ;;
       0) return ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -2687,8 +2566,6 @@ caddy_command() {
     static) [[ -n $domain ]] || die "用法：v2ray caddy static <域名>"; run_mutation configure_caddy_site static "$domain" ;;
     reverse) [[ -n $domain && -n $upstream ]] || die "用法：v2ray caddy reverse <域名> <本机地址:端口>"; run_mutation configure_caddy_site reverse "$domain" "$upstream" ;;
     xray) [[ -n $domain && -n $upstream && -n $path ]] || die "用法：v2ray caddy xray <域名> <本机TLS地址:端口> <路径>"; run_mutation configure_caddy_site xray "$domain" "$upstream" "$path" ;;
-    page-install) [[ -n $domain ]] || die "用法：v2ray caddy page-install <域名> [portfolio|resume|default]"; run_mutation install_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
-    page-update|refresh) [[ -n $domain ]] || die "用法：v2ray caddy page-update <域名> [portfolio|resume|default]"; run_mutation update_caddy_landing_page "$domain" "${upstream:-portfolio}" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
     *) die "未知 Caddy 操作：$action" ;;
@@ -3040,7 +2917,7 @@ warp_command() {
 }
 
 doctor() {
-  local failures=0 port security target node_file node_count=0 fallback
+  local failures=0 port security target node_file node_count=0 fallback route_status
   printf '%s\n' "===== v2ray-manager 诊断 ====="
 
   if [[ -x "$XRAY_BIN" ]]; then green "[通过] Xray Core 可执行文件"; else red "[失败] 缺少 Xray Core"; ((failures+=1)); fi
@@ -3123,6 +3000,27 @@ doctor() {
       green "[通过] 入站 $(basename "$node_file" .env) 的导出参数与配置一致"
     else
       red "[失败] 入站 $(basename "$node_file" .env) 的链接参数或入口地址"; ((failures+=1))
+    fi
+    if (
+      # shellcheck disable=SC1090
+      . "$node_file"
+      profile_supports_caddy_route || exit 3
+      if profile_uses_managed_caddy_route; then
+        systemctl is-active --quiet caddy || exit 4
+        exit 0
+      fi
+      [[ $PROFILE != vless-tls-xhttp ]] && exit 2
+      exit 1
+    ); then
+      green "[通过] 入站 $(basename "$node_file" .env) 的公网入口为 Caddy TCP 443，域名、Path 与后端端口匹配"
+    else
+      route_status=$?
+      case "$route_status" in
+        1) red "[失败] 入站 $(basename "$node_file" .env) 必须通过 Caddy 公开，但未找到匹配的域名、Path 和后端端口"; ((failures+=1)) ;;
+        2) yellow "[提示] 入站 $(basename "$node_file" .env) 未使用受管 Caddy 路由，客户端将直连其监听端口。" ;;
+        3) : ;;
+        4) red "[失败] 入站 $(basename "$node_file" .env) 使用 Caddy TCP 443，但 caddy.service 未运行"; ((failures+=1)) ;;
+      esac
     fi
   done
   if (( node_count == 0 )); then
@@ -3457,7 +3355,7 @@ menu() {
       disabled_nodes=0
     fi
     if [[ -x $XRAY_BIN ]]; then install_label='检查/修复 Xray（保留现有入站）'; else install_label='安装 Xray Core（稍后手动添加协议）'; fi
-    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  by Martin & 林知远"
+    ui_box_title "${APP_NAME}  v${MANAGER_VERSION}  ·  通用 Xray 管理器"
     printf '\033[38;5;39m│\033[0m  Xray: %s\n' "$core_version"
     printf '\033[38;5;39m│\033[0m  服务状态: '
     if [[ $service_state == running ]]; then green "$service_state"; else red "$service_state"; fi
@@ -3525,7 +3423,7 @@ main() {
     uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page-install <域名> [portfolio|resume|default]|page-update <域名> [portfolio|resume|default]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

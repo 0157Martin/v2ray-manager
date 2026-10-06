@@ -157,8 +157,21 @@ managed_link=$(show_connection_loaded "$temporary")
 [[ $managed_link == *'@example.com:443?'* ]] || fail 'managed Caddy WebSocket link did not use public port 443'
 managed_client=$(render_client_config)
 jq -e '.outbounds[0].settings.vnext[0].port == 443' <<<"$managed_client" >/dev/null || fail 'managed Caddy client JSON did not use public port 443'
+cat > "$managed_route_dir/example.com.caddy" <<'EOF'
+example.com {
+	@xray_0 path /cdn-test /cdn-test/*
+	reverse_proxy @xray_0 https://127.0.0.1:29999
+	@xray_1 path /different /different/*
+	reverse_proxy @xray_1 https://127.0.0.1:24443
+}
+EOF
+if managed_caddy_route_exists example.com 24443 /cdn-test; then fail 'unrelated Caddy path and backend were combined into a false route match'; fi
 rm -rf -- "$managed_route_dir"
 unset CADDY_SITE_DIR_OVERRIDE
+direct_link=$(show_connection_loaded "$temporary")
+[[ $direct_link == *'@example.com:24443?'* ]] || fail 'direct WebSocket link did not preserve its listener port'
+direct_client=$(render_client_config)
+jq -e '.outbounds[0].settings.vnext[0].port == 24443' <<<"$direct_client" >/dev/null || fail 'direct WebSocket client JSON did not preserve its listener port'
 cdn_link=$(show_connection_loaded "$temporary" edge.cdn.example.com)
 [[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@edge.cdn.example.com:443?'* ]] || fail 'CDN export did not use override domain and port 443'
 [[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'
@@ -205,13 +218,13 @@ printf '%s\n' 'Route and latency command test passed.'
 caddy_static=$(mktemp)
 caddy_reverse=$(mktemp)
 caddy_xray=$(mktemp)
-personal_page=$(mktemp)
-render_personal_landing_page example.com "$personal_page" || fail 'personal Caddy page did not render'
-! render_personal_landing_page localhost "$personal_page" || fail 'personal page accepted invalid domain'
-grep -Fq '<html lang="zh-CN">' "$personal_page" || fail 'personal page missing document language'
-grep -Fq '正在记录' "$personal_page" || fail 'personal page missing content section'
-grep -Fq 'example.com' "$personal_page" || fail 'personal page missing domain footer'
-if grep -Fq '<script' "$personal_page"; then fail 'personal page must not require client-side scripts'; fi
+placeholder_page=$(mktemp)
+render_caddy_placeholder_page example.com "$placeholder_page" || fail 'generic Caddy placeholder did not render'
+! render_caddy_placeholder_page localhost "$placeholder_page" || fail 'placeholder accepted invalid domain'
+grep -Fq 'Service available' "$placeholder_page" || fail 'placeholder missing status text'
+grep -Fq 'noindex,nofollow' "$placeholder_page" || fail 'placeholder missing search-engine exclusion'
+grep -Fq 'example.com' "$placeholder_page" || fail 'placeholder missing domain'
+if grep -Fq '<script' "$placeholder_page"; then fail 'placeholder must not require client-side scripts'; fi
 render_caddy_site static example.com '' "$caddy_static" || fail 'static Caddy site did not render'
 grep -Fq 'root * /var/www/v2ray-manager/example.com' "$caddy_static" || fail 'static Caddy root mismatch'
 render_caddy_site reverse proxy.example.com 127.0.0.1:8080 "$caddy_reverse" || fail 'reverse Caddy site did not render'
@@ -253,7 +266,7 @@ grep -Fq '@xray_1 path /second-path /second-path/*' "$caddy_xray" || fail 'secon
 grep -Fq 'reverse_proxy @xray_1 https://127.0.0.1:25444' "$caddy_xray" || fail 'second Xray upstream missing'
 rm -rf -- "$caddy_node_dir"
 unset CADDY_NODE_DIR_OVERRIDE
-rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray" "$personal_page"
+rm -f -- "$caddy_static" "$caddy_reverse" "$caddy_xray" "$placeholder_page"
 printf '%s\n' 'Caddy configuration tests passed.'
 
 warp_domains=$(normalize_warp_domains 'netflix.com, domain:openai.com,geosite:netflix')
