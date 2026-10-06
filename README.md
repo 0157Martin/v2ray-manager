@@ -593,7 +593,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 `v2ray upgrade` 是服务器已安装项目的一键更新入口，`v2ray update.sh` 作为兼容别名继续可用。
 
-若更新报 `curl: (6) Could not resolve host: api.github.com`，表示该次域名解析失败，不能据此断定 WARP 故障。先查看 `ip -4 route get 1.1.1.1`，再用 `curl -4 --noproxy '*' -I --connect-timeout 5 --max-time 10 https://1.1.1.1` 测试不依赖 DNS 的 HTTPS 出站，并检查 `getent hosts api.github.com` 和 `/etc/resolv.conf`。`v2ray warp off` 仅撤销 Xray 的 WARP 分流，不停止 `warp-svc`，也不修复系统 DNS 或路由。保留 SSH 连接，在原因明确前不要清空路由、防火墙或反复重启。
+若更新报 `curl: (6) Could not resolve host: api.github.com`，表示该次域名解析失败，不能据此断定 WARP 故障。先查看 `ip -4 route get 1.1.1.1`，再用 `curl -4 --noproxy '*' -I --connect-timeout 5 --max-time 10 https://1.1.1.1` 测试不依赖 DNS 的 HTTPS 出站，并检查 `getent hosts api.github.com` 和 `/etc/resolv.conf`。`v2ray warp off` 仅撤销 Xray 的 WARP 分流，不停止当前 WARP 后端，也不修改系统 DNS 或路由。保留 SSH 连接，在原因明确前不要清空路由、防火墙或反复重启。
 更新器通过 GitHub API 解析 `main` 的完整提交 SHA，再从该固定提交下载脚本，避免一次操作中
 版本漂移。新脚本通过 Bash 语法和项目标识检查后才会替换当前命令，然后自动执行数据迁移、
 重建 Xray 配置并比较更新前后的入站连接参数。UUID/密码、域名、端口、传输路径、TLS/REALITY
@@ -638,14 +638,18 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 ## WARP 出站管理
 
 主菜单的“WARP 出站管理”对全部启用的 VLESS、VMess 和 Trojan 入站统一生效，不需要逐个
-选择协议。项目安装 Cloudflare 官方 Linux 客户端，并将它设置为只监听
-`127.0.0.1:40000` 的本机代理；Xray 根据路由规则使用该代理，因此不会改变服务器默认路由，
-也不会接管 SSH、Caddy、软件更新或其他系统进程。
+选择协议。WARP 实现已拆成两个独立代码仓库，主项目只调用统一的本机 SOCKS5 契约：
+
+- [`warp-wireguard-manager`](https://github.com/0157Martin/warp-wireguard-manager)：WGCF + WireProxy，适合 MASQUE 受限的机房，默认推荐。
+- [`warp-masque-manager`](https://github.com/0157Martin/warp-masque-manager)：Cloudflare 官方客户端 + MASQUE Local Proxy。
+
+两种后端都只监听 `127.0.0.1:40000`，不修改系统默认路由；Xray 根据路由规则使用代理，因此不会
+接管 SSH、Caddy、软件更新或其他系统进程。后端策略可独立更新，不需要修改 Xray 主体代码。
 
 推荐使用“指定域名通过 WARP”：
 
 ```bash
-v2ray warp install
+v2ray warp install wireguard
 v2ray warp selective 'geosite:netflix,domain:openai.com,domain:chatgpt.com'
 v2ray warp status
 v2ray warp test
@@ -654,7 +658,7 @@ v2ray warp test
 完整菜单提供以下操作：
 
 ```text
-1) 安装/初始化 WARP
+1) 安装/切换 WARP 后端
 2) 查看 WARP 状态与出口 IP
 3) 全部协议的公网 TCP 使用 WARP
 4) 指定域名使用 WARP（推荐）
@@ -685,10 +689,10 @@ DRM、设备认证或实际播放一定可用。流媒体平台会按账号地�
 [已知问题](https://developers.cloudflare.com/warp-client/known-issues-and-faq/) 说明了这些限制。
 
 安装和修复只有在 `127.0.0.1:40000` 开始监听、且 Cloudflare trace 返回 `warp=on` 后才会
-报告成功。`warp-cli connect` 完成较慢时最多等待 90 秒，让客户端完成 MASQUE 备用端口轮询；只有在状态不属于已知上游连通故障时，
-才会自动断开并重新注册免费 WARP 设备。检测或修复失败会显示错误并返回 WARP 菜单，不会退出到 shell。
+报告成功。可以使用 `v2ray warp switch wireguard` 或 `v2ray warp switch masque` 切换后端；
+新后端验证失败时，主项目会重新启动原后端。检测或修复失败会显示错误并返回 WARP 菜单。
 
-Local Proxy 会显式使用 MASQUE，且该模式不支持 WireGuard 回退。如果状态长期停在 `Connecting`、
+MASQUE 后端使用官方 Local Proxy，且该模式不支持 WireGuard 回退。如果状态长期停在 `Connecting`、
 `Performing happy eyeballs` 或显示 `Failed to perform happy eyeballs`，
 脚本不会继续反复删除有效注册，而会运行上游诊断。也可手动执行：
 
@@ -696,7 +700,7 @@ Local Proxy 会显式使用 MASQUE，且该模式不支持 WireGuard 回退。�
 v2ray warp diagnose
 ```
 
-诊断会显示系统时间同步、IPv4/IPv6 路由、UFW、`warp-cli status` 和 `warp-svc` 日志。
+MASQUE 诊断会显示 IPv4/IPv6 路由、`warp-cli status` 和 `warp-svc` 日志。
 服务日志只保留连接阶段、警告和错误行，并在显示前移除许可证、令牌、密钥、账户、设备、
 公钥和 UUID；不要在公开截图中展示未经脱敏的 `journalctl -u warp-svc` 原始调试日志。
 服务器本机及服务商出站策略需要允许 WARP 的 UDP `443`、`500`、`1701`、`4500`、`4443`、
@@ -706,16 +710,16 @@ v2ray warp diagnose
 
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，本机和私有目标始终拒绝；这里的“全部”指所有协议产生的
-公网 TCP 流量。Cloudflare 本机代理模式不承诺可靠转发 UDP，因此 UDP 保持原生出口，避免
+公网 TCP 流量。两个本机 SOCKS5 后端都只承诺 TCP，因此 UDP 保持原生出口，避免
 QUIC 或其他 UDP 连接被错误送入代理后超时。运行 `v2ray warp off` 可让全部协议恢复原生出口，`v2ray warp uninstall`
-会先恢复原生出口再移除 WARP 客户端。
+会先恢复原生出口再移除当前 WARP 后端。
 
 WARP 只能改变服务器出站路径和出口 IP，不能替代 REALITY/TLS、防火墙或 SSH 安全设置，
 也不保证特定流媒体长期解锁。菜单中的出口检测以 Cloudflare `cdn-cgi/trace` 返回
 `warp=on` 为成功标准。策略变更会先备份现有配置，再重建并校验 Xray；服务健康检查失败时
 自动恢复之前的配置和策略。
 
-实现依据：[Cloudflare Linux 客户端](https://developers.cloudflare.com/warp-client/get-started/linux/)、
+实现依据：[WGCF](https://github.com/ViRb3/wgcf)、[WireProxy](https://github.com/windtf/wireproxy)、[Cloudflare Linux 客户端](https://developers.cloudflare.com/warp-client/get-started/linux/)、
 [Cloudflare WARP Local proxy 模式](https://developers.cloudflare.com/warp-client/warp-modes/)、
 [Cloudflare WARP 防火墙端口](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/deployment/firewall/)、
 [Xray 路由规则](https://xtls.github.io/config/routing.html)。

@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.0.5"
+readonly MANAGER_VERSION="6.1.0"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -25,8 +25,13 @@ readonly LEGACY_MANAGER_BACKUP="$BACKUP_DIR/legacy-v2ray-command"
 readonly SERVICE_FILE="/etc/systemd/system/xray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly WARP_STATE_FILE="$CONFIG_DIR/warp.env"
+readonly WARP_BACKEND_STATE_FILE="$CONFIG_DIR/warp-backend.env"
 readonly WARP_PROXY_PORT="40000"
-readonly WARP_CONNECT_TIMEOUT="90"
+readonly WARP_BACKEND_BIN_DIR="/usr/local/libexec/v2ray-manager"
+readonly WARP_WIREGUARD_BIN="$WARP_BACKEND_BIN_DIR/warp-wireguard"
+readonly WARP_MASQUE_BIN="$WARP_BACKEND_BIN_DIR/warp-masque"
+readonly WARP_WIREGUARD_URL="https://raw.githubusercontent.com/0157Martin/warp-wireguard-manager/main/warp-wireguard.sh"
+readonly WARP_MASQUE_URL="https://raw.githubusercontent.com/0157Martin/warp-masque-manager/main/warp-masque.sh"
 readonly LOCK_FILE="/run/lock/v2ray-manager.lock"
 readonly ACME_RENEWAL_DIR="/etc/letsencrypt/renewal"
 readonly NODES_DIR="$CONFIG_DIR/nodes"
@@ -1122,6 +1127,7 @@ create_backup() {
   archive=$(mktemp "$BACKUP_DIR/config-${timestamp}-XXXXXX.tar.gz")
   local -a backup_items=(config.json manager.env)
   [[ -f $WARP_STATE_FILE ]] && backup_items+=(warp.env)
+  [[ -f $WARP_BACKEND_STATE_FILE ]] && backup_items+=(warp-backend.env)
   [[ -d $TLS_DIR ]] && backup_items+=(tls)
   [[ -d $NODES_DIR ]] && backup_items+=(nodes)
   if ! tar -czf "$archive" -C "$CONFIG_DIR" "${backup_items[@]}"; then
@@ -1173,6 +1179,11 @@ restore_archive() (
     install -m 600 -o root -g root "$temp_dir/warp.env" "$WARP_STATE_FILE" || return 1
   else
     rm -f -- "$WARP_STATE_FILE" || return 1
+  fi
+  if [[ -f $temp_dir/warp-backend.env ]]; then
+    install -m 600 -o root -g root "$temp_dir/warp-backend.env" "$WARP_BACKEND_STATE_FILE" || return 1
+  else
+    rm -f -- "$WARP_BACKEND_STATE_FILE" || return 1
   fi
   if [[ -d $temp_dir/nodes ]]; then
     rm -rf "$NODES_DIR" || return 1
@@ -2700,123 +2711,105 @@ caddy_command() {
   esac
 }
 
-warp_cli() {
-  warp-cli --accept-tos "$@"
+valid_warp_backend() {
+  [[ $1 == wireguard || $1 == masque ]]
+}
+
+active_warp_backend() {
+  local WARP_BACKEND=''
+  if [[ -r $WARP_BACKEND_STATE_FILE ]]; then
+    # This file is created by this script with mode 0600.
+    # shellcheck disable=SC1090
+    source "$WARP_BACKEND_STATE_FILE"
+  fi
+  if valid_warp_backend "${WARP_BACKEND:-}"; then
+    printf '%s' "$WARP_BACKEND"
+  else
+    printf none
+  fi
+}
+
+warp_backend_bin() {
+  case $1 in
+    wireguard) printf '%s' "$WARP_WIREGUARD_BIN" ;;
+    masque) printf '%s' "$WARP_MASQUE_BIN" ;;
+    *) return 1 ;;
+  esac
+}
+
+warp_backend_url() {
+  case $1 in
+    wireguard) printf '%s' "$WARP_WIREGUARD_URL" ;;
+    masque) printf '%s' "$WARP_MASQUE_URL" ;;
+    *) return 1 ;;
+  esac
+}
+
+install_warp_backend_command() {
+  local backend=$1 destination url temporary
+  valid_warp_backend "$backend" || die "未知 WARP 后端：$backend"
+  destination=$(warp_backend_bin "$backend")
+  url=$(warp_backend_url "$backend")
+  temporary=$(mktemp)
+  if ! curl --fail --show-error --location --retry 3 "$url" -o "$temporary"; then
+    rm -f -- "$temporary"
+    die "无法下载 WARP 后端：$backend"
+  fi
+  bash -n "$temporary" || { rm -f -- "$temporary"; die "WARP 后端脚本语法校验失败：$backend"; }
+  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; die "WARP 后端脚本缺少许可证标识：$backend"; }
+  install -d -m 755 "$WARP_BACKEND_BIN_DIR"
+  install -m 755 "$temporary" "$destination"
+  rm -f -- "$temporary"
+}
+
+stop_warp_backend() {
+  local command
+  command=$(warp_backend_bin "$1" 2>/dev/null || true)
+  [[ -x $command ]] && "$command" stop >/dev/null 2>&1 || true
+}
+
+start_warp_backend() {
+  local command
+  command=$(warp_backend_bin "$1" 2>/dev/null || true)
+  [[ -x $command ]] && "$command" start >/dev/null 2>&1 || true
+}
+
+save_warp_backend() {
+  local backend=$1
+  printf 'WARP_BACKEND=%q\n' "$backend" >"$WARP_BACKEND_STATE_FILE"
+  chmod 600 "$WARP_BACKEND_STATE_FILE"
 }
 
 warp_proxy_ready() {
-  systemctl is-active --quiet warp-svc &&
-    ss -H -lnt "sport = :${WARP_PROXY_PORT}" 2>/dev/null | grep -q .
-}
-
-wait_for_warp_proxy() {
-  local attempt
-  for ((attempt=0; attempt<WARP_CONNECT_TIMEOUT; attempt++)); do
-    warp_proxy_ready && return 0
-    sleep 1
-  done
-  return 1
-}
-
-configure_warp_proxy() {
-  systemctl enable --now warp-svc || return 1
-  warp_cli tunnel protocol set MASQUE || return 1
-  warp_cli mode proxy || return 1
-  warp_cli proxy port "$WARP_PROXY_PORT" || return 1
-  warp_cli connect || return 1
-  if ! wait_for_warp_proxy; then
-    red "WARP 已发送连接命令，但 127.0.0.1:${WARP_PROXY_PORT} 在 ${WARP_CONNECT_TIMEOUT} 秒内没有开始监听。" >&2
-    warp_cli status >&2 || true
-    return 1
-  fi
-  warp_trace >/dev/null
-}
-
-warp_has_upstream_failure() {
-  local status
-  status=$(warp_cli status 2>&1 || true)
-  grep -Eqi 'Connecting|perform(ing)?[[:space:]]+happy[[:space:]_-]*eyeballs|failed[[:space:]]+to[[:space:]]+perform[[:space:]]+happy[[:space:]_-]*eyeballs' <<<"$status"
-}
-
-redact_warp_log() {
-  sed -E \
-    -e 's/(license|token|secret|private_key)[[:space:]]*[:=][[:space:]]*("[^"]*"|[^,}[:space:]]+)/\1=[REDACTED]/Ig' \
-    -e 's/(public_key)[[:space:]]*[:=][[:space:]]*\[[^]]*\]/\1=[REDACTED]/Ig' \
-    -e 's/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/[REDACTED-ID]/g'
-}
-
-warp_connectivity_diagnostics() {
-  local log_output
-  printf '%s\n' '----- WARP 上游连通性诊断 -----'
-  printf '系统时间同步：'
-  timedatectl show -p NTPSynchronized --value 2>/dev/null || printf '未知\n'
-  printf '%s\n' 'IPv4 默认路由：'
-  ip -4 route show default 2>&1 || true
-  printf '%s\n' 'IPv6 默认路由：'
-  ip -6 route show default 2>&1 || true
-  if command -v ufw >/dev/null 2>&1; then
-    printf '%s\n' 'UFW 状态：'
-    ufw status verbose 2>&1 || true
-  fi
-  printf '%s\n' 'WARP 状态：'
-  warp_cli status 2>&1 || true
-  printf '%s\n' 'warp-svc 最近日志：'
-  log_output=$(journalctl -u warp-svc -n 300 --no-pager 2>&1 | \
-    grep -Ei 'Connecting|HappyEyeballs|ERROR|WARN|failed|failure|timeout|unreachable|refused' | tail -n 30 || true)
-  if [[ -n $log_output ]]; then
-    redact_warp_log <<<"$log_output"
-  else
-    yellow "最近日志中没有匹配的连接错误。"
-  fi
-  yellow "Local Proxy 只能使用 MASQUE，不能回退到 WireGuard。服务器和服务商出站防火墙需允许 UDP 443、500、1701、4500、4443、8443、8095，并允许 TCP 443 回退。"
-  yellow "WARP 入口会随客户端版本、注册类型和网络变化；排障时以本次 warp-cli status 的 Performing happy eyeballs 目标为准。"
-  yellow "Connecting 或 Failed to perform happy eyeballs 表示 Cloudflare 上游隧道未建立；127.0.0.1:${WARP_PROXY_PORT} 未监听是结果，不应放行公网入站端口 40000。"
-}
-
-reregister_warp() {
-  warp_cli disconnect >/dev/null 2>&1 || true
-  warp_cli registration delete >/dev/null 2>&1 || true
-  timeout 45 warp-cli --accept-tos registration new || return 1
+  ss -H -lnt "sport = :${WARP_PROXY_PORT}" 2>/dev/null | grep -q .
 }
 
 install_warp() {
   require_supported_os
-  local codename key_file
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  codename=${VERSION_CODENAME:-}
-  [[ -n $codename ]] || die "无法识别系统发行版代号。"
-  key_file=$(mktemp)
-  curl --fail --show-error --location --retry 3 https://pkg.cloudflareclient.com/pubkey.gpg -o "$key_file"
-  gpg --batch --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg "$key_file"
-  rm -f -- "$key_file"
-  printf 'deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ %s main\n' "$codename" \
-    > /etc/apt/sources.list.d/cloudflare-client.list
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflare-warp
-  systemctl enable --now warp-svc
-  if ! warp_cli registration show >/dev/null 2>&1; then
-    timeout 45 warp-cli --accept-tos registration new || die "WARP 注册失败。"
+  local backend=${1:-wireguard} previous command
+  valid_warp_backend "$backend" || die 'WARP 后端必须是 wireguard 或 masque。'
+  previous=$(active_warp_backend)
+  install_dependencies
+  install_warp_backend_command "$backend"
+  command=$(warp_backend_bin "$backend")
+  if [[ $previous != none && $previous != "$backend" ]]; then stop_warp_backend "$previous"; fi
+  if ! "$command" install "$WARP_PROXY_PORT"; then
+    [[ $previous == none || $previous == "$backend" ]] || start_warp_backend "$previous"
+    red "WARP $backend 后端安装失败；已恢复先前后端：$previous" >&2
+    return 1
   fi
-  configure_warp_proxy || {
-    if warp_has_upstream_failure; then
-      warp_connectivity_diagnostics
-      red "WARP 注册有效，但 MASQUE 上游连接被网络阻断或不可达；已保留注册，未重复注册设备。" >&2
-      return 1
-    fi
-    yellow "首次连接失败且未发现已知上游连通故障，正在重新注册 WARP 设备…"
-    reregister_warp || { red "WARP 重新注册失败。" >&2; return 1; }
-    configure_warp_proxy || { red "重新注册后 WARP 本机代理仍未启动。" >&2; return 1; }
-  }
-  green "WARP 本机代理已安装：127.0.0.1:${WARP_PROXY_PORT}。"
+  save_warp_backend "$backend"
+  green "WARP 后端已切换为 $backend：127.0.0.1:${WARP_PROXY_PORT}。"
   yellow "尚未改变 Xray 出站；请在 WARP 菜单中选择分流策略。"
 }
 
 warp_trace() {
-  command -v warp-cli >/dev/null 2>&1 || { red "WARP 尚未安装。" >&2; return 1; }
-  local trace
+  local backend command trace
+  backend=$(active_warp_backend)
+  [[ $backend != none ]] || { red "WARP 后端尚未安装。" >&2; return 1; }
+  command=$(warp_backend_bin "$backend")
+  [[ -x $command ]] || { red "WARP 后端命令缺失：$backend" >&2; return 1; }
+  "$command" test "$WARP_PROXY_PORT" >/dev/null || return 1
   trace=$(curl --fail --silent --show-error --max-time 15 --proxy "socks5h://127.0.0.1:${WARP_PROXY_PORT}" \
     https://www.cloudflare.com/cdn-cgi/trace) || { red "无法通过 WARP 本机代理联网。" >&2; return 1; }
   grep -q '^warp=on$' <<<"$trace" || { red "Cloudflare 未确认 WARP 已连接。" >&2; return 1; }
@@ -2873,20 +2866,28 @@ EOF
 
 disable_warp_policy() {
   [[ -x $XRAY_BIN && -r $CONFIG_FILE ]] || die "请先安装 Xray。"
-  [[ -f $WARP_STATE_FILE ]] || { yellow "Xray 当前没有启用 WARP 策略；此命令不停止 warp-svc，也不修复系统 DNS 或路由。"; return; }
+  [[ -f $WARP_STATE_FILE ]] || { yellow "Xray 当前没有启用 WARP 策略；此命令不停止已安装的 WARP 后端。"; return; }
   create_backup
   rm -f -- "$WARP_STATE_FILE"
   rebuild_or_restore
   restart_or_rollback
   green "全部协议已恢复使用服务器原生出口。"
-  yellow '仅关闭 Xray WARP 分流；warp-svc 仍可运行。系统 DNS/路由故障请单独诊断。'
+  yellow '仅关闭 Xray WARP 分流；当前 WARP 后端仍可运行。'
 }
 
 show_warp_status() {
-  if command -v warp-cli >/dev/null 2>&1; then
-    warp_cli status || true
+  local backend command
+  backend=$(active_warp_backend)
+  printf 'WARP 后端：%s\n' "$backend"
+  if [[ $backend != none ]]; then
+    command=$(warp_backend_bin "$backend")
+    if [[ -x $command ]]; then
+      "$command" status || yellow "WARP 后端状态检查失败：$backend"
+    else
+      yellow "WARP 后端命令缺失：$backend"
+    fi
   else
-    yellow "WARP 客户端未安装。"
+    yellow "WARP 后端尚未安装。"
   fi
   if [[ -r $WARP_STATE_FILE ]]; then
     WARP_MODE=off; WARP_DOMAINS=''; WARP_IP_STRATEGY=UseIPv4v6
@@ -2961,19 +2962,12 @@ check_warp_services() {
 }
 
 repair_warp() {
-  command -v warp-cli >/dev/null 2>&1 || die "WARP 尚未安装，请先选择安装。"
-  if ! warp_cli registration show >/dev/null 2>&1; then
-    timeout 45 warp-cli --accept-tos registration new || die "WARP 重新注册失败。"
-  fi
-  if ! configure_warp_proxy; then
-    if warp_has_upstream_failure; then
-      warp_connectivity_diagnostics
-      die "MASQUE 上游连接失败（Connecting/Happy Eyeballs）；请放行诊断列出的出站端口和地址范围，或联系 VPS 服务商。"
-    fi
-    yellow "现有 WARP 注册无法启动本机代理，正在重新注册免费 WARP 设备…"
-    reregister_warp || die "WARP 重新注册失败。"
-    configure_warp_proxy || die "重新注册后本机代理仍未启动；请运行 warp-cli status 和 journalctl -u warp-svc。"
-  fi
+  local backend command
+  backend=$(active_warp_backend)
+  [[ $backend != none ]] || die "WARP 后端尚未安装。"
+  install_warp_backend_command "$backend"
+  command=$(warp_backend_bin "$backend")
+  "$command" repair "$WARP_PROXY_PORT" || die "WARP $backend 后端修复失败。"
   if [[ -r $CONFIG_FILE ]]; then
     create_backup
     rebuild_or_restore
@@ -2983,14 +2977,32 @@ repair_warp() {
 }
 
 uninstall_warp() {
+  local backend=${1:-} command
+  [[ -n $backend ]] || backend=$(active_warp_backend)
+  valid_warp_backend "$backend" || die '没有可卸载的 WARP 后端。'
   [[ -f $WARP_STATE_FILE ]] && disable_warp_policy
-  if command -v warp-cli >/dev/null 2>&1; then
-    warp_cli disconnect >/dev/null 2>&1 || true
-    warp_cli registration delete >/dev/null 2>&1 || true
-  fi
-  apt-get remove -y cloudflare-warp
-  rm -f -- /etc/apt/sources.list.d/cloudflare-client.list /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-  green "WARP 客户端及 Xray WARP 策略已移除。"
+  command=$(warp_backend_bin "$backend")
+  [[ -x $command ]] && "$command" uninstall || true
+  rm -f -- "$command" "$WARP_BACKEND_STATE_FILE"
+  green "WARP $backend 后端及 Xray WARP 策略已移除。"
+}
+
+warp_backend_menu() {
+  local choice
+  printf '\n'
+  ui_box_title '选择 WARP 后端'
+  ui_menu_item '1) WireGuard / WireProxy（推荐，兼容受限机房）'
+  ui_menu_item '2) MASQUE / Cloudflare 官方 Local Proxy'
+  ui_box_divider
+  ui_menu_item '0) 返回'
+  ui_box_bottom
+  read -r -p '请选择 [0-2]：' choice
+  case "$choice" in
+    1) run_mutation install_warp wireguard || true ;;
+    2) run_mutation install_warp masque || true ;;
+    0) return ;;
+    *) yellow '无效选择。' ;;
+  esac
 }
 
 warp_menu() {
@@ -2998,7 +3010,7 @@ warp_menu() {
   while :; do
     printf '\n'
     ui_box_title 'WARP 出站管理（对全部协议生效）'
-    ui_menu_item '1) 安装/初始化 WARP'
+    ui_menu_item '1) 安装/切换 WARP 后端'
     ui_menu_item '2) 查看 WARP 状态与出口 IP'
     ui_menu_item '3) 全部协议的公网 TCP 使用 WARP'
     ui_menu_item '4) 指定域名使用 WARP（推荐）'
@@ -3012,7 +3024,7 @@ warp_menu() {
     ui_box_bottom
     read -r -p '请选择 [0-9]：' choice
     case "$choice" in
-      1) run_mutation install_warp || true; pause ;;
+      1) warp_backend_menu; pause ;;
       2) show_warp_status; (warp_trace) || true; pause ;;
       3)
         read -r -p '确认让全部协议的公网 TCP 流量通过 WARP？[y/N] ' answer
@@ -3040,13 +3052,20 @@ warp_menu() {
 }
 
 warp_command() {
-  local action=${1:-menu}
+  local action=${1:-menu} backend command
   case "$action" in
     menu) warp_menu ;;
-    install) run_mutation install_warp ;;
+    install|switch)
+      [[ ${2:-} == wireguard || ${2:-} == masque ]] || die "用法：v2ray warp $action <wireguard|masque>"
+      run_mutation install_warp "$2"
+      ;;
     status) show_warp_status ;;
     test) warp_trace ;;
-    diagnose) warp_connectivity_diagnostics ;;
+    diagnose)
+      backend=$(active_warp_backend)
+      command=$(warp_backend_bin "$backend" 2>/dev/null || true)
+      if [[ -x $command ]]; then "$command" diagnose 2>/dev/null || "$command" status || true; else yellow 'WARP 后端尚未安装。'; fi
+      ;;
     check) check_warp_services ;;
     repair) run_mutation repair_warp ;;
     ipv4) run_mutation set_warp_ip_strategy UseIPv4 ;;
@@ -3055,7 +3074,7 @@ warp_command() {
     selective) [[ -n ${2:-} ]] || die "用法：v2ray warp selective <逗号分隔的域名规则>"; run_mutation set_warp_policy selective "$2" ;;
     all) run_mutation set_warp_policy all ;;
     off) run_mutation disable_warp_policy ;;
-    uninstall) run_mutation uninstall_warp ;;
+    uninstall) run_mutation uninstall_warp "${2:-}" ;;
     *) die "未知 WARP 操作：$action" ;;
   esac
 }
@@ -3088,7 +3107,7 @@ doctor() {
     if warp_proxy_ready; then
       green "[通过] Xray WARP 策略所需的本机 SOCKS 代理正在监听 127.0.0.1:${WARP_PROXY_PORT}"
     else
-      red "[失败] Xray 已启用 WARP 策略，但 warp-svc 或 127.0.0.1:${WARP_PROXY_PORT} 不可用"
+      red "[失败] Xray 已启用 WARP 策略，但当前后端或 127.0.0.1:${WARP_PROXY_PORT} 不可用"
       yellow "运行 v2ray warp repair 检查 WARP 上游；若不再需要 WARP，请运行 v2ray warp off。"
       ((failures+=1))
     fi
@@ -3588,7 +3607,7 @@ main() {
     uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log]|warp [install|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log]|warp [install|switch <wireguard|masque>|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

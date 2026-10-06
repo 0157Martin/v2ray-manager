@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 6.1.0
+
+- 将 WARP 实现拆分到独立的 `warp-wireguard-manager` 与 `warp-masque-manager` 代码仓库；主项目只负责下载、校验、调用和记录当前后端。
+- 新增 `v2ray warp install|switch <wireguard|masque>`，默认推荐不改系统路由的 WGCF + WireProxy 后端，并保留官方 MASQUE Local Proxy 后端。
+- 两种后端统一提供 `127.0.0.1:40000` SOCKS5 契约，Xray 的全局/域名分流逻辑保持不变。
+- 后端切换失败时重新启动原后端，避免影响现有 Xray 入站、Caddy、SSH 和系统网络。
+
 ## 6.0.5
 
 - WARP 本机代理等待窗口从 30 秒调整为 90 秒，允许新版客户端完成 MASQUE 备用端口轮询并返回明确状态。

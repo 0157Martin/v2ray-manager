@@ -276,33 +276,13 @@ warp_domains=$(normalize_warp_domains 'netflix.com, domain:openai.com,geosite:ne
 if (normalize_warp_domains 'https://invalid.example/path' >/dev/null 2>&1); then fail 'invalid WARP domain rule accepted'; fi
 printf '%s\n' 'WARP policy tests passed.'
 
-# The WARP client connects asynchronously; installation must wait for its local proxy listener.
-systemctl() { return 0; }
-sleep() { :; }
+# Backend implementations are external; the core only validates the common local listener contract.
 ss() { [[ ${MOCK_WARP_LISTENER:-down} == up ]] && printf '%s\n' 'LISTEN 0 4096 127.0.0.1:40000'; }
 export MOCK_WARP_LISTENER=up
 warp_proxy_ready || fail 'ready WARP proxy was not reported healthy'
-wait_for_warp_proxy || fail 'ready WARP proxy listener was not detected'
 export MOCK_WARP_LISTENER=down
 if warp_proxy_ready; then fail 'missing WARP proxy was reported healthy'; fi
-if wait_for_warp_proxy; then fail 'missing WARP proxy listener was accepted'; fi
-warp_calls=$(mktemp)
-warp_cli() {
-  if [[ -n ${MOCK_WARP_STATUS:-} ]]; then
-    printf '%s\n' "$MOCK_WARP_STATUS"
-  else
-    printf '%s\n' "$*" >> "$warp_calls"
-  fi
-}
-warp_trace() { :; }
-export MOCK_WARP_LISTENER=up
-configure_warp_proxy || fail 'mock WARP proxy configuration failed'
-grep -Fxq 'tunnel protocol set MASQUE' "$warp_calls" || fail 'WARP Local Proxy did not explicitly select MASQUE'
-rm -f -- "$warp_calls"
-redacted=$(printf '%s\n' 'ERROR license: "secret-value", device_id=ee4f2dc1-4a4b-47a1-b0c8-78f8633a6e12, public_key: [1, 2, 3]' | redact_warp_log)
-[[ $redacted != *secret-value* && $redacted != *ee4f2dc1* && $redacted != *'[1, 2, 3]'* ]] || fail 'WARP diagnostic log leaked registration credentials'
-MOCK_WARP_STATUS=$'Status update: Unable\nReason: Failed to perform happy eyeballs'
-warp_has_upstream_failure || fail 'Happy Eyeballs failure was not classified as an upstream failure'
-MOCK_WARP_STATUS='Status update: Disconnected'
-if warp_has_upstream_failure; then fail 'ordinary disconnected status was classified as an upstream failure'; fi
-printf '%s\n' 'WARP startup wait tests passed.'
+valid_warp_backend wireguard || fail 'wireguard backend rejected'
+valid_warp_backend masque || fail 'masque backend rejected'
+if valid_warp_backend invalid; then fail 'invalid backend accepted'; fi
+printf '%s\n' 'WARP backend contract tests passed.'
