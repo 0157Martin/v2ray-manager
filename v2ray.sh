@@ -1281,7 +1281,7 @@ show_connection() (
 # server certificates, private keys or REALITY target settings.
 render_client_config() {
   local client_port=$PORT
-  profile_uses_managed_caddy_route && client_port=443
+  if [[ ${PROFILE:-} == vless-tls-xhttp ]] || profile_uses_managed_caddy_route; then client_port=443; fi
   render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-}" '
