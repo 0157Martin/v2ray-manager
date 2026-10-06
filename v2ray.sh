@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.0.4"
+readonly MANAGER_VERSION="6.0.5"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -26,6 +26,7 @@ readonly SERVICE_FILE="/etc/systemd/system/xray.service"
 readonly STATE_FILE="$CONFIG_DIR/manager.env"
 readonly WARP_STATE_FILE="$CONFIG_DIR/warp.env"
 readonly WARP_PROXY_PORT="40000"
+readonly WARP_CONNECT_TIMEOUT="90"
 readonly LOCK_FILE="/run/lock/v2ray-manager.lock"
 readonly ACME_RENEWAL_DIR="/etc/letsencrypt/renewal"
 readonly NODES_DIR="$CONFIG_DIR/nodes"
@@ -2710,7 +2711,7 @@ warp_proxy_ready() {
 
 wait_for_warp_proxy() {
   local attempt
-  for ((attempt=0; attempt<30; attempt++)); do
+  for ((attempt=0; attempt<WARP_CONNECT_TIMEOUT; attempt++)); do
     warp_proxy_ready && return 0
     sleep 1
   done
@@ -2724,7 +2725,7 @@ configure_warp_proxy() {
   warp_cli proxy port "$WARP_PROXY_PORT" || return 1
   warp_cli connect || return 1
   if ! wait_for_warp_proxy; then
-    red "WARP 已发送连接命令，但 127.0.0.1:${WARP_PROXY_PORT} 在 30 秒内没有开始监听。" >&2
+    red "WARP 已发送连接命令，但 127.0.0.1:${WARP_PROXY_PORT} 在 ${WARP_CONNECT_TIMEOUT} 秒内没有开始监听。" >&2
     warp_cli status >&2 || true
     return 1
   fi
@@ -2749,10 +2750,10 @@ warp_connectivity_diagnostics() {
   printf '%s\n' '----- WARP 上游连通性诊断 -----'
   printf '系统时间同步：'
   timedatectl show -p NTPSynchronized --value 2>/dev/null || printf '未知\n'
-  printf '%s\n' 'IPv4 路由：'
-  ip route get 162.159.197.2 2>&1 || true
-  printf '%s\n' 'IPv6 路由：'
-  ip -6 route get 2606:4700:102::2 2>&1 || true
+  printf '%s\n' 'IPv4 默认路由：'
+  ip -4 route show default 2>&1 || true
+  printf '%s\n' 'IPv6 默认路由：'
+  ip -6 route show default 2>&1 || true
   if command -v ufw >/dev/null 2>&1; then
     printf '%s\n' 'UFW 状态：'
     ufw status verbose 2>&1 || true
@@ -2768,7 +2769,7 @@ warp_connectivity_diagnostics() {
     yellow "最近日志中没有匹配的连接错误。"
   fi
   yellow "Local Proxy 只能使用 MASQUE，不能回退到 WireGuard。服务器和服务商出站防火墙需允许 UDP 443、500、1701、4500、4443、8443、8095，并允许 TCP 443 回退。"
-  yellow "企业 WARP 的 MASQUE 地址范围为 162.159.197.0/24、2606:4700:102::/48；消费者 WARP 还可能使用 162.159.192.0/24。"
+  yellow "WARP 入口会随客户端版本、注册类型和网络变化；排障时以本次 warp-cli status 的 Performing happy eyeballs 目标为准。"
   yellow "Connecting 或 Failed to perform happy eyeballs 表示 Cloudflare 上游隧道未建立；127.0.0.1:${WARP_PROXY_PORT} 未监听是结果，不应放行公网入站端口 40000。"
 }
 
