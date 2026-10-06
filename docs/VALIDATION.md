@@ -1,5 +1,14 @@
 # Validation status
 
+## 6.0.1 optional page deployment — 2026-10-06
+
+- Recovery tests cover explicit built-in page replacement, invalid template rejection, failed remote
+  download and preservation of the existing website.
+- Optional Portfolio/Resume deployment remains outside the default setup path and publishes only
+  after manifest and per-file digest validation.
+- Ubuntu 24.04 CI passed the complete verification and Xray configuration matrix:
+  [run 37421175187](https://github.com/0157Martin/v2ray-manager/actions/runs/37421175187).
+
 ## 6.0.0 architecture cleanup — 2026-10-06
 
 - Removed themed page downloads and their menu, mutation and recovery branches; generic placeholder
