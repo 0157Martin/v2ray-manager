@@ -641,10 +641,18 @@ CI、云初始化需要在安装时直接创建入站时，必须明确设置 `V
 选择协议。WARP 实现已拆成两个独立代码仓库，主项目只调用统一的本机 SOCKS5 契约：
 
 - [`warp-wireguard-manager`](https://github.com/0157Martin/warp-wireguard-manager)：WGCF + WireProxy，适合 MASQUE 受限的机房，默认推荐。
-- [`warp-masque-manager`](https://github.com/0157Martin/warp-masque-manager)：Cloudflare 官方客户端 + MASQUE Local Proxy。
+- [`warp-masque-manager`](https://github.com/0157Martin/warp-masque-manager)：Cloudflare 官方客户端 Local Proxy；优先 MASQUE，失败时测试固定 IPv4/备用端口及官方客户端支持的 WireGuard 协议。
 
 两种后端都只监听 `127.0.0.1:40000`，不修改系统默认路由；Xray 根据路由规则使用代理，因此不会
 接管 SSH、Caddy、软件更新或其他系统进程。后端策略可独立更新，不需要修改 Xray 主体代码。
+
+两个后端仓库都可脱离主项目独立安装、验收和卸载，便于在空白 VPS 上判断问题属于后端实现还是
+机房出站限制。以下命令使用默认端口 `40000`；自定义端口可作为最后一个参数传入：
+
+| 后端 | 安装 | 验证 | 卸载 |
+| --- | --- | --- | --- |
+| WGCF + WireProxy | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-wireguard-manager/main/install.sh) install` | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-wireguard-manager/main/install.sh) verify` | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-wireguard-manager/main/install.sh) uninstall` |
+| 官方客户端 | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-masque-manager/main/install.sh) install` | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-masque-manager/main/install.sh) verify` | `bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/warp-masque-manager/main/install.sh) uninstall` |
 
 推荐使用“指定域名通过 WARP”：
 
@@ -692,7 +700,8 @@ DRM、设备认证或实际播放一定可用。流媒体平台会按账号地�
 报告成功。可以使用 `v2ray warp switch wireguard` 或 `v2ray warp switch masque` 切换后端；
 新后端验证失败时，主项目会重新启动原后端。检测或修复失败会显示错误并返回 WARP 菜单。
 
-MASQUE 后端使用官方 Local Proxy，且该模式不支持 WireGuard 回退。如果状态长期停在 `Connecting`、
+官方客户端后端使用 Local Proxy，先测试 MASQUE，再测试固定 IPv4/备用端口和官方客户端支持的
+WireGuard 协议。如果状态长期停在 `Connecting`、
 `Performing happy eyeballs` 或显示 `Failed to perform happy eyeballs`，
 脚本不会继续反复删除有效注册，而会运行上游诊断。也可手动执行：
 
@@ -707,6 +716,9 @@ MASQUE 诊断会显示 IPv4/IPv6 路由、`warp-cli status` 和 `warp-svc` 日�
 `8443`、`8095`，以及 TCP `443` 回退。卡在 Happy Eyeballs 表示 Cloudflare 上游隧道尚未
 建立；此时 `127.0.0.1:40000` 不监听是结果，并不是需要开放公网入站 40000。WARP 入口可能随
 客户端版本和注册类型变化，诊断以 `warp-cli status` 当次显示的 Happy Eyeballs 目标为准。
+账户创建、服务进程存在或端口监听都不是最终验收；只有经该 SOCKS5 访问 Cloudflare trace 得到
+`warp=on` 才算安装成功。若同一版本在新 VPS 成功、旧 VPS 的全部官方与非官方入口均失败，应优先
+判定为服务商或机房到 Cloudflare WARP 入口的上游限制，而不是继续反复注册或开放公网端口。
 
 需要让所有 Xray 入站的公网 TCP 流量使用 WARP 时，可执行 `v2ray warp all`。为避免代理客户端
 访问内网时绕过边界，本机和私有目标始终拒绝；这里的“全部”指所有协议产生的

@@ -85,7 +85,7 @@ flowchart TD
     Private -->|是| Direct[Direct 原生出口]
     Private -->|否| WarpRule{命中 WARP 域名或全局 TCP 策略?}
     WarpRule -->|是，且为 TCP| Warp[Socks 出站 127.0.0.1:40000]
-    Warp --> WarpSvc[Cloudflare WARP / MASQUE]
+    Warp --> WarpSvc[可替换 WARP 后端]
     WarpSvc --> Target[目标网站]
     WarpRule -->|否或 UDP| Direct
     Direct --> Target
@@ -323,9 +323,11 @@ Caddy 不负责：
 
 ## 10. WARP 的作用和边界
 
-WARP 改变的是 Xray 到目标网站的出站路径。项目使用 Cloudflare 官方 Linux 客户端的 Local
-Proxy 模式，由 Xray 连接 `127.0.0.1:40000`，不接管服务器默认路由，因此不会主动改变 SSH、
-Caddy 和系统更新的出口。
+WARP 改变的是 Xray 到目标网站的出站路径。主项目只管理策略并调用后端，不内置具体隧道实现。
+`warp-wireguard-manager` 提供 WGCF + WireProxy，`warp-masque-manager` 提供 Cloudflare 官方
+Linux 客户端 Local Proxy（优先 MASQUE，并测试官方客户端支持的 WireGuard 回退）。两者都向
+Xray 提供 `127.0.0.1:40000` SOCKS5，不接管服务器默认路由，因此不会主动改变 SSH、Caddy 和
+系统更新的出口。后端可以独立安装、验证、卸载和升级，不需要修改 Xray 主体代码。
 
 项目对全部入站协议统一应用 WARP 策略，可选择：
 
@@ -337,11 +339,15 @@ Caddy 和系统更新的出口。
 UDP 和私有地址保持直连。WARP 不保证流媒体解锁，也不能替代 REALITY/TLS、防火墙或 SSH
 安全设置。
 
-Local Proxy 使用 MASQUE。安装成功必须同时满足：
+安装成功必须同时满足：
 
-1. `warp-svc` 正在运行；
+1. 所选后端服务正在运行；
 2. `127.0.0.1:40000` 已监听；
 3. Cloudflare trace 返回 `warp=on`。
+
+前两项只是运行条件，第三项才是流量验收。若旧 VPS 的多个 WARP 入口均失败，而同一安装器在新
+VPS 返回 `warp=on`，应把旧机故障归类为服务商或机房上游限制。端口 `40000` 是回环监听，无需
+也不应在云安全组或主机防火墙中开放公网入站。
 
 状态卡在 `Connecting / Happy Eyeballs` 表示到 Cloudflare 上游的隧道没有建立。运行：
 
