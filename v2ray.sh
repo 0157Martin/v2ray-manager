@@ -2765,13 +2765,17 @@ install_warp_backend_command() {
 stop_warp_backend() {
   local command
   command=$(warp_backend_bin "$1" 2>/dev/null || true)
-  [[ -x $command ]] && "$command" stop >/dev/null 2>&1 || true
+  if [[ -x $command ]]; then
+    "$command" stop >/dev/null 2>&1 || true
+  fi
 }
 
 start_warp_backend() {
   local command
   command=$(warp_backend_bin "$1" 2>/dev/null || true)
-  [[ -x $command ]] && "$command" start >/dev/null 2>&1 || true
+  if [[ -x $command ]]; then
+    "$command" start >/dev/null 2>&1 || true
+  fi
 }
 
 save_warp_backend() {
@@ -2980,9 +2984,13 @@ uninstall_warp() {
   local backend=${1:-} command
   [[ -n $backend ]] || backend=$(active_warp_backend)
   valid_warp_backend "$backend" || die '没有可卸载的 WARP 后端。'
-  [[ -f $WARP_STATE_FILE ]] && disable_warp_policy
+  if [[ -f $WARP_STATE_FILE ]]; then
+    disable_warp_policy
+  fi
   command=$(warp_backend_bin "$backend")
-  [[ -x $command ]] && "$command" uninstall || true
+  if [[ -x $command ]]; then
+    "$command" uninstall || true
+  fi
   rm -f -- "$command" "$WARP_BACKEND_STATE_FILE"
   green "WARP $backend 后端及 Xray WARP 策略已移除。"
 }
