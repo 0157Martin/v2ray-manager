@@ -107,3 +107,17 @@ v2ray rollback.sh
 - 通用占位页创建失败回滚及已有页面不覆盖测试。
 
 生产验证仍需要在真实服务器执行 `v2ray doctor`，并从外部客户端测试实际节点。
+
+## 6.0.1 后续调整
+
+用户反馈个人网页属于实际需要的可选能力。6.0.1 因此恢复 Portfolio、Resume 部署，但保持
+6.0.0 的核心边界：默认流程不下载模板，菜单只有一个“安装/更新可选网页”入口，命令统一为：
+
+```bash
+v2ray caddy page example.com portfolio
+v2ray caddy page example.com resume
+v2ray caddy page example.com default
+```
+
+显式部署会替换该域名网页文件；项目先完成固定提交解析、清单校验和逐文件 SHA-256 校验，再
+切换站点目录。失败时保留原网页。Caddy/Xray 路由不随网页部署改变。

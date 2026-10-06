@@ -20,7 +20,7 @@ if [[ ${1:-} != --case ]]; then
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot acme-caddy-webroot \
     link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback \
-    caddy-placeholder-page caddy-page-write-failure caddy-page-rollback; do
+    caddy-placeholder-page caddy-page-write-failure caddy-page-rollback caddy-page-explicit-deploy caddy-page-download-failure; do
     mkdir "$sandbox/$scenario"
     if bash "$0" --case "$scenario" "$sandbox/$scenario"; then
       printf 'PASS: %s\n' "$scenario"
@@ -141,6 +141,22 @@ case "$scenario" in
   caddy-page-write-failure)
     install() { return 1; }
     if install_caddy_placeholder_page example.com; then fail 'failed placeholder write reported success'; fi
+    ;;
+  caddy-page-explicit-deploy)
+    mkdir -p "$CADDY_WEB_ROOT/example.com"
+    printf 'old-page' > "$CADDY_WEB_ROOT/example.com/index.html"
+    deploy_caddy_page example.com default
+    grep -Fq 'Service available' "$CADDY_WEB_ROOT/example.com/index.html" || fail 'explicit default page deployment failed'
+    jq -e '.template == "default" and .domain == "example.com"' "$CADDY_WEB_ROOT/example.com/site-config.json" >/dev/null || fail 'page deployment metadata missing'
+    if deploy_caddy_page example.com invalid >/dev/null 2>&1; then fail 'invalid optional page template accepted'; fi
+    ;;
+  caddy-page-download-failure)
+    mkdir -p "$CADDY_WEB_ROOT/example.com"
+    printf 'old-page' > "$CADDY_WEB_ROOT/example.com/index.html"
+    export V2M_CADDY_PAGE_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    curl() { return 6; }
+    if deploy_caddy_page example.com portfolio; then fail 'failed optional page download reported success'; fi
+    [[ $(cat "$CADDY_WEB_ROOT/example.com/index.html") == old-page ]] || fail 'failed optional page download replaced existing website'
     ;;
   caddy-page-rollback)
     mkdir -p "$CADDY_SITE_DIR"

@@ -365,6 +365,9 @@ v2ray caddy install
 v2ray caddy static www.example.com
 v2ray caddy reverse app.example.com 127.0.0.1:8080
 v2ray caddy xray cdn.example.com 127.0.0.1:24443 /a1b2c3
+v2ray caddy page cdn.example.com portfolio
+v2ray caddy page cdn.example.com resume
+v2ray caddy page cdn.example.com default
 v2ray caddy status
 v2ray caddy log
 ```
@@ -373,6 +376,11 @@ v2ray caddy log
 仓库。已有的 `/var/www/v2ray-manager/<域名>/index.html` 及其他静态资源始终保留，项目升级不会
 覆盖或删除。需要自定义网站时，直接把自己的静态文件部署到该目录；Caddy 路由同步只更新站点
 配置，不操作网页内容。占位页准备失败会恢复旧站点配置，不会报告部署成功。
+
+6.0.1 恢复了可选个人网页部署，但不再让它参与默认安装流程。用户主动执行 `v2ray caddy page`
+或使用 Caddy 菜单的“安装/更新可选网页”后，才会从独立仓库下载 Portfolio 或 Resume 的固定
+提交，验证部署清单及每个文件的 SHA-256，再以同目录切换方式替换网页。下载、校验或发布失败
+时保留原网页。`default` 可主动恢复通用占位页。该操作只替换网页目录，不修改 Caddy/Xray 路由。
 
 项目不会覆盖现有 Caddyfile，而是在备份后自动追加一次
 `import /etc/caddy/conf.d/*.caddy`，站点配置按域名单独保存。写入前备份主 Caddyfile，

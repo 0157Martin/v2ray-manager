@@ -12,9 +12,11 @@ modules. Supporting directories have separate responsibilities:
 - `config/`: defaults documented for maintainers; runtime defaults remain in the single-file artifact.
 
 The manager owns proxy configuration, service lifecycle, certificates, Caddy routing, WARP policy,
-backup and diagnostics. It does not install themed personal sites or fetch page assets from auxiliary
-repositories. Caddy static roots are user content: the manager creates a generic placeholder only
-when a root is empty and never overwrites an existing index during upgrade or route synchronization.
+backup and diagnostics. Default installation never fetches themed page assets. Caddy static roots are
+user content: the manager creates a generic placeholder only when a root is empty and never overwrites
+an existing index during upgrade or route synchronization. An explicit `caddy page` operation may
+deploy an optional page from an allowlisted repository after commit pinning, manifest validation and
+per-file digest verification; publication swaps the staged directory only after every check succeeds.
 
 Client-facing ports are derived by one policy function. TLS-XHTTP uses Caddy 443; TLS WebSocket
 profiles use 443 only when the managed site contains the matching domain, path and Xray backend.
