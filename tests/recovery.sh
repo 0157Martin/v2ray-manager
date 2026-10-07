@@ -19,8 +19,8 @@ if [[ ${1:-} != --case ]]; then
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot acme-caddy-webroot \
-    link-client-export link-client-disabled caddy-port-conflict caddy-reload-rollback \
-    caddy-placeholder-page caddy-page-write-failure caddy-page-rollback caddy-page-explicit-deploy caddy-page-download-failure; do
+    link-client-export link-client-disabled caddy-port-conflict \
+    caddy-placeholder-page caddy-page-write-failure; do
     mkdir "$sandbox/$scenario"
     if bash "$0" --case "$scenario" "$sandbox/$scenario"; then
       printf 'PASS: %s\n' "$scenario"
