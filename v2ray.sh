@@ -363,7 +363,10 @@ download_core() (
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_node_id() { [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; }
-valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
+valid_server_name() {
+  [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]] &&
+    ! [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+}
 valid_public_ipv4() {
   local ip=${1:-} octet
   local -a octets
