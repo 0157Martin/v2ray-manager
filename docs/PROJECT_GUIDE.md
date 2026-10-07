@@ -305,6 +305,10 @@ Caddy 采用主干与功能分支结构：`v2ray-manager` 负责统一控制、X
 `install.sh install|verify|uninstall` 和 `caddy-manager` 命令，因此既能由主干调用，也能独立运行。
 独立卸载只移除 Caddy 软件和分支命令，默认保留站点配置、证书和网页文件。
 
+个人静态网页属于 Caddy 分支的下级资源。`v2ray-portfolio-page` 和 `v2ray-resume-page` 只提供经过
+构建的页面文件与校验清单；`caddy-manager` 负责下载固定提交、验证文件并发布。主干只通过
+`v2ray caddy page <域名> <类型>` 发出请求，不直接下载、生成或替换个人网页。
+
 Caddy 是服务器级 systemd 服务，可以同时加载多个域名站点，但每个站点只处理自己的域名和
 路径。项目支持：
 

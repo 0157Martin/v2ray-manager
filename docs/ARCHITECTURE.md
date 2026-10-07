@@ -34,6 +34,9 @@ site rendering, Caddy validation, service repair and software removal, and expos
 validates the branch command, supplies the Xray node directory for multi-path route rendering, and
 keeps Caddy files and service state inside the main mutation snapshot. The branch can also be installed
 and operated on a server without Xray; uninstalling the package preserves sites, certificates and web data.
+Optional personal static pages are children of the Caddy branch: `caddy-manager` selects and verifies
+the `v2ray-portfolio-page` or `v2ray-resume-page` artifact and publishes it atomically. The trunk only
+forwards the domain and page type and contains no page rendering or publication implementation.
 
 Client-facing ports are derived by one policy function. TLS-XHTTP uses Caddy 443; TLS WebSocket
 profiles use 443 only when the managed site contains the matching domain, path and Xray backend.

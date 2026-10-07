@@ -2417,55 +2417,6 @@ ensure_caddy_import() {
   return 1
 }
 
-render_caddy_placeholder_page() {
-  local domain=$1 destination=$2
-  valid_server_name "$domain" || return 1
-  cat > "$destination" <<EOF
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex,nofollow">
-  <title>Service available</title>
-  <style>
-    :root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#dbeafe;font:16px/1.6 system-ui,sans-serif}main{width:min(92%,560px);padding:40px;border:1px solid #24324a;border-radius:18px;background:#111b2e;box-shadow:0 24px 70px #0006}h1{margin:0 0 12px;font-size:1.7rem}p{margin:0;color:#94a3b8}code{color:#7dd3fc}
-  </style>
-</head>
-<body><main><h1>Service available</h1><p>The HTTPS endpoint for <code>$domain</code> is online.</p></main></body>
-</html>
-EOF
-}
-
-landing_page_path() {
-  valid_server_name "$1" || return 1
-  printf '%s/%s/index.html' "$CADDY_WEB_ROOT" "$1"
-}
-
-install_caddy_placeholder_page() {
-  local domain=$1 root page temporary
-  valid_server_name "$domain" || return 1
-  root="$CADDY_WEB_ROOT/$domain"
-  page="$root/index.html"
-  [[ ! -e $page ]] || return 0
-  temporary=$(mktemp) || return 1
-  if ! render_caddy_placeholder_page "$domain" "$temporary" ||
-     ! install -d -m 755 "$root" ||
-     ! install -m 644 "$temporary" "$page" ||
-     ! chown caddy:caddy "$root" "$page"; then
-    rm -f -- "$temporary" "$page"
-    red '通用占位页写入失败。' >&2
-    return 1
-  fi
-  rm -f -- "$temporary"
-}
-
-ensure_caddy_landing_page() {
-  local page
-  page=$(landing_page_path "$1") || return 1
-  [[ -e $page ]] || install_caddy_placeholder_page "$1"
-}
-
 deploy_caddy_page() { call_caddy_branch page "$1" "${2:-portfolio}"; }
 
 configure_caddy_site() {

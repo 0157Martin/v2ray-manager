@@ -19,8 +19,7 @@ if [[ ${1:-} != --case ]]; then
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
     link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot acme-caddy-webroot \
-    link-client-export link-client-disabled caddy-port-conflict \
-    caddy-placeholder-page caddy-page-write-failure; do
+    link-client-export link-client-disabled caddy-port-conflict; do
     mkdir "$sandbox/$scenario"
     if bash "$0" --case "$scenario" "$sandbox/$scenario"; then
       printf 'PASS: %s\n' "$scenario"
@@ -130,74 +129,11 @@ CORE
 }
 
 case "$scenario" in
-  caddy-placeholder-page)
-    ensure_caddy_landing_page example.com
-    grep -Fq 'Service available' "$CADDY_WEB_ROOT/example.com/index.html" || fail 'generic placeholder page missing'
-    grep -Fq 'example.com' "$CADDY_WEB_ROOT/example.com/index.html" || fail 'placeholder domain missing'
-    printf 'custom-page' > "$CADDY_WEB_ROOT/example.com/index.html"
-    ensure_caddy_landing_page example.com
-    [[ $(cat "$CADDY_WEB_ROOT/example.com/index.html") == custom-page ]] || fail 'existing page overwritten'
-    ;;
-  caddy-page-write-failure)
-    install() { return 1; }
-    if install_caddy_placeholder_page example.com; then fail 'failed placeholder write reported success'; fi
-    ;;
-  caddy-page-explicit-deploy)
-    mkdir -p "$CADDY_WEB_ROOT/example.com"
-    printf 'old-page' > "$CADDY_WEB_ROOT/example.com/index.html"
-    deploy_caddy_page example.com default
-    grep -Fq 'Service available' "$CADDY_WEB_ROOT/example.com/index.html" || fail 'explicit default page deployment failed'
-    jq -e '.template == "default" and .domain == "example.com"' "$CADDY_WEB_ROOT/example.com/site-config.json" >/dev/null || fail 'page deployment metadata missing'
-    if deploy_caddy_page example.com invalid >/dev/null 2>&1; then fail 'invalid optional page template accepted'; fi
-    ;;
-  caddy-page-download-failure)
-    mkdir -p "$CADDY_WEB_ROOT/example.com"
-    printf 'old-page' > "$CADDY_WEB_ROOT/example.com/index.html"
-    export V2M_CADDY_PAGE_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    curl() { return 6; }
-    if deploy_caddy_page example.com portfolio; then fail 'failed optional page download reported success'; fi
-    [[ $(cat "$CADDY_WEB_ROOT/example.com/index.html") == old-page ]] || fail 'failed optional page download replaced existing website'
-    ;;
-  caddy-page-rollback)
-    mkdir -p "$CADDY_SITE_DIR"
-    printf 'import %s/*.caddy\n' "$CADDY_SITE_DIR" > "$CADDY_CONFIG"
-    printf 'old-site\n' > "$CADDY_SITE_DIR/example.com.caddy"
-    ss() { :; }
-    getent() { :; }
-    caddy() { return 0; }
-    ensure_caddy_landing_page() { return 1; }
-    systemctl() {
-      [[ $1 == is-active ]] && return 0
-      fail 'page failure must not reload Caddy'
-    }
-    if configure_caddy_site static example.com; then fail 'failed page preparation reported success'; fi
-    [[ $(cat "$CADDY_SITE_DIR/example.com.caddy") == old-site ]] || fail 'page failure lost old site'
-    ;;
   caddy-port-conflict)
     jq -n '{inbounds:[{port:443}]}' > "$CONFIG_FILE"
     ss() { fail 'listener inspection should not run after Xray config conflict'; }
     if caddy_ports_available > "$sandbox/output" 2>&1; then fail 'Caddy accepted Xray port 443 conflict'; fi
     grep -Fq '无法与其共享端口' "$sandbox/output" || fail 'Caddy conflict reason missing'
-    ;;
-  caddy-reload-rollback)
-    mkdir -p "$CADDY_SITE_DIR"
-    printf 'import %s/*.caddy\n' "$CADDY_SITE_DIR" > "$CADDY_CONFIG"
-    printf 'old-site\n' > "$CADDY_SITE_DIR/example.com.caddy"
-    ss() { :; }
-    getent() { :; }
-    open_local_firewall_port() { :; }
-    # shellcheck disable=SC2329
-    caddy() { return 0; }
-    reloads=0
-    systemctl() {
-      case "$1" in
-        is-active) return 0 ;;
-        reload) ((reloads+=1)); (( reloads > 1 )) ;;
-        *) fail "unexpected Caddy systemctl call: $*" ;;
-      esac
-    }
-    if configure_caddy_site static example.com > "$sandbox/output" 2>&1; then fail 'failed Caddy reload reported success'; fi
-    [[ $(cat "$CADDY_SITE_DIR/example.com.caddy") == old-site ]] || fail 'old Caddy site was not restored'
     ;;
   tls-renew-*)
     mkdir -p "$TLS_DIR/example.com" "$sandbox/lineage"
