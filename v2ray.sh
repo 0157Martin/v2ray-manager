@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Modern Xray/VLESS installer and manager, exposed through the v2ray command.
 # Supported hosts: Debian and Ubuntu with systemd. Run as root.
-# Author: 0157Martin (https://github.com/0157Martin)
+# Author: Martin&林知远 (https://github.com/0157Martin)
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
-readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.3.1"
+readonly AUTHOR="Martin&林知远"
+readonly MANAGER_VERSION="6.3.2"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"

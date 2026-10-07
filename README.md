@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/0157Martin/v2ray-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/0157Martin/v2ray-manager/actions/workflows/ci.yml)
 
-作者：[0157Martin](https://github.com/0157Martin)
+作者：[Martin&林知远](https://github.com/0157Martin)
 
 这是一个面向 **Debian/Ubuntu** 的 Xray Core 安装与运维脚本，适用于你拥有或获授权管理的
 服务器。它通过 `v2ray` 命令提供交互菜单，同时支持 VLESS、Trojan、VMess，REALITY 或
