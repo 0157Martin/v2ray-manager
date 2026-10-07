@@ -362,7 +362,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/caddy-manager/mai
 ```
 
 分支卸载默认保留站点配置、证书和网页数据。主干继续把 Caddy 配置纳入修改事务，分支操作失败时
-恢复修改前的配置和服务状态。
+恢复修改前的配置和服务状态。再次运行 `v2ray caddy install` 会先刷新主干控制的分支命令，再完成
+Caddy 安装和验证。
 
 主菜单的“Caddy 网站管理”支持通过 Caddy 官方 Debian/Ubuntu 稳定仓库和 GPG key 自动安装，
 并提供两种站点：

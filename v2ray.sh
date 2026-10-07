@@ -2390,7 +2390,10 @@ call_caddy_branch() {
   V2M_NODES_DIR="$NODES_DIR" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
 }
 
-install_caddy() { call_caddy_branch install; }
+install_caddy() {
+  install_caddy_branch_command || return 1
+  call_caddy_branch install
+}
 
 ensure_caddy_import() {
   local temporary backup
