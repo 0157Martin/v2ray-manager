@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="Martin&林知远"
-readonly MANAGER_VERSION="6.3.2"
+readonly MANAGER_VERSION="6.3.3"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2486,7 +2486,7 @@ install_caddy_branch_command() {
 
 call_caddy_branch() {
   [[ -x $CADDY_BRANCH_BIN ]] || install_caddy_branch_command || return 1
-  V2M_NODES_DIR="$NODES_DIR" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
+  env V2M_NODES_DIR="$NODES_DIR" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
 }
 
 install_caddy() {

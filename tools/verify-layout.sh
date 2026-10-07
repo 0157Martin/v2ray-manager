@@ -13,4 +13,12 @@ for path in "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/"*.sh 
   "$root_dir/tools/"*.sh "$root_dir/tests/"*.sh; do
   bash -n "$path"
 done
+grep -Fq 'env V2M_NODES_DIR="$NODES_DIR"' "$root_dir/v2ray.sh" || {
+  printf '%s\n' 'Caddy branch environment must be passed through env.' >&2
+  exit 1
+}
+if grep -Eq '^[[:space:]]+V2M_NODES_DIR=.*CADDY_CONFIG=' "$root_dir/v2ray.sh"; then
+  printf '%s\n' 'Caddy branch call reassigns readonly variables in the current shell.' >&2
+  exit 1
+fi
 printf '%s\n' 'Repository layout and Bash syntax checks passed.'
