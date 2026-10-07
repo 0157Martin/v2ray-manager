@@ -28,6 +28,13 @@ successful installation. Each branch also retains its own installer, verifier, u
 standalone runtime. Backend state is independent from Xray policy state, so a failed switch can restart
 the previous backend without rewriting inbound definitions.
 
+Caddy operations follow the same trunk/branch model. `caddy-manager` owns package installation,
+site rendering, Caddy validation, service repair and software removal, and exposes
+`install/verify/static/reverse/xray/page/status/log/repair/uninstall/version`. The trunk downloads and
+validates the branch command, supplies the Xray node directory for multi-path route rendering, and
+keeps Caddy files and service state inside the main mutation snapshot. The branch can also be installed
+and operated on a server without Xray; uninstalling the package preserves sites, certificates and web data.
+
 Client-facing ports are derived by one policy function. TLS-XHTTP uses Caddy 443; TLS WebSocket
 profiles use 443 only when the managed site contains the matching domain, path and Xray backend.
 Otherwise their actual listener port is exported. Server renderers, links, native client JSON and

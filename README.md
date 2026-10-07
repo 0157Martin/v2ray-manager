@@ -351,6 +351,19 @@ Ookla `speedtest` 或 `speedtest-cli`；均不存在时安装系统仓库的 `sp
 
 ## Caddy 网站伪装与反向代理
 
+`v2ray-manager` 作为主干统一控制 [`caddy-manager`](https://github.com/0157Martin/caddy-manager)
+功能分支，负责下载、校验、调用以及与 Xray 入站的关联；Caddy 的安装、站点渲染、配置校验、
+服务管理和卸载实现在分支仓库中。该分支也可以脱离主干独立安装、验证、运行和卸载：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/caddy-manager/main/install.sh) install
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/caddy-manager/main/install.sh) verify
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/caddy-manager/main/install.sh) uninstall
+```
+
+分支卸载默认保留站点配置、证书和网页数据。主干继续把 Caddy 配置纳入修改事务，分支操作失败时
+恢复修改前的配置和服务状态。
+
 主菜单的“Caddy 网站管理”支持通过 Caddy 官方 Debian/Ubuntu 稳定仓库和 GPG key 自动安装，
 并提供两种站点：
 

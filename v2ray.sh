@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.1.1"
+readonly MANAGER_VERSION="6.2.0"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -44,6 +44,8 @@ readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
 readonly CADDY_PORTFOLIO_REPO="0157Martin/v2ray-portfolio-page"
 readonly CADDY_RESUME_REPO="0157Martin/v2ray-resume-page"
+readonly CADDY_BRANCH_BIN="/usr/local/libexec/v2ray-manager/caddy-manager"
+readonly CADDY_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/caddy-manager/main/caddy-manager.sh"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -83,7 +85,7 @@ acquire_mutation_lock() {
 mutation_entry() {
   local operation=${1:-}
   case "$operation" in
-    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
+    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|call_caddy_branch|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
     *) die "不允许的内部修改操作。" ;;
   esac
   acquire_mutation_lock
@@ -2372,33 +2374,25 @@ caddy_ports_available() {
   done
 }
 
-install_caddy() (
+install_caddy_branch_command() {
   local temporary
-  command -v caddy >/dev/null 2>&1 && return 0
-  check_caddy_renewal_compatibility || return 1
-  caddy_ports_available || return 1
-  step "安装 Caddy"
-  apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    debian-keyring debian-archive-keyring apt-transport-https curl gnupg || return 1
-  temporary=$(mktemp -d) || return 1
-  trap 'rm -rf -- "$temporary"' EXIT
-  curl --fail --show-error --location --retry 3 \
-    https://dl.cloudsmith.io/public/caddy/stable/gpg.key -o "$temporary/caddy.gpg.key" || return 1
-  curl --fail --show-error --location --retry 3 \
-    https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o "$temporary/caddy-stable.list" || return 1
-  grep -Eq '^deb ' "$temporary/caddy-stable.list" || { red "Caddy 软件源内容无效。" >&2; return 1; }
-  gpg --batch --yes --dearmor --output "$temporary/caddy-stable-archive-keyring.gpg" \
-    "$temporary/caddy.gpg.key" || return 1
-  install -m 644 "$temporary/caddy-stable-archive-keyring.gpg" \
-    /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  install -m 644 "$temporary/caddy-stable.list" /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update || return 1
-  DEBIAN_FRONTEND=noninteractive apt-get install -y caddy || {
-    red "无法从系统软件仓库安装 Caddy。" >&2
-    return 1
-  }
-  command -v caddy >/dev/null 2>&1 || { red "Caddy 安装后仍不可执行。" >&2; return 1; }
-)
+  temporary=$(mktemp) || return 1
+  if ! curl --fail --show-error --location --retry 3 "$CADDY_BRANCH_URL" -o "$temporary"; then
+    rm -f -- "$temporary"; red '无法下载 Caddy 分支项目。' >&2; return 1
+  fi
+  bash -n "$temporary" || { rm -f -- "$temporary"; red 'Caddy 分支脚本语法校验失败。' >&2; return 1; }
+  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; red 'Caddy 分支脚本缺少许可证标识。' >&2; return 1; }
+  install -d -m 755 "$(dirname "$CADDY_BRANCH_BIN")"
+  install -m 755 "$temporary" "$CADDY_BRANCH_BIN"
+  rm -f -- "$temporary"
+}
+
+call_caddy_branch() {
+  [[ -x $CADDY_BRANCH_BIN ]] || install_caddy_branch_command || return 1
+  V2M_NODES_DIR="$NODES_DIR" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
+}
+
+install_caddy() { call_caddy_branch install; }
 
 ensure_caddy_import() {
   local temporary backup
@@ -2471,129 +2465,11 @@ ensure_caddy_landing_page() {
   [[ -e $page ]] || install_caddy_placeholder_page "$1"
 }
 
-deploy_caddy_page() (
-  set -Eeuo pipefail
-  local domain=$1 template=${2:-portfolio} repository revision api base manifest path checksum
-  local root stage backup=''
-  valid_server_name "$domain" || { red '网页域名无效。' >&2; return 1; }
-  case "$template" in
-    portfolio) repository=$CADDY_PORTFOLIO_REPO ;;
-    resume) repository=$CADDY_RESUME_REPO ;;
-    default) repository='' ;;
-    *) red '网页类型必须是 portfolio、resume 或 default。' >&2; return 1 ;;
-  esac
-  install -d -m 755 "$CADDY_WEB_ROOT" || return 1
-  root="$CADDY_WEB_ROOT/$domain"
-  stage=$(mktemp -d "$CADDY_WEB_ROOT/.page.XXXXXX") || return 1
-  trap '[[ -z ${stage:-} ]] || rm -rf -- "$stage"' EXIT
-
-  if [[ $template == default ]]; then
-    render_caddy_placeholder_page "$domain" "$stage/index.html" || return 1
-  else
-    if ! command -v curl >/dev/null || ! command -v jq >/dev/null || ! command -v sha256sum >/dev/null; then
-      red '安装可选网页需要 curl、jq 和 sha256sum。' >&2
-      return 1
-    fi
-    api="https://api.github.com/repos/$repository/commits/main"
-    revision=${V2M_CADDY_PAGE_REF:-}
-    if [[ -z $revision ]]; then
-      revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 60 "$api" | jq -r '.sha') || return 1
-    fi
-    [[ $revision =~ ^[0-9a-f]{40}$ ]] || { red '无法取得网页模板的固定提交。' >&2; return 1; }
-    base="https://raw.githubusercontent.com/$repository/$revision/dist"
-    manifest="$stage/deploy-manifest.json"
-    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 \
-      "$base/deploy-manifest.json" -o "$manifest" || return 1
-    jq -e '.version == 1 and (.files | type == "array" and length > 0) and all(.files[]; (.path | type == "string" and test("^(index\\.html|site-config\\.json|favicon\\.svg|icons\\.svg|assets/[A-Za-z0-9._-]+)$")) and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))) and any(.files[]; .path == "index.html")' "$manifest" >/dev/null || {
-      red '网页模板部署清单无效。' >&2
-      return 1
-    }
-    while IFS=$'\t' read -r path checksum; do
-      path=${path%$'\r'}; checksum=${checksum%$'\r'}
-      mkdir -p "$stage/$(dirname "$path")" || return 1
-      curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 120 \
-        "$base/$path" -o "$stage/$path" || return 1
-      [[ $(sha256sum "$stage/$path" | awk '{print $1}') == "$checksum" ]] || {
-        red "网页文件校验失败：$path" >&2
-        return 1
-      }
-    done < <(jq -r '.files[] | [.path, .sha256] | @tsv' "$manifest")
-    rm -f -- "$manifest"
-  fi
-
-  jq -n --arg template "$template" --arg domain "$domain" --arg revision "${revision:-built-in}" \
-    '{version:1,template:$template,domain:$domain,revision:$revision}' > "$stage/site-config.json" || return 1
-  chown -R caddy:caddy "$stage" || return 1
-  if [[ -e $root ]]; then
-    backup="$CADDY_WEB_ROOT/.previous.$(date +%s).$RANDOM"
-    mv -- "$root" "$backup" || return 1
-  fi
-  if ! mv -- "$stage" "$root"; then
-    [[ -z $backup ]] || mv -- "$backup" "$root" || true
-    red '网页发布失败，已恢复原网页。' >&2
-    return 1
-  fi
-  stage=''
-  [[ -z $backup ]] || rm -rf -- "$backup"
-  green "可选网页已部署：https://$domain（$template）"
-)
+deploy_caddy_page() { call_caddy_branch page "$1" "${2:-portfolio}"; }
 
 configure_caddy_site() {
-  local mode=$1 domain=$2 upstream=${3:-} path=${4:-} target temporary previous='' had_previous=0
-  valid_server_name "$domain" || { red "请输入有效完整域名。" >&2; return 1; }
-  [[ $mode != reverse ]] || valid_caddy_upstream "$upstream" || {
-    red "反向代理后端仅支持本机地址，例如 127.0.0.1:8080、localhost:3000 或 [::1]:8080。" >&2
-    return 1
-  }
-  if [[ $mode == xray ]]; then
-    valid_caddy_upstream "$upstream" || { red "Xray 后端仅支持本机地址。" >&2; return 1; }
-    valid_transport_path "$path" || { red "Xray 传输路径无效，必须以 / 开头且不能包含空格。" >&2; return 1; }
-  fi
-  check_caddy_activation_compatibility || return 1
-  caddy_ports_available || return 1
-  install_caddy || return 1
-  ensure_caddy_import || { red "无法安全更新 Caddyfile import。" >&2; return 1; }
-  getent ahosts "$domain" >/dev/null 2>&1 || yellow "域名当前无法解析；Caddy 自动申请证书前请先配置 DNS。"
-  target="$CADDY_SITE_DIR/$domain.caddy"
-  temporary=$(mktemp "$CADDY_SITE_DIR/.${domain}.XXXXXX") || return 1
-  render_caddy_site "$mode" "$domain" "$upstream" "$temporary" "$path" || { rm -f -- "$temporary"; return 1; }
-  if [[ -e $target ]]; then
-    previous=$(mktemp "$CADDY_SITE_DIR/.previous.XXXXXX") || return 1
-    cp -p "$target" "$previous" || return 1
-    had_previous=1
-  fi
-  install -m 644 -o root -g root "$temporary" "$target" || return 1
-  rm -f -- "$temporary"
-  if ! caddy validate --config "$CADDY_CONFIG" --adapter caddyfile; then
-    if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
-    red "Caddy 配置校验失败，已恢复旧站点配置。" >&2
-    return 1
-  fi
-  if [[ $mode == static || $mode == xray ]]; then
-    if ! ensure_caddy_landing_page "$domain"; then
-      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
-      red '网页准备失败，已恢复旧站点配置，未重载 Caddy。' >&2
-      return 1
-    fi
-  fi
-  open_local_firewall_port 80
-  open_local_firewall_port 443
-  if systemctl is-active --quiet caddy; then
-    if ! systemctl reload caddy; then
-      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
-      systemctl reload caddy || true
-      red "Caddy reload 失败，已恢复旧站点配置。" >&2
-      return 1
-    fi
-  else
-    if ! systemctl enable --now caddy; then
-      if (( had_previous )); then mv -f "$previous" "$target"; else rm -f -- "$target"; fi
-      red "Caddy 启动失败，已恢复旧站点配置。" >&2
-      return 1
-    fi
-  fi
-  [[ -z $previous ]] || rm -f -- "$previous"
-  green "Caddy 站点已启用：https://$domain"
+  local mode=$1 domain=$2 upstream=${3:-} path=${4:-}
+  call_caddy_branch "$mode" "$domain" "$upstream" "$path"
 }
 
 find_caddy_xray_defaults() {
@@ -2656,10 +2532,13 @@ caddy_menu() {
     ui_menu_item '5) 安装/更新可选网页'
     ui_menu_item '6) 查看 Caddy 状态'
     ui_menu_item '7) 查看 Caddy 日志'
+    ui_menu_item '8) 验证 Caddy 分支'
+    ui_menu_item '9) 修复 Caddy 分支'
+    ui_menu_item '10) 卸载 Caddy 软件（保留数据）'
     ui_box_divider
     ui_menu_item '0) 返回主菜单'
     ui_box_bottom
-    read -r -p '请选择 [0-7]:' choice
+    read -r -p '请选择 [0-10]:' choice
     case "$choice" in
       1) caddy_ports_available && run_mutation install_caddy && green "Caddy 已安装。"; pause ;;
       2) read -r -p '网站域名：' domain; run_mutation configure_caddy_site static "$domain" || true; pause ;;
@@ -2690,6 +2569,13 @@ caddy_menu() {
       5) caddy_page_menu ;;
       6) systemctl --no-pager --full status caddy || true; pause ;;
       7) journalctl -u caddy -n 100 --no-pager || true; pause ;;
+      8) call_caddy_branch verify || true; pause ;;
+      9) run_mutation call_caddy_branch repair || true; pause ;;
+      10)
+        read -r -p '确认卸载 Caddy 软件并保留站点配置、证书和网页？[y/N] ' choice
+        if [[ ${choice,,} == y || ${choice,,} == yes ]]; then run_mutation call_caddy_branch uninstall || true; fi
+        pause
+        ;;
       0) return ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -2707,6 +2593,9 @@ caddy_command() {
     page) [[ -n $domain ]] || die "用法：v2ray caddy page <域名> [portfolio|resume|default]"; run_mutation deploy_caddy_page "$domain" "${upstream:-portfolio}" ;;
     status) systemctl --no-pager --full status caddy || true ;;
     log) journalctl -u caddy -n 100 --no-pager ;;
+    verify|test) call_caddy_branch verify ;;
+    repair) run_mutation call_caddy_branch repair ;;
+    uninstall) run_mutation call_caddy_branch uninstall ;;
     *) die "未知 Caddy 操作：$action" ;;
   esac
 }
@@ -3614,7 +3503,7 @@ main() {
     uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log]|warp [install|switch <wireguard|masque>|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|verify|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log|repair|uninstall]|warp [install|switch <wireguard|masque>|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

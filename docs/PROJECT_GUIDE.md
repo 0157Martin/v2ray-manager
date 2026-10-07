@@ -300,6 +300,11 @@ v2ray users show <入站ID>
 
 ## 9. Caddy 的作用和边界
 
+Caddy 采用主干与功能分支结构：`v2ray-manager` 负责统一控制、Xray 入站关联和事务回滚，独立仓库
+`caddy-manager` 负责软件安装、站点生成、配置校验、服务维护与卸载。分支提供自己的
+`install.sh install|verify|uninstall` 和 `caddy-manager` 命令，因此既能由主干调用，也能独立运行。
+独立卸载只移除 Caddy 软件和分支命令，默认保留站点配置、证书和网页文件。
+
 Caddy 是服务器级 systemd 服务，可以同时加载多个域名站点，但每个站点只处理自己的域名和
 路径。项目支持：
 
