@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 def decode_link(text):
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    link = next(line for line in text.splitlines() if line.startswith(("vless://", "trojan://", "vmess://")))
+    link = next(line for line in text.splitlines() if line.startswith(("vless://", "trojan://", "vmess://", "hysteria2://")))
     if link.startswith("vmess://"):
         data = json.loads(base64.b64decode(link[len("vmess://") :]))
         return dict(protocol="vmess", address=data["add"], port=int(data["port"]),
@@ -28,6 +28,9 @@ def decode_link(text):
                     sni=data["sni"], path=data["path"], flow="", remark=data["ps"])
     uri = urlsplit(link)
     query = {key: value[0] for key, value in parse_qs(uri.query, keep_blank_values=True).items()}
+    if uri.scheme == "hysteria2":
+        return dict(protocol="hysteria", address=uri.hostname, port=uri.port, user=unquote(uri.username),
+                    network="hysteria", security="tls", sni=query["sni"], path="", flow="", remark=unquote(uri.fragment))
     return dict(protocol=uri.scheme, address=uri.hostname, port=uri.port,
                 user=unquote(uri.username), network=query["type"], security=query["security"],
                 sni=query["sni"], path=query.get("path", query.get("serviceName", "")),
@@ -40,12 +43,12 @@ def check_export(folder, profile):
     data = decode_link((folder / f"{profile}.link").read_text(encoding="utf-8"))
     inbound = server["inbounds"][0]
     stream = inbound["streamSettings"]
-    user = inbound["settings"]["clients"][0]
+    user = inbound["settings"].get("clients", inbound["settings"].get("users"))[0]
     caddy_xhttp = profile == "vless-tls-xhttp"
     assert data["address"] == "node.test.example"
     assert data["port"] == (443 if caddy_xhttp else inbound["port"])
     assert data["protocol"] == inbound["protocol"]
-    assert data["user"] == user.get("id", user.get("password"))
+    assert data["user"] == user.get("id", user.get("password", user.get("auth")))
     assert data["flow"] == user.get("flow", "")
     assert {"tcp": "raw"}.get(data["network"], data["network"]) == stream["network"]
     assert data["security"] == ("tls" if caddy_xhttp else stream["security"])
@@ -56,10 +59,13 @@ def check_export(folder, profile):
     outbound = client["outbounds"][0]
     assert all(item["listen"] == "127.0.0.1" for item in client["inbounds"])
     assert outbound["protocol"] == data["protocol"]
-    peer = outbound["settings"].get("vnext", outbound["settings"].get("servers"))[0]
+    peer = outbound["settings"] if data["protocol"] == "hysteria" else outbound["settings"].get("vnext", outbound["settings"].get("servers"))[0]
     assert peer["address"] == data["address"] and peer["port"] == data["port"]
     client_user = peer["users"][0] if "users" in peer else peer
-    assert client_user.get("id", client_user.get("password")) == data["user"]
+    if data["protocol"] == "hysteria":
+        assert outbound["streamSettings"]["hysteriaSettings"]["auth"] == data["user"]
+    else:
+        assert client_user.get("id", client_user.get("password")) == data["user"]
     assert client_user.get("flow", "") == data["flow"]
     client_stream = outbound["streamSettings"]
     assert client_stream["network"] == stream["network"]
@@ -122,56 +128,46 @@ class TestPage(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def real_traffic(folder, core, server, data):
+def real_traffic(folder, core, server, data, profile="vless-reality-raw"):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_3
+    context.set_ecdh_curve("X25519")
     context.set_alpn_protocols(["h2", "http/1.1"])
     context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
     class TlsTarget(http.server.ThreadingHTTPServer):
-        def get_request(self):
-            connection, address = super().get_request()
-            connection.settimeout(5)
+        # Do TLS in the worker, so an incomplete REALITY probe cannot block accept.
+        def finish_request(self, connection, address):
+            connection.settimeout(3)
             try:
-                return context.wrap_socket(connection, server_side=True), address
-            except Exception:
-                connection.close()
-                raise
+                with context.wrap_socket(connection, server_side=True) as secured:
+                    self.RequestHandlerClass(secured, address, self)
+            except (OSError, ssl.SSLError):
+                pass
 
     target = TlsTarget(("127.0.0.1", 0), TestPage)
+    target_port = target.server_port
     destination = http.server.ThreadingHTTPServer(("127.0.0.1", 0), TestPage)
     for httpd in (target, destination):
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    probe_context = ssl.create_default_context(cafile=str(folder / "cert.pem"))
-    with socket.create_connection(("127.0.0.1", target.server_port), timeout=3) as probe:
-        with probe_context.wrap_socket(probe, server_hostname="example.com"):
-            pass
-    probe_result = subprocess.run(["openssl", "s_client", "-connect", f"127.0.0.1:{target.server_port}",
-                                   "-servername", "example.com", "-tls1_3", "-brief"],
-                                  input=b"", stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5,
-                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    if probe_result.returncode:
-        raise RuntimeError("Local TLS target probe failed: " + probe_result.stderr.decode(errors="replace"))
     server_port, socks_port = free_port(), free_port()
     server["inbounds"][0]["listen"] = "127.0.0.1"
     server["log"]["loglevel"] = "debug"
     server["inbounds"][0]["port"] = server_port
-    server["inbounds"][0]["streamSettings"]["realitySettings"]["target"] = f"127.0.0.1:{target.server_port}"
+    server["inbounds"][0]["streamSettings"]["realitySettings"]["target"] = f"127.0.0.1:{target_port}"
     # Production now denies loopback destinations. Only this test HTTP endpoint
     # is explicitly allowed; do not remove the remaining production deny rules.
     server["routing"]["rules"].insert(0, {
         "type": "field", "ip": ["127.0.0.1"],
         "port": str(destination.server_port), "outboundTag": "direct"
     })
-    client = {
-        "log": {"loglevel": "debug"},
-        "inbounds": [{"listen": "127.0.0.1", "port": socks_port, "protocol": "socks", "settings": {"auth": "noauth"}}],
-        "outbounds": [{"protocol": data["protocol"], "settings": {"vnext": [{
-            "address": "127.0.0.1", "port": server_port,
-            "users": [{"id": data["user"], "encryption": "none", "flow": data["flow"]}]
-        }]}, "streamSettings": {"network": data["network"], "security": data["security"],
-            "realitySettings": {"serverName": data["sni"], "fingerprint": data["fingerprint"],
-                                "password": data["public"], "shortId": data["short"]}}}]
-    }
+    # Exercise the production native client for all REALITY transports.
+    client = json.loads((folder / f"{profile}.client.json").read_text(encoding="utf-8"))
+    client["log"]["loglevel"] = "debug"
+    client["inbounds"] = [client["inbounds"][0]]
+    client["inbounds"][0]["port"] = socks_port
+    settings = client["outbounds"][0]["settings"]
+    peer = settings.get("vnext", settings.get("servers"))[0]
+    peer.update(address="127.0.0.1", port=server_port)
     processes = []
     try:
         with contextlib.ExitStack() as stack:
@@ -208,7 +204,7 @@ def real_traffic(folder, core, server, data):
                         break
                     response += chunk
                 assert b"v2ray-manager-link-roundtrip-ok" in response
-            print("PASS: exported VLESS REALITY Vision link carried real HTTP traffic over loopback", flush=True)
+            print(f"PASS: {profile} carried real HTTP traffic over loopback", flush=True)
     except Exception:
         for name in ("server", "client"):
             log = folder / f"roundtrip-{name}.log"
@@ -223,17 +219,20 @@ def real_traffic(folder, core, server, data):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        for httpd in (target, destination):
-            httpd.shutdown()
-            httpd.server_close()
+        destination.shutdown()
+        destination.server_close()
+        target.shutdown()
+        target.server_close()
 
 
 if __name__ == "__main__":
     folder, core = map(Path, sys.argv[1:3])
     profiles = [path.stem for path in sorted(folder.glob("*.link"))]
-    assert len(profiles) == 12
+    assert len(profiles) == 13
     fixtures = {profile: check_export(folder, profile) for profile in profiles}
     if "--configuration-only" in sys.argv[3:]:
         print("SKIP: live loopback traffic test was explicitly disabled; export checks alone do not prove connectivity.", flush=True)
     else:
-        real_traffic(folder, core, *fixtures["vless-reality-raw"])
+        for profile in profiles:
+            if "-reality-" in profile:
+                real_traffic(folder, core, *fixtures[profile], profile=profile)

@@ -1,5 +1,72 @@
 # Validation status
 
+## 6.5.0 staged feature validation — 2026-10-08
+
+Local host: Windows / Git Bash; ShellCheck 0.11.0; jq 1.8.2; Xray 26.3.27 and Caddy 2.11.7
+(Windows amd64). Release archives were checked against their published SHA-256 digests.
+
+- All 13 generated server and client configurations passed the real Xray parser. Each profile carried
+  a controlled HTTP request over loopback. REALITY covered RAW, gRPC and XHTTP; ordinary TLS covered
+  RAW, WebSocket and gRPC; XHTTP traversed a real generated Caddy route in `auto`, `packet-up` and
+  `stream-up` modes.
+- Hysteria2 used a UDP listener with TLS/QUIC, carried the controlled request with valid authentication,
+  and rejected an invalid credential. This establishes same-version Xray interoperability on the local
+  host, not public-network reachability or compatibility with every third-party Hysteria2 client.
+- JSON state parsing rejects command substitution and unknown fields without executing file contents.
+  Declarative planning is read-only; apply/no-op, XHTTP mode persistence, redacted JSON diagnostics and
+  Prometheus text output have regression coverage.
+- `tools/build.sh --check` verifies that the deployable `v2ray.sh` exactly matches the ordered `src/`
+  modules. The modified GitHub Actions workflow has not yet run remotely.
+
+Still not established locally: Debian/Ubuntu systemd and ownership behavior, native Linux flock and
+symlink checks, public UDP/TCP ingress, ACME issuance, cloud firewall rules, CDN behavior, and live
+upgrade of a production host.
+
+## 6.4.0 reliability candidate — 2026-10-07
+
+Local host: Windows / Git Bash; ShellCheck 0.11.0; jq 1.8.2; real Xray 26.3.27
+(Windows amd64). Native jq used a local MSYS argument adapter to preserve JSON string arguments
+while translating file paths; that host-only adapter is not part of the Linux release.
+
+- Layout/Bash syntax and ShellCheck passed.
+- Unit, bootstrap, editing, recovery and hardening suites passed. Recovery additionally covers
+  explicit core rollback after a successful update, including matching GeoData.
+- Reliability regression coverage includes release pin format, version arguments, read-only checks,
+  offline component reuse, checksum rejection without replacement, older candidate schema rejection,
+  paired rollback, failed migration, preserved service states, persistent journal recovery, corrupted
+  snapshot rejection, and higher schema versions in disabled nodes.
+- All four locked component files were downloaded from their exact commits, matched the embedded
+  SHA-256 digests and passed `bash -n`. Their live package installation was not executed.
+- The real Xray accepted all 12 server/client profiles, combined inbounds, multi-user credentials and
+  WARP routing. All 12 exported links matched the generated configurations.
+- The full REALITY RAW loopback client/server test passed and carried a real HTTP request;
+  `CONFIGURATION_ONLY` was not enabled. This supersedes the older Windows traffic-test limitation
+  recorded below for this local run only.
+- Real Xray private-target tests blocked loopback IPv4, mapped IPv4, localhost and a private-resolving
+  domain; an exact-port positive control reached the local target.
+- Workflow YAML was parsed locally. Ubuntu 22.04/24.04, Ubuntu 24.04 ARM64, Debian 12/13 containers
+  and baseline/latest core jobs are configured, but the modified GitHub workflow has not been run.
+
+Not established locally: real Linux systemd/ownership behavior, flock concurrency/inheritance and
+native symlink snapshot checks (explicitly skipped under MSYS), ACME issuance/renewal, public ingress,
+Caddy/CDN interoperability, Hysteria 2, or live deployment on Debian/Ubuntu. Regression service and
+failure-injection tests use temporary paths and mocks. An interrupted journal is simulated; no claim
+is made about power-loss durability or recovery from damaged storage.
+
+Reproduce on Linux with ShellCheck/jq/OpenSSL installed:
+
+```bash
+bash tools/verify-layout.sh
+shellcheck install.sh v2ray.sh config/defaults.sh tools/*.sh tests/*.sh
+bash tests/unit.sh
+bash tests/bootstrap.sh
+bash tests/editing.sh
+bash tests/recovery.sh
+bash tests/hardening.sh
+bash tests/reliability.sh
+XRAY_TEST_TAG=v26.3.27 bash tests/xray-config.sh
+```
+
 ## 6.0.1 optional page deployment — 2026-10-06
 
 - Recovery tests cover explicit built-in page replacement, invalid template rejection, failed remote

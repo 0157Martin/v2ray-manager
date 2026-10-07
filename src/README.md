@@ -1,7 +1,9 @@
-# 源码组织
+# Manager source modules
 
-`v2ray.sh` 保持为一个可独立部署的 Bash 文件：安装到服务器后的
-`/usr/local/bin/v2ray` 不依赖仓库中的相对路径或额外文件。
+The numbered shell files in this directory are the maintained source of the
+manager. Their lexical order is the build order. Run `bash tools/build.sh`
+after editing them; deployment and compatibility continue to use the generated
+single file `v2ray.sh`.
 
-此目录用于记录后续拆分出的实现模块。任何新模块在合入前都必须同时
-保证单文件发布版本仍可运行，并在 `tools/verify-layout.sh` 中更新检查项。
+CI runs `bash tools/build.sh --check` so the generated file cannot drift from
+the modules.

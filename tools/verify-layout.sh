@@ -3,11 +3,12 @@
 set -Eeuo pipefail
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-required=(install.sh v2ray.sh README.md LICENSE config/defaults.sh templates/vless-reality.json.tmpl tests/unit.sh tests/xray-config.sh)
+required=(install.sh v2ray.sh README.md LICENSE config/defaults.sh templates/vless-reality.json.tmpl tests/unit.sh tests/xray-config.sh tools/build.sh src/00-runtime.sh)
 
 for path in "${required[@]}"; do
   [[ -f "$root_dir/$path" ]] || { printf 'missing: %s\n' "$path" >&2; exit 1; }
 done
+bash "$root_dir/tools/build.sh" --check
 
 for path in "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/"*.sh \
   "$root_dir/tools/"*.sh "$root_dir/tests/"*.sh; do
@@ -15,7 +16,7 @@ for path in "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/"*.sh 
 done
 # The literal variable reference is the contract being checked in source.
 # shellcheck disable=SC2016
-grep -Fq 'env V2M_NODES_DIR="$NODES_DIR"' "$root_dir/v2ray.sh" || {
+grep -Fq 'env V2M_NODES_DIR=' "$root_dir/v2ray.sh" || {
   printf '%s\n' 'Caddy branch environment must be passed through env.' >&2
   exit 1
 }

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- 6.5.0：节点状态升级为不可执行的 JSON；旧 `%q` 状态通过严格解析器迁移，未知字段和 Shell 表达式被拒绝。
+- 新增 `doctor --json/--prometheus`、已有节点范围内的 `plan/apply`、XHTTP 客户端模式切换和实验性 Hysteria2 TLS/QUIC。
+- 13 种配置均由真实 Xray 校验并执行本机流量测试；Hysteria2 覆盖正确/错误认证，XHTTP 覆盖 Caddy 与三种客户端模式。
+- 管理器源码拆分到 `src/`，`tools/build.sh` 生成兼容部署所需的单文件 `v2ray.sh`，CI 拒绝生成文件漂移。
+- 6.4.0 可靠性候选：四个管理组件固定完整提交和 SHA-256；统一 HTTPS 下载、超时、校验及原子替换。
+- Xray 默认固定 `v26.3.27`；新增 `update.core --version/--latest/--check`、`versions` 和 `rollback.core`。
+- 管理脚本升级保存关联数据、组件脚本及服务状态；`rollback.sh` 恢复整套快照并保留回退前现场。
+- 新增 `manager.pending` 和 `recover`，保存独立恢复入口，阻止中断事务之后继续修改。
+- 拒绝启用及停用节点的高版本数据降级迁移；只读命令不再隐式迁移。
+- 增加可靠性回归测试、Ubuntu x64/ARM64 与 Debian 测试矩阵、固定/最新核心双通道检查，Actions 固定提交。
+
 ## 6.3.3
 
 - 修复主干调用 Caddy 分支时，在当前 Bash 中重新赋值只读 `CADDY_CONFIG` 导致升级迁移失败；分支环境现在通过 `env` 传入子进程。

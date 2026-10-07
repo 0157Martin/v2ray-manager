@@ -11,7 +11,8 @@ if [[ $# == 0 ]]; then
   sandbox=$(mktemp -d)
   trap 'rm -rf -- "$sandbox"' EXIT
   for scenario in empty-state revoked-user selected-node dotted-id enable-all-active disable-all-disabled batch-success batch-cancel \
-    batch-input-failure batch-signal batch-restart-failure pending-failure pending-signal secure-state; do
+    batch-input-failure batch-signal batch-restart-failure pending-failure pending-signal secure-state \
+    state-parser desired-plan desired-apply xhttp-mode diagnostics; do
     mkdir "$sandbox/$scenario"
     status=0
     # A fresh Bash process keeps errexit enabled inside the production functions.
@@ -107,6 +108,68 @@ rebuild_config_from_nodes
 cp "$CONFIG_FILE" "$sandbox/original.json"
 
 case "$scenario" in
+  state-parser)
+    REMARK=$'spaces 中文 ; $(touch /tmp/never-run) "quotes" \\ slash\nnewline'
+    printf 'REMARK=%q\nPORT=24443\n' "$REMARK" > "$sandbox/legacy.env"
+    expected=$REMARK
+    load_state_file "$sandbox/legacy.env"
+    [[ $REMARK == "$expected" ]]
+    # This fixture must contain literal command substitution.
+    # shellcheck disable=SC2016
+    printf 'REMARK=$(touch %s)\n' "$sandbox/executed" > "$sandbox/hostile.env"
+    if load_state_file "$sandbox/hostile.env"; then fail 'executable state accepted'; fi
+    [[ ! -e $sandbox/executed ]]
+    printf '{"PATH":"hostile"}\n' > "$sandbox/hostile.env"
+    if load_state_file "$sandbox/hostile.env"; then fail 'unknown key accepted'; fi
+    save_current_node "$sandbox/json.env"
+    jq -e --arg expected "$expected" '.REMARK == $expected and .DATA_SCHEMA == 5' "$sandbox/json.env" >/dev/null
+    ;;
+  desired-plan|desired-apply)
+    printf '{"schema_version":1,"nodes":[{"id":"primary","enabled":false,"remark":"planned"}]}' > "$sandbox/desired.json"
+    cp "$NODES_DIR/primary.env" "$sandbox/before-state"
+    plan_desired "$sandbox/desired.json" > "$sandbox/plan.json"
+    jq -e '.restart_required and .changes[0].after.enabled == false' "$sandbox/plan.json" >/dev/null
+    ! grep -Eq 'old-private|11111111-1111' "$sandbox/plan.json"
+    cmp "$sandbox/before-state" "$NODES_DIR/primary.env"
+    cmp "$sandbox/original.json" "$CONFIG_FILE"
+    if [[ $scenario == desired-apply ]]; then
+      apply_desired "$sandbox/desired.json" > "$sandbox/applied.json"
+      [[ ! -e $NODES_DIR/primary.env && -f $NODES_DIR/primary.disabled ]]
+      jq -e '.REMARK == "planned"' "$NODES_DIR/primary.disabled" >/dev/null
+      jq -e '.inbounds == []' "$CONFIG_FILE" >/dev/null
+      apply_desired "$sandbox/desired.json" > "$sandbox/again.json"
+      jq -e '.restart_required == false' "$sandbox/again.json" >/dev/null
+      [[ $(wc -l < "$sandbox/restarts") == 1 ]]
+    fi
+    printf '{"schema_version":1,"nodes":[{"id":"missing","enabled":true}]}' > "$sandbox/invalid.json"
+    if plan_desired "$sandbox/invalid.json"; then fail 'unknown node accepted'; fi
+    ;;
+  xhttp-mode)
+    PROFILE=vless-reality-xhttp PATH_VALUE=/fixture
+    save_current_node "$NODES_DIR/primary.env"
+    set_xhttp_mode primary packet-up
+    load_state_file "$NODES_DIR/primary.env"
+    [[ $XHTTP_MODE == packet-up ]]
+    render_client_config | jq -e '.outbounds[0].streamSettings.xhttpSettings.mode == "packet-up"' >/dev/null
+    if valid_xhttp_mode unsafe; then fail 'invalid mode accepted'; fi
+    ;;
+  diagnostics)
+    systemctl() { return 0; }
+    ss() { printf 'LISTEN\n'; }
+    doctor_report > "$sandbox/report.json"
+    jq -e '.status == "passed" and .public_reachability == "not_checked" and .local_handshake == "not_checked"' "$sandbox/report.json" >/dev/null
+    ! grep -Eq 'old-private|11111111-1111|edge.example' "$sandbox/report.json"
+    doctor_metrics | grep -qx 'v2ray_manager_local_check_success 1'
+    ss() { return 1; }
+    status=0; doctor_report > "$sandbox/report.json" || status=$?
+    [[ $status == 2 ]]
+    jq -e '.status == "incomplete"' "$sandbox/report.json" >/dev/null
+    touch "$BACKUP_DIR/manager.pending"
+    status=0; doctor_report > "$sandbox/report.json" || status=$?
+    [[ $status == 1 ]]
+    jq -e '.checks.transaction == "pending"' "$sandbox/report.json" >/dev/null
+    cmp "$sandbox/original.json" "$CONFIG_FILE"
+    ;;
   empty-state)
     printf 'DATA_SCHEMA=3\n' > "$STATE_FILE"
     mv "$NODES_DIR/primary.env" "$NODES_DIR/manual.env"
@@ -129,7 +192,7 @@ case "$scenario" in
     change_menu <<< $'secondary\n6\nnew-secondary'
     rotate_reality_keys secondary
     cmp "$sandbox/primary-before" "$NODES_DIR/primary.env"
-    grep -qx 'REMARK=new-secondary' "$NODES_DIR/secondary.env"
+    jq -e '.REMARK == "new-secondary"' "$NODES_DIR/secondary.env"
     jq -e '.inbounds[] | select(.tag == "secondary") | .streamSettings.realitySettings.privateKey == "new-private"' "$CONFIG_FILE" >/dev/null
     jq -e '.inbounds | length == 2' "$CONFIG_FILE" >/dev/null
     ;;
@@ -222,7 +285,7 @@ case "$scenario" in
     write_data_schema_marker "$CONFIG_DIR/new-state.env"
     cmp "$sandbox/expected-state" "$CONFIG_DIR/new-state.env"
     write_data_schema_marker "$CONFIG_DIR/schema-only.env"
-    grep -qx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$CONFIG_DIR/schema-only.env"
+    jq -e --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA == $schema' "$CONFIG_DIR/schema-only.env"
     assert_private "$CONFIG_DIR/schema-only.env" 600
     [[ -z $(find "$CONFIG_DIR" -name '*.next' -o -name 'new-state.env.*' -o -name 'schema-only.env.*') ]]
     ;;

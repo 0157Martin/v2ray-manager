@@ -83,6 +83,7 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 | 10 | VMess-gRPC-TLS | 旧客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
 | 11 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
 | 12 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
+| 13 | Hysteria2-TLS-QUIC（实验） | UDP/QUIC 直连，需要证书和开放 UDP 端口 | 不支持 |
 
 ### REALITY 使用前须知
 
@@ -298,16 +299,33 @@ v2ray speedtest        # 测试服务器下载、上传速度和延迟
 v2ray route 1.1.1.1    # 测试 VPS 到目标的回程路由、丢包和逐跳延迟
 v2ray warp             # 管理全部协议共用的 WARP 出站策略
 v2ray caddy            # 打开 Caddy 网站管理菜单
-v2ray update           # 更新 Xray Core，保留配置
+v2ray update           # 更新到项目固定的 Xray 基线，保留配置
+v2ray update.core --version v26.3.27 --check # 只检查指定目标版本
+v2ray update.core --latest # 显式选择上游最新稳定发布
+v2ray rollback.core    # 恢复上次内核与 GeoData
 v2ray upgrade          # 一键更新项目脚本、迁移数据并保留现有链接
 v2ray update.sh        # upgrade 的兼容别名
-v2ray rollback.sh      # 恢复上一次更新前的管理脚本
+v2ray rollback.sh      # 恢复上一次更新前的脚本及关联数据
+v2ray recover          # 恢复中断的管理脚本事务
 v2ray rotate [入站ID]  # 轮换所选入站的 REALITY 密钥和 Short ID
 v2ray backup           # 创建配置备份
 v2ray restore          # 恢复最近一份备份
 v2ray doctor           # 运行综合诊断
+v2ray doctor --json    # 输出不含凭据的结构化本机诊断
+v2ray doctor --prometheus # 输出本机检查的 Prometheus 文本指标
+v2ray plan desired.json   # 预览已有入站的声明式变更，不写入状态
+v2ray apply desired.json  # 在事务和自动回退保护下应用变更
+v2ray xhttp-mode primary packet-up # 设置 XHTTP 客户端模式
 v2ray uninstall
 ```
+
+`plan/apply` 当前只管理已有入站的启停、入口域名、备注和 XHTTP 客户端模式，不在清单中生成
+凭据或新建节点。示例见 [`examples/desired-state.json`](examples/desired-state.json)。状态文件名继续保留
+`.env`/`.disabled` 以兼容现有目录布局，但 6.5.0 起内容为 JSON，管理器不会执行其中的 Shell。
+
+Hysteria2 TLS/QUIC 是实验性配置，要求 Xray `v26.3.27` 或更新版本，并需放行对应 UDP 端口。
+非交互创建时还需显式设置 `V2M_EXPERIMENTAL=1`。本机诊断只检查本机配置、进程和监听状态；
+`public_reachability: "not_checked"` 表示它不能替代外网客户端连通性验证。
 
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、WARP、维护诊断、卸载”分组，并显示
 Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不会自动输出凭据；需要分享链接
@@ -625,7 +643,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 
 ## 更新与回退
 
+6.4.0 的内核固定基线为 `v26.3.27`。安装及 `v2ray update` 默认使用该版本，
+不再隐式追踪上游 latest。用 `--version vX.Y.Z` 选择完整发布标签，或用 `--latest`
+明确选择最新版本；二者不可同时使用。`--check` 只查询版本，不下载内核、不迁移状态、
+不重启服务。`v2ray versions` 显示当前内核、固定基线与上游最新版本。
+非交互安装可通过 `V2M_XRAY_VERSION=v26.3.27` 指定版本。
+
 `v2ray update` 在临时目录下载并校验新内核和 GeoData，用新内核检查当前配置后才替换文件。运行中的服务重启后会连续检查 5 秒；文件替换或健康检查失败时自动恢复旧内核与 GeoData。原先停止的服务保持停止。自动回退失败时，会输出保留的恢复文件目录。该检查用于发现启动故障，不代表已验证客户端到服务器的端到端连通性。
+
+成功更新也保留旧内核及配套 GeoData，`v2ray rollback.core` 会先用旧内核验证当前配置，
+再执行同样的替换与健康检查；不兼容时保留当前内核。回退不恢复节点配置。
 
 `v2ray upgrade` 是服务器已安装项目的一键更新入口，`v2ray update.sh` 作为兼容别名继续可用。
 
@@ -636,14 +663,32 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/v2ray-manager/mai
 参数和证书路径保持不变，因此原分享链接继续有效。若迁移失败或连接参数发生非预期变化，
 配置和管理脚本都会恢复到更新前版本。
 
-从 5.2.0 开始，脚本会在运行管理命令时检查数据结构版本。由旧版 `v2ray update.sh` 首次
-升级到 5.2.0 后，如果旧更新器尚未调用迁移，新脚本会在下一次运行 `v2ray`、`v2ray doctor`
-或其他管理命令时自动完成迁移，无需重新生成或重新导入链接。
+6.4.0 在取得写锁后检查全部启用及停用节点的数据版本；高于当前脚本支持的数据版本会被拒绝，
+不会当作旧数据降级迁移。只读命令不再隐式触发迁移；可显式执行 `v2ray migrate`。
 
 可以设置 `V2M_MANAGER_REF` 为完整的 40 位提交 SHA，以部署指定版本或绕过提交查询的 API
 限流。下载通过 HTTPS，并检查 Bash 语法与项目标识；这不是独立签名验证。
 
-管理脚本更新前会保存 `/var/backups/v2ray-manager/manager.previous.sh`，可用 `v2ray rollback.sh` 恢复。若新管理命令本身无法运行，可用 root 执行 `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`。重新运行安装不会升级已存在的内核；请使用独立的 `v2ray update` 命令。
+管理脚本更新前创建关联事务快照，包含管理命令、`/etc/xray`、Caddy 主配置及站点配置、
+Xray 服务定义、组件脚本以及 Xray/Caddy 运行状态。`v2ray rollback.sh` 恢复整套快照，
+**会撤销快照之后的节点、证书和配置修改**，并保留回退前现场。它不回退系统软件包、
+Xray 内核、网站内容或 WARP 后端的外部运行状态。
+
+未完成的管理脚本事务通过 `manager.pending` 保留记录，后续修改操作会被阻止。
+运行 `v2ray recover` 恢复；如果管理命令已损坏，使用错误信息中给出的
+`bash /var/backups/v2ray-manager/manager-transaction.<事务ID>/recovery.sh recover`。
+快照完整性校验失败时保留现场，不覆盖当前配置。`manager.previous.sh` 仅供人工检查；
+缺少关联快照的旧版本升级不能自动安全回退，新命令会拒绝仅替换脚本。
+
+普通配置备份仍保留最近 10 份。内核与管理器事务快照单独保留，不自动裁剪，需关注磁盘空间；
+确认不再需要后，才可人工清理未被 `manager.pending`、`manager.rollback`、`core.rollback`
+引用的事务目录。重新安装不升级现有内核。详见 [可靠性改造说明](docs/RELIABILITY.md)。
+
+Caddy、Cloudflare IP、WireGuard 和 MASQUE 管理组件由主脚本内的 `component_manifest`
+固定到完整提交及 SHA-256。下载设有连接和总时长限制，校验成功后原子替换。
+已有匹配文件可离线使用；旧版或被修改的 WARP 脚本在执行前会被拒绝，可通过对应
+`warp repair` 或 `warp install` 安装锁定版本。摘要验证不等于独立签名验证，
+也不固定这些组件内部安装的软件包及可选网站资源。
 
 ## 安装与手动添加协议
 
@@ -824,4 +869,8 @@ UUID 默认自动生成并写入服务器配置和链接；TLS 模式自动查�
 └── .github/
 ```
 
-每次推送都会在 Ubuntu 24.04 上运行逐文件 Bash 语法检查、ShellCheck、单元测试、升级/恢复故障模拟和安装引导测试，并下载 Xray 最新稳定版验证全部协议组合及多入站配置。故障模拟不操作真实 systemd 或本机安装目录；真实服务器安装、证书申请和端到端连接仍需要部署环境验证。
+CI 配置覆盖 Ubuntu 22.04/24.04、Ubuntu 24.04 ARM64 及 Debian 12/13 容器，运行 Bash
+语法检查、ShellCheck、单元测试和升级/恢复故障模拟。真实 Xray 测试分别验证固定基线和
+上游 latest；全部配置及导出链接做一致性检查，REALITY RAW 与私网路由另有真实流量测试。
+CI 配置不代表这些环境已在本地验证通过，当前结果见 [验证记录](docs/VALIDATION.md)。
+故障模拟不操作真实 systemd；生产部署、ACME、Caddy/CDN 及其余协议互通仍需部署环境验证。

@@ -407,7 +407,10 @@ v2ray restore
 v2ray rollback.sh
 ```
 
-`restore` 恢复最近配置；`rollback.sh` 恢复上一次项目脚本。两者用途不同。
+`restore` 恢复最近配置；6.4.0 的 `rollback.sh` 恢复上一次升级前的脚本及关联数据，
+会撤销快照后的配置修改。`rollback.core` 只恢复内核与配套 GeoData。
+`recover` 用于中断的管理脚本事务。旧版仅含脚本的备份不能自动执行关联回退。
+事务快照与最近 10 份普通配置备份分别保留，详见 [可靠性说明](RELIABILITY.md)。
 
 ## 13. 延迟显示 -1 时如何判断
 

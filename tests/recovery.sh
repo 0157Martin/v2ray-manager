@@ -15,9 +15,9 @@ if [[ ${1:-} != --case ]]; then
   sandbox=$(mktemp -d)
   trap 'rm -rf -- "$sandbox"' EXIT
   for scenario in healthy delayed-crash restarted-process invalid-core download-failure \
-    update-success update-stopped update-rollback partial-copy rollback-failure \
+    update-success update-stopped update-rollback update-explicit-rollback partial-copy rollback-failure \
     manager-update manager-invalid manager-rollback tls-restore backup-collision \
-    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate \
+    link-stale-primary link-disabled-primary link-missing-address link-ipv6 link-mismatch link-node-isolation link-multi-users link-project-migrate link-disabled-migrate \
     tls-renew-ok tls-renew-invalid tls-renew-config-failure tls-renew-restart-failure tls-renew-stopped acme-webroot acme-caddy-webroot \
     link-client-export link-client-disabled caddy-port-conflict; do
     mkdir "$sandbox/$scenario"
@@ -44,6 +44,7 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly CADDY_CONFIG=.*|readonly CADDY_CONFIG=\"$sandbox/Caddyfile\"|" \
   -e "s|readonly CADDY_SITE_DIR=.*|readonly CADDY_SITE_DIR=\"$sandbox/caddy-sites\"|" \
   -e "s|readonly CADDY_WEB_ROOT=.*|readonly CADDY_WEB_ROOT=\"$sandbox/www\"|" \
+  -e "s|readonly WARP_BACKEND_BIN_DIR=.*|readonly WARP_BACKEND_BIN_DIR=\"$sandbox/components\"|" \
   "$repo_dir/v2ray.sh" > "$sandbox/manager.sh"
 # shellcheck disable=SC1091
 source "$sandbox/manager.sh"
@@ -101,6 +102,7 @@ systemctl() {
       fi
       ;;
     restart) printf 'restart\n' >> "$sandbox/service-actions" ;;
+    daemon-reload|stop) : ;;
     *) fail "unexpected systemctl call: $*" ;;
   esac
 }
@@ -192,7 +194,7 @@ case "$scenario" in
   healthy) service_healthy ;;
   delayed-crash|restarted-process)
     if service_healthy; then fail 'unhealthy process was accepted'; fi ;;
-  invalid-core|download-failure|update-success|update-stopped|update-rollback|partial-copy|rollback-failure)
+  invalid-core|download-failure|update-success|update-stopped|update-rollback|update-explicit-rollback|partial-copy|rollback-failure)
     version_output=
     if [[ $scenario == invalid-core ]]; then export CANDIDATE_INVALID=1; fi
     if [[ $scenario == partial-copy || $scenario == rollback-failure ]]; then
@@ -206,12 +208,17 @@ case "$scenario" in
     fi
     # Run the function as a simple command in a fresh shell so errexit is enabled.
     export scenario sandbox XRAY_BIN ASSET_DIR CONFIG_FILE BACKUP_DIR RELEASE_API
-    export -f update_core finish_core_update fetch_core install_core_files atomic_install \
-      install_dependencies install systemctl service_healthy restart_checked sleep die red green yellow
+    export -f update_core rollback_core finish_core_update fetch_core install_core_files atomic_install \
+      publish_manager_pointer install_dependencies install systemctl service_healthy restart_checked sleep die red green yellow
     if declare -F real_atomic_install >/dev/null; then export -f real_atomic_install; fi
     status=0
-    bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core' > "$sandbox/output" 2>&1 || status=$?
+    bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core; if [[ $scenario == update-explicit-rollback ]]; then rollback_core; fi' > "$sandbox/output" 2>&1 || status=$?
     case "$scenario" in
+      update-explicit-rollback)
+        [[ $status == 0 && $("$XRAY_BIN" version) == previous ]] || { cat "$sandbox/output"; fail 'explicit core rollback failed'; }
+        [[ $(cat "$ASSET_DIR/geoip.dat") == old-geoip && $(cat "$ASSET_DIR/geosite.dat") == old-geosite ]] || fail 'explicit rollback lost GeoData'
+        [[ -f $BACKUP_DIR/core.rollback ]] || fail 'core rollback pointer missing'
+        ;;
       update-success|update-stopped)
         version_output=$("$XRAY_BIN" version)
         [[ $status == 0 && ${version_output%%$'\n'*} == candidate ]] || { cat "$sandbox/output"; fail 'update did not succeed'; }
@@ -248,10 +255,15 @@ case "$scenario" in
       cp "$sandbox/original" "$output"
       printf '\n# test update\n' >> "$output"
     }
-    export scenario sandbox MANAGER_BIN BACKUP_DIR MANAGER_URL MANAGER_API
-    export -f update_manager validate_manager atomic_install install curl die red green
+    caddy() { :; }
+    export scenario sandbox
+    {
+      printf 'set -Eeuo pipefail\nsource %q\n' "$sandbox/manager.sh"
+      declare -f curl install systemctl sleep caddy fail
+      printf 'update_manager\n'
+    } > "$sandbox/update-test.sh"
     status=0
-    bash -c 'set -Eeuo pipefail; update_manager' > "$sandbox/output" 2>&1 || status=$?
+    bash "$sandbox/update-test.sh" > "$sandbox/output" 2>&1 || status=$?
     if [[ $scenario == manager-invalid ]]; then
       [[ $status != 0 ]] || fail 'invalid manager accepted'
       cmp "$MANAGER_BIN" "$sandbox/original" || fail 'invalid download changed manager'
@@ -305,6 +317,15 @@ CORE
     save_current_node "$NODES_DIR/primary.env"
     render_config "$CONFIG_FILE"
     case "$scenario" in
+      link-disabled-migrate)
+        mv "$NODES_DIR/primary.env" "$NODES_DIR/primary.disabled"
+        jq '.DATA_SCHEMA=1' "$NODES_DIR/primary.disabled" > "$sandbox/legacy.json"; cp "$sandbox/legacy.json" "$NODES_DIR/primary.disabled"
+        rebuild_config_from_nodes
+        migrate_project_state > "$sandbox/output"
+        jq -e --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA == $schema' "$NODES_DIR/primary.disabled" || fail 'disabled-only registry was not migrated'
+        [[ ! -f $NODES_DIR/primary.env ]] || fail 'migration enabled a disabled node'
+        jq -e '.inbounds | length == 0' "$CONFIG_FILE" >/dev/null || fail 'migration created an active inbound'
+        ;;
       link-client-export)
         export_client primary > "$sandbox/client.json"
         jq -e '.outbounds[0].settings.vnext[0] | .address == "edge.example.com" and .port == 24443' "$sandbox/client.json" >/dev/null || fail 'client export not selected node JSON'
@@ -370,7 +391,7 @@ CORE
         chmod +x "$XRAY_BIN"
         set_sub_link_count primary 3 > "$sandbox/output"
         # shellcheck disable=SC1090,SC1091
-        . "$NODES_DIR/primary.env"
+        load_state_file "$NODES_DIR/primary.env"
         [[ $(tr ',' '\n' <<<"$EXTRA_UUIDS" | wc -l) == 2 ]] || fail 'sub-link credentials not persisted'
         jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'three users not applied to Xray config'
         [[ $(grep -c 'vless://' "$sandbox/output") == 3 ]] || fail 'three sub-links not exported'
@@ -388,7 +409,7 @@ CORE
         jq -e '.inbounds[0].settings.clients | length == 4' "$CONFIG_FILE" >/dev/null || fail 'sub-link delete removed wrong number of users'
         ! jq -e --arg old "$old_primary" '.inbounds[0].settings.clients[] | select(.id == $old)' "$CONFIG_FILE" >/dev/null || fail 'deleted primary credential remained active'
         # shellcheck disable=SC1090,SC1091
-        . "$NODES_DIR/primary.env"
+        load_state_file "$NODES_DIR/primary.env"
         [[ $UUID != "$old_primary" ]] || fail 'deleting first credential did not promote the next user'
         list_sub_links primary > "$sandbox/list-output"
         grep -q '链接总数: 4' "$sandbox/list-output" || fail 'sub-link detail did not show link count'
@@ -399,18 +420,18 @@ CORE
       link-project-migrate)
         EXTRA_UUIDS=22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333
         save_current_node "$NODES_DIR/primary.env"
-        sed -i '/^DATA_SCHEMA=/d' "$NODES_DIR/primary.env"
+        jq 'del(.DATA_SCHEMA)' "$NODES_DIR/primary.env" > "$sandbox/legacy.json"; cp "$sandbox/legacy.json" "$NODES_DIR/primary.env"
         rebuild_config_from_nodes
         before=$(config_connection_fingerprint "$CONFIG_FILE")
         migrate_project_state > "$sandbox/migrate-output"
         after=$(config_connection_fingerprint "$CONFIG_FILE")
         [[ $before == "$after" ]] || fail 'project migration changed connection parameters'
-        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$NODES_DIR/primary.env" >/dev/null || fail 'node schema marker missing after migration'
-        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$STATE_FILE" >/dev/null || fail 'manager schema marker missing after migration'
+        jq -e --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA == $schema' "$NODES_DIR/primary.env" >/dev/null || fail 'node schema marker missing after migration'
+        jq -e --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA == $schema' "$STATE_FILE" >/dev/null || fail 'manager schema marker missing after migration'
         jq -e '.inbounds[0].settings.clients | length == 3' "$CONFIG_FILE" >/dev/null || fail 'migration changed existing sub-links'
-        sed -i '/^DATA_SCHEMA=/d' "$NODES_DIR/primary.env"
+        jq 'del(.DATA_SCHEMA)' "$NODES_DIR/primary.env" > "$sandbox/legacy.json"; cp "$sandbox/legacy.json" "$NODES_DIR/primary.env"
         ensure_project_state_current doctor > "$sandbox/automatic-migrate-output"
-        grep -Fx "DATA_SCHEMA=$DATA_SCHEMA_VERSION" "$NODES_DIR/primary.env" >/dev/null || fail 'automatic migration did not upgrade old node state'
+        jq -e --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA == $schema' "$NODES_DIR/primary.env" >/dev/null || fail 'automatic migration did not upgrade old node state'
         ;;
     esac
     ;;
