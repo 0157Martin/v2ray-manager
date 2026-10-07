@@ -42,8 +42,6 @@ readonly SERVICE_NAME="xray"
 readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
 readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
-readonly CADDY_PORTFOLIO_REPO="0157Martin/v2ray-portfolio-page"
-readonly CADDY_RESUME_REPO="0157Martin/v2ray-resume-page"
 readonly CADDY_BRANCH_BIN="/usr/local/libexec/v2ray-manager/caddy-manager"
 readonly CADDY_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/caddy-manager/main/caddy-manager.sh"
 
