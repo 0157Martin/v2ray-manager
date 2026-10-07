@@ -13,6 +13,8 @@ for path in "$root_dir/install.sh" "$root_dir/v2ray.sh" "$root_dir/config/"*.sh 
   "$root_dir/tools/"*.sh "$root_dir/tests/"*.sh; do
   bash -n "$path"
 done
+# The literal variable reference is the contract being checked in source.
+# shellcheck disable=SC2016
 grep -Fq 'env V2M_NODES_DIR="$NODES_DIR"' "$root_dir/v2ray.sh" || {
   printf '%s\n' 'Caddy branch environment must be passed through env.' >&2
   exit 1
