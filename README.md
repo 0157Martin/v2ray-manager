@@ -550,12 +550,26 @@ Caddy 同步失败会使整个迁移失败并恢复配置；旧 TLS 监听缺少
    `&&` 保证前一步失败时停止：先阻止无效 Caddy配置上线，再启动 h2c 后端，最后加载指向这些
    后端的 Caddy路由。完成后运行 `v2ray doctor`，再从外部客户端测试。
 
-自定义 Cloudflare/CDN 入口域名仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
+自定义 Cloudflare/CDN 入口仅适用于 HTTP 兼容的 TLS XHTTP/WebSocket 节点。使用
 `v2ray link <入站ID> <CDN域名>` 导出时，连接地址和客户端端口会改为指定域名与
-`443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名。为防止链接暴露 IP 或把 IP
-误当作证书域名，该参数只接受完整域名，不接受 IP 地址。Cloudflare 代理不适用于
+`443`，但 TLS SNI、HTTP Host 和证书域名仍保留节点原域名。Cloudflare 代理不适用于
 VLESS RAW、REALITY 或普通 TCP 节点。gRPC 虽可由 Cloudflare 转发，但不使用这个
 XHTTP/WebSocket 专用的地址覆盖导出入口。
+
+Cloudflare 优选 IP 已拆分到独立的 [`cloudflare-ip-manager`](https://github.com/0157Martin/cloudflare-ip-manager)。
+它拥有自己的安装、验证和卸载命令，不修改 DNS、Caddy、证书或 Xray 配置：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/cloudflare-ip-manager/main/install.sh) install
+cloudflare-ip-manager test example.com 'IP1,IP2,IP3'
+cloudflare-ip-manager verify
+bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/cloudflare-ip-manager/main/install.sh) uninstall
+```
+
+也可由主干统一调用：`v2ray cfip test example.com 'IP1,IP2,IP3'`，然后运行
+`v2ray link <入站ID> cfip`。主干会核对优选记录的 TLS 域名必须与入站证书域名一致；导出的
+连接地址使用优选 IP，SNI/Host 继续使用原域名。VPS 侧 TTFB 只能用于初筛，最终应从实际
+客户端网络复测。
 
 分享链接不写入或自动探测服务器公网 IP。普通 TLS 节点使用证书域名作为入口；REALITY
 和无 TLS 节点安装时要求填写一个指向 VPS 的入口域名，Cloudflare 中必须按协议选择灰云

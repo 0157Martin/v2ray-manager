@@ -309,6 +309,11 @@ Caddy 采用主干与功能分支结构：`v2ray-manager` 负责统一控制、X
 构建的页面文件与校验清单；`caddy-manager` 负责下载固定提交、验证文件并发布。主干只通过
 `v2ray caddy page <域名> <类型>` 发出请求，不直接下载、生成或替换个人网页。
 
+Cloudflare 优选 IP 不属于 Caddy。它由独立仓库 `cloudflare-ip-manager` 管理，具备自己的
+`install.sh install|verify|uninstall` 和运行命令。主干通过 `v2ray cfip` 调用分支，并可用
+`v2ray link <入站ID> cfip` 为 TLS XHTTP/WebSocket 导出优选入口。导出时只替换客户端连接地址，
+SNI/Host 仍为入站证书域名；保存记录的域名不一致时拒绝导出。该分支不修改 DNS、Caddy 或 Xray。
+
 Caddy 是服务器级 systemd 服务，可以同时加载多个域名站点，但每个站点只处理自己的域名和
 路径。项目支持：
 

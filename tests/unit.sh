@@ -177,6 +177,10 @@ jq -e '.outbounds[0].settings.vnext[0].port == 24443' <<<"$direct_client" >/dev/
 cdn_link=$(show_connection_loaded "$temporary" edge.cdn.example.com)
 [[ $cdn_link == *'vless://11111111-1111-4111-8111-111111111111@edge.cdn.example.com:443?'* ]] || fail 'CDN export did not use override domain and port 443'
 [[ $cdn_link == *'sni=example.com'* && $cdn_link == *'host=example.com'* ]] || fail 'CDN export did not preserve domain SNI and Host'
+preferred_link=$(show_connection_loaded "$temporary" 104.16.1.1)
+[[ $preferred_link == *'vless://11111111-1111-4111-8111-111111111111@104.16.1.1:443?'* ]] || fail 'preferred IP export did not use override IP and port 443'
+[[ $preferred_link == *'sni=example.com'* && $preferred_link == *'host=example.com'* ]] || fail 'preferred IP export did not preserve domain SNI and Host'
+if show_connection_loaded "$temporary" 127.0.0.1 >/dev/null 2>&1; then fail 'private preferred IP was accepted'; fi
 export EXTRA_UUIDS=22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333
 render_config "$temporary"
 multi_links=$(show_connection_loaded "$temporary" edge.cdn.example.com)

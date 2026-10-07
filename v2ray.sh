@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.2.0"
+readonly MANAGER_VERSION="6.3.0"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -44,6 +44,8 @@ readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
 readonly CADDY_BRANCH_BIN="/usr/local/libexec/v2ray-manager/caddy-manager"
 readonly CADDY_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/caddy-manager/main/caddy-manager.sh"
+readonly CFIP_BRANCH_BIN="/usr/local/libexec/v2ray-manager/cloudflare-ip-manager"
+readonly CFIP_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/cloudflare-ip-manager/main/cloudflare-ip-manager.sh"
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -83,7 +85,7 @@ acquire_mutation_lock() {
 mutation_entry() {
   local operation=${1:-}
   case "$operation" in
-    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|call_caddy_branch|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
+    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|call_caddy_branch|call_cloudflare_ip_branch|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
     *) die "不允许的内部修改操作。" ;;
   esac
   acquire_mutation_lock
@@ -362,6 +364,17 @@ valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 valid_uuid() { [[ $1 =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; }
 valid_node_id() { [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; }
 valid_server_name() { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $1 == *.* && $1 != *..* ]]; }
+valid_public_ipv4() {
+  local ip=${1:-} octet
+  local -a octets
+  [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a octets <<<"$ip"
+  for octet in "${octets[@]}"; do ((10#$octet <= 255)) || return 1; done
+  case "$ip" in
+    0.*|10.*|127.*|169.254.*|192.0.0.*|192.0.2.*|192.168.*|198.18.*|198.19.*|198.51.100.*|203.0.113.*|224.*|225.*|226.*|227.*|228.*|229.*|230.*|231.*|232.*|233.*|234.*|235.*|236.*|237.*|238.*|239.*|24[0-9].*|25[0-5].*) return 1 ;;
+  esac
+  [[ ${octets[0]} -ne 172 || ${octets[1]} -lt 16 || ${octets[1]} -gt 31 ]]
+}
 reality_target_supported() { [[ ${1,,} != www.microsoft.com && ${1,,} != microsoft.com ]]; }
 check_reality_target() {
   local target=$1 output
@@ -1279,7 +1292,7 @@ load_connection_state() {
 }
 
 show_connection() (
-  local node_id=${1:-} address_override=${2:-}
+  local node_id=${1:-} address_override=${2:-} selected_domain
   if [[ -n $node_id ]]; then
     if ! valid_node_id "$node_id" || [[ ! -f $NODES_DIR/$node_id.env ]]; then
       red "找不到启用的入站：$node_id" >&2
@@ -1295,7 +1308,17 @@ show_connection() (
       red "自定义 CDN/优选 IP 仅适用于 TLS XHTTP/WebSocket 入站。" >&2
       return 1
     }
-    valid_server_name "$address_override" || { red "CDN 入口必须填写域名；为避免暴露 IP，链接不接受优选 IP 地址。" >&2; return 1; }
+    if [[ $address_override == cfip || $address_override == preferred ]]; then
+      address_override=$(call_cloudflare_ip_branch get) || return 1
+      selected_domain=$(call_cloudflare_ip_branch domain) || return 1
+      [[ ${selected_domain,,} == ${SERVER_NAME,,} ]] || {
+        red "优选 IP 保存的 TLS 域名是 $selected_domain，与入站域名 $SERVER_NAME 不一致。请重新测试或设置。" >&2
+        return 1
+      }
+    fi
+    valid_server_name "$address_override" || valid_public_ipv4 "$address_override" || {
+      red "CDN 入口必须是有效域名或公网 IPv4。" >&2; return 1;
+    }
   fi
   show_connection_loaded "$CONFIG_FILE" "$address_override"
 )
@@ -1408,7 +1431,7 @@ show_connection_loaded() (
   local cdn_address=${2:-}
   address=${cdn_address:-$(server_address)}
   client_port=$(client_entry_port "$cdn_address")
-  if ! valid_server_name "$address"; then
+  if ! valid_server_name "$address" && { [[ -z $cdn_address ]] || ! valid_public_ipv4 "$address"; }; then
     red "无法导出链接：入口必须是域名，不能输出公网 IP。请把域名解析到服务器，并在入站配置中填写该域名。" >&2
     return 1
   fi
@@ -2075,10 +2098,11 @@ export_menu() {
     ui_menu_item '4) 使用 Cloudflare/CDN 域名输出链接'
     ui_menu_item '5) 子链接用户管理（增删改查）'
     ui_menu_item '6) 导出 Xray 客户端 JSON'
+    ui_menu_item '7) Cloudflare 优选 IP（独立分支）'
     ui_box_divider
     ui_menu_item '0) 返回主菜单'
     ui_box_bottom
-    read -r -p '请选择 [0-6]:' choice
+    read -r -p '请选择 [0-7]:' choice
     case "$choice" in
       1) list_inbounds; pause ;;
       2) show_all_links; pause ;;
@@ -2099,6 +2123,7 @@ export_menu() {
         read -r -p '请输入启用的入站 ID（回车使用默认入站）：' node_id
         export_client "$node_id"; pause
         ;;
+      7) cloudflare_ip_menu ;;
       0) return ;;
       *) yellow "无效选择。"; pause ;;
     esac
@@ -2370,6 +2395,64 @@ caddy_ports_available() {
       return 1
     }
   done
+}
+
+install_cloudflare_ip_branch_command() {
+  local temporary
+  temporary=$(mktemp) || return 1
+  if ! curl --fail --show-error --location --retry 3 "$CFIP_BRANCH_URL" -o "$temporary"; then
+    rm -f -- "$temporary"; red '无法下载 Cloudflare 优选 IP 分支项目。' >&2; return 1
+  fi
+  bash -n "$temporary" || { rm -f -- "$temporary"; red 'Cloudflare 优选 IP 分支脚本语法校验失败。' >&2; return 1; }
+  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; red 'Cloudflare 优选 IP 分支脚本缺少许可证标识。' >&2; return 1; }
+  install -d -m 755 "$(dirname "$CFIP_BRANCH_BIN")"
+  install -m 755 "$temporary" "$CFIP_BRANCH_BIN"
+  rm -f -- "$temporary"
+}
+
+call_cloudflare_ip_branch() {
+  [[ -x $CFIP_BRANCH_BIN ]] || install_cloudflare_ip_branch_command || return 1
+  "$CFIP_BRANCH_BIN" "$@"
+}
+
+cloudflare_ip_menu() {
+  local choice domain candidates ip
+  while :; do
+    printf '\n'
+    ui_box_title 'Cloudflare 优选 IP（独立分支项目）'
+    ui_menu_item '1) 安装/更新分支命令'
+    ui_menu_item '2) 测试候选 IP 并保存'
+    ui_menu_item '3) 手动设置 IP 与 TLS 域名'
+    ui_menu_item '4) 验证当前选择'
+    ui_menu_item '5) 查看当前选择'
+    ui_menu_item '6) 清除当前选择'
+    ui_menu_item '7) 卸载分支项目'
+    ui_box_divider
+    ui_menu_item '0) 返回连接与导出'
+    ui_box_bottom
+    read -r -p '请选择 [0-7]:' choice
+    case "$choice" in
+      1) run_mutation call_cloudflare_ip_branch install; pause ;;
+      2) read -r -p 'Cloudflare TLS 域名：' domain; read -r -p '候选公网 IPv4（逗号分隔）：' candidates; run_mutation call_cloudflare_ip_branch test "$domain" "$candidates"; pause ;;
+      3) read -r -p '优选公网 IPv4：' ip; read -r -p 'Cloudflare TLS 域名：' domain; run_mutation call_cloudflare_ip_branch set "$ip" "$domain"; pause ;;
+      4) call_cloudflare_ip_branch verify || true; pause ;;
+      5) call_cloudflare_ip_branch show || true; pause ;;
+      6) run_mutation call_cloudflare_ip_branch clear; pause ;;
+      7) run_mutation call_cloudflare_ip_branch uninstall; pause ;;
+      0) return ;;
+      *) yellow '无效选择。'; pause ;;
+    esac
+  done
+}
+
+cloudflare_ip_command() {
+  local action=${1:-menu}
+  case "$action" in
+    menu) cloudflare_ip_menu ;;
+    install|test|set|clear|uninstall) run_mutation call_cloudflare_ip_branch "$@" ;;
+    verify|show|status|get|domain|version) call_cloudflare_ip_branch "$@" ;;
+    *) die '用法：v2ray cfip [install|test <域名> <IP,IP,...>|set <IP> <域名>|verify|show|get|clear|uninstall]' ;;
+  esac
 }
 
 install_caddy_branch_command() {
@@ -3355,11 +3438,12 @@ show_help() {
     'v2ray users    打开子链接用户管理（查看、新增、删除、重新生成）' \
     'v2ray users list [入站ID] 查看协议分组或指定入站的链接用户' \
     'v2ray users add/delete/replace 管理指定入站的链接用户' \
-    'v2ray link <入站ID> <CDN域名> 以 443 导出 TLS XHTTP/WS 链接' \
+    'v2ray link <入站ID> <CDN域名|cfip> 以 443 导出 TLS XHTTP/WS 链接' \
     'v2ray firewall 自动放行已启用入站的本机 UFW/firewalld 端口' \
     'v2ray speedtest 运行服务器网络测速' \
     'v2ray route [目标IP/域名] 测试回程路由、丢包和延迟' \
     'v2ray caddy    管理 Caddy 伪装网站和本机反向代理' \
+    'v2ray cfip     管理独立 Cloudflare 优选 IP 分支项目' \
     'v2ray warp     管理全部协议共用的 WARP 出站策略' \
     'v2ray upgrade  一键更新项目脚本、迁移数据并保留现有链接' \
     'v2ray doctor   运行综合诊断' \
@@ -3443,6 +3527,7 @@ main() {
     speedtest) run_speedtest ;;
     route) if [[ -n ${2:-} ]]; then route_latency_test "$2"; else route_test_menu; fi ;;
     caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
+    cfip|cloudflare-ip) cloudflare_ip_command "${@:2}" ;;
     warp) warp_command "${2:-menu}" "${3:-}" ;;
     update) run_mutation update_core ;;
     upgrade|update.sh) run_mutation update_manager ;;
@@ -3455,7 +3540,7 @@ main() {
     uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;
-    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|verify|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log|repair|uninstall]|warp [install|switch <wireguard|masque>|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
+    help|-h|--help) show_help; printf '%s\n' "用法：v2ray [install|add|inbounds|links|users [list|show|add|delete|replace|set]|info|change|config|link [入站ID] [CDN域名|cfip]|client [入站ID]|status|start|stop|restart|log|speedtest|route [目标]|caddy [install|verify|static|reverse|xray|page <域名> [portfolio|resume|default]|status|log|repair|uninstall]|cfip [install|test|set|verify|show|get|clear|uninstall]|warp [install|switch <wireguard|masque>|status|test|diagnose|check|selective|all|ipv4|ipv6|dual|off|repair|uninstall]|update|upgrade|update.sh|rollback.sh|rotate|backup|restore|doctor|firewall|about|uninstall]" ;;
     *) die "未知命令：$1。输入 v2ray help 查看可用命令。" ;;
   esac
 }

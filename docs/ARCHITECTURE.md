@@ -11,12 +11,9 @@ modules. Supporting directories have separate responsibilities:
 - `tools/`: repository maintenance checks.
 - `config/`: defaults documented for maintainers; runtime defaults remain in the single-file artifact.
 
-The manager owns proxy configuration, service lifecycle, certificates, Caddy routing, WARP policy,
-backup and diagnostics. Default installation never fetches themed page assets. Caddy static roots are
-user content: the manager creates a generic placeholder only when a root is empty and never overwrites
-an existing index during upgrade or route synchronization. An explicit `caddy page` operation may
-deploy an optional page from an allowlisted repository after commit pinning, manifest validation and
-per-file digest verification; publication swaps the staged directory only after every check succeeds.
+The manager owns Xray proxy configuration, service lifecycle, certificate references, branch
+orchestration, backup and diagnostics. Caddy routing and page publication belong to `caddy-manager`;
+WARP transports and Cloudflare preferred-IP selection belong to their independent branch projects.
 
 `v2ray-manager` is the trunk controller for the project family. WARP transport implementations are
 branch projects (independent repositories, not Git branches) named `warp-wireguard-manager` and
@@ -37,6 +34,13 @@ and operated on a server without Xray; uninstalling the package preserves sites,
 Optional personal static pages are children of the Caddy branch: `caddy-manager` selects and verifies
 the `v2ray-portfolio-page` or `v2ray-resume-page` artifact and publishes it atomically. The trunk only
 forwards the domain and page type and contains no page rendering or publication implementation.
+
+Cloudflare preferred-IP selection follows the same boundary. `cloudflare-ip-manager` tests only
+user-supplied public IPv4 candidates against the configured TLS domain, stores one validated pair and
+provides `install/test/set/verify/show/get/clear/uninstall/version`. It never edits DNS, Caddy or Xray.
+The trunk may read that pair for a TLS XHTTP/WebSocket link override, but it must preserve the inbound
+domain as SNI/Host and reject a stored domain that differs from the inbound domain. Server-side latency
+is a candidate filter, not a substitute for testing from the client network.
 
 Client-facing ports are derived by one policy function. TLS-XHTTP uses Caddy 443; TLS WebSocket
 profiles use 443 only when the managed site contains the matching domain, path and Xray backend.
