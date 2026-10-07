@@ -1311,7 +1311,7 @@ show_connection() (
     if [[ $address_override == cfip || $address_override == preferred ]]; then
       address_override=$(call_cloudflare_ip_branch get) || return 1
       selected_domain=$(call_cloudflare_ip_branch domain) || return 1
-      [[ ${selected_domain,,} == ${SERVER_NAME,,} ]] || {
+      [[ ${selected_domain,,} == "${SERVER_NAME,,}" ]] || {
         red "优选 IP 保存的 TLS 域名是 $selected_domain，与入站域名 $SERVER_NAME 不一致。请重新测试或设置。" >&2
         return 1
       }
