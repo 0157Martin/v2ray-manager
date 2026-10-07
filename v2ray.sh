@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="0157Martin"
-readonly MANAGER_VERSION="6.3.0"
+readonly MANAGER_VERSION="6.3.1"
 readonly DATA_SCHEMA_VERSION="4"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
@@ -2419,29 +2419,42 @@ call_cloudflare_ip_branch() {
 }
 
 cloudflare_ip_menu() {
-  local choice domain candidates ip
+  local choice domain candidates ip node_id
   while :; do
     printf '\n'
     ui_box_title 'Cloudflare 优选 IP（独立分支项目）'
-    ui_menu_item '1) 安装/更新分支命令'
-    ui_menu_item '2) 测试候选 IP 并保存'
-    ui_menu_item '3) 手动设置 IP 与 TLS 域名'
-    ui_menu_item '4) 验证当前选择'
-    ui_menu_item '5) 查看当前选择'
-    ui_menu_item '6) 清除当前选择'
-    ui_menu_item '7) 卸载分支项目'
+    ui_menu_item '用途：为 Cloudflare 橙云的 TLS XHTTP/WS 链接选择入口 IP。'
+    ui_menu_item '链接只替换连接地址；TLS SNI、HTTP Host 和证书域名保持不变。'
+    ui_menu_item '步骤：①安装/更新 → ②测试或手动设置 → ③验证 → ④生成链接。'
+    ui_box_divider
+    ui_menu_item '1) 安装/更新优选 IP 分支'
+    ui_menu_item '2) 测试候选 IP 并保存最佳结果（候选用逗号分隔）'
+    ui_menu_item '3) 手动保存已知优选 IP 与入站 TLS 域名'
+    ui_menu_item '4) 验证当前 IP、HTTPS 和域名组合'
+    ui_menu_item '5) 查看当前保存结果'
+    ui_menu_item '6) 选择入站并生成优选 IP 分享链接'
+    ui_menu_item '7) 清除当前保存结果'
+    ui_menu_item '8) 卸载优选 IP 分支项目'
     ui_box_divider
     ui_menu_item '0) 返回连接与导出'
     ui_box_bottom
-    read -r -p '请选择 [0-7]:' choice
+    read -r -p '请选择 [0-8]:' choice
     case "$choice" in
       1) run_mutation call_cloudflare_ip_branch install; pause ;;
       2) read -r -p 'Cloudflare TLS 域名：' domain; read -r -p '候选公网 IPv4（逗号分隔）：' candidates; run_mutation call_cloudflare_ip_branch test "$domain" "$candidates"; pause ;;
       3) read -r -p '优选公网 IPv4：' ip; read -r -p 'Cloudflare TLS 域名：' domain; run_mutation call_cloudflare_ip_branch set "$ip" "$domain"; pause ;;
       4) call_cloudflare_ip_branch verify || true; pause ;;
       5) call_cloudflare_ip_branch show || true; pause ;;
-      6) run_mutation call_cloudflare_ip_branch clear; pause ;;
-      7) run_mutation call_cloudflare_ip_branch uninstall; pause ;;
+      6)
+        call_cloudflare_ip_branch verify || { pause; continue; }
+        list_inbounds
+        printf '\n仅可选择 TLS XHTTP/WebSocket 入站；其域名必须与上方验证结果一致。\n'
+        read -r -p '请输入启用的入站 ID：' node_id
+        show_connection "$node_id" cfip
+        pause
+        ;;
+      7) run_mutation call_cloudflare_ip_branch clear; pause ;;
+      8) run_mutation call_cloudflare_ip_branch uninstall; pause ;;
       0) return ;;
       *) yellow '无效选择。'; pause ;;
     esac

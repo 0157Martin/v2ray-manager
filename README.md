@@ -571,6 +571,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/cloudflare-ip-man
 连接地址使用优选 IP，SNI/Host 继续使用原域名。VPS 侧 TTFB 只能用于初筛，最终应从实际
 客户端网络复测。
 
+交互界面位于“连接与导出 → Cloudflare 优选 IP”，按“安装/更新 → 测试候选或手动设置 →
+验证 → 选择入站并生成链接”操作。第 6 项会先验证已保存组合，再列出入站并直接输出可导入
+客户端的分享链接，不需要手动输入 `cfip` 导出参数。
+
 分享链接不写入或自动探测服务器公网 IP。普通 TLS 节点使用证书域名作为入口；REALITY
 和无 TLS 节点安装时要求填写一个指向 VPS 的入口域名，Cloudflare 中必须按协议选择灰云
 或橙云。已有节点若只保存了 IP，需要在“修改配置 → 更改服务器地址”中改成完整域名后再导出。
