@@ -121,6 +121,15 @@ render_client_config | jq -e '.outbounds[0].settings.vnext[0].port == 443
   and .outbounds[0].streamSettings.tlsSettings.alpn == ["h2"]
   and .outbounds[0].streamSettings.xhttpSettings.host == "cdn.example.com"' >/dev/null || fail 'Caddy XHTTP client config is inconsistent with public TLS endpoint'
 
+PROFILE=vless-tls-raw
+[[ $(profile_group) == modern-direct ]] || fail 'VLESS Vision RAW was classified as compatibility'
+PROFILE=hysteria-tls-quic
+[[ $(profile_group) == modern-direct ]] || fail 'Hysteria2 was classified as compatibility'
+PROFILE=trojan-tls-ws
+[[ $(profile_group) == http-tls ]] || fail 'Trojan WebSocket was not classified by its HTTP/CDN path'
+PROFILE=vmess-tcp
+[[ $(profile_group) == compatibility ]] || fail 'VMess TCP compatibility classification mismatch'
+
 printf '%s\n' 'Unit tests passed.'
 
 # Exercise the existing certificate discovery validation with real certificate/key pairs.
