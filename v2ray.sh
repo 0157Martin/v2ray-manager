@@ -3,12 +3,16 @@
 # Supported hosts: Debian and Ubuntu with systemd. Run as root.
 # Author: Martin&林知远 (https://github.com/0157Martin)
 # SPDX-License-Identifier: GPL-3.0-or-later
+# State loaders intentionally assign shared uppercase fields inside isolated
+# subshell functions; ShellCheck cannot follow those dynamic assignments.
+# shellcheck disable=SC2030,SC2031
 set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="Martin&林知远"
-readonly MANAGER_VERSION="6.3.3"
-readonly DATA_SCHEMA_VERSION="4"
+readonly MANAGER_VERSION="6.5.0"
+readonly DATA_SCHEMA_VERSION="5"
+readonly RECOMMENDED_XRAY_VERSION="v26.3.27"
 readonly DEFAULT_PORT="443"
 readonly DEFAULT_REALITY_SERVER_NAME="dl.google.com"
 readonly BIN_DIR="/usr/local/bin"
@@ -30,8 +34,6 @@ readonly WARP_PROXY_PORT="40000"
 readonly WARP_BACKEND_BIN_DIR="/usr/local/libexec/v2ray-manager"
 readonly WARP_WIREGUARD_BIN="$WARP_BACKEND_BIN_DIR/warp-wireguard"
 readonly WARP_MASQUE_BIN="$WARP_BACKEND_BIN_DIR/warp-masque"
-readonly WARP_WIREGUARD_URL="https://raw.githubusercontent.com/0157Martin/warp-wireguard-manager/main/warp-wireguard.sh"
-readonly WARP_MASQUE_URL="https://raw.githubusercontent.com/0157Martin/warp-masque-manager/main/warp-masque.sh"
 readonly LOCK_FILE="/run/lock/v2ray-manager.lock"
 readonly ACME_RENEWAL_DIR="/etc/letsencrypt/renewal"
 readonly NODES_DIR="$CONFIG_DIR/nodes"
@@ -43,9 +45,60 @@ readonly CADDY_CONFIG="/etc/caddy/Caddyfile"
 readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
 readonly CADDY_BRANCH_BIN="/usr/local/libexec/v2ray-manager/caddy-manager"
-readonly CADDY_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/caddy-manager/main/caddy-manager.sh"
 readonly CFIP_BRANCH_BIN="/usr/local/libexec/v2ray-manager/cloudflare-ip-manager"
-readonly CFIP_BRANCH_URL="https://raw.githubusercontent.com/0157Martin/cloudflare-ip-manager/main/cloudflare-ip-manager.sh"
+
+# Release lock embedded in the standalone artifact. Changes require review and
+# tests; checksums are not fetched from the same mutable source as the scripts.
+component_manifest() {
+  case "$1" in
+    caddy) printf '%s\n' '0157Martin/caddy-manager f5b872a2ff4fe602ce7509737869d829e4b80e2d caddy-manager.sh 9b2cffc9ba249d8ef0099cc9b48cac6609156c7f77b6180c7b8629d70688c392' ;;
+    cfip) printf '%s\n' '0157Martin/cloudflare-ip-manager c6a2e4c8c8a7543e523468f396c6cdbae3b5564e cloudflare-ip-manager.sh a6ecf8bcc4e2ba26dbbb8aa2073c96736d6b95e40f079fb265f4cb9a8e599450' ;;
+    wireguard) printf '%s\n' '0157Martin/warp-wireguard-manager bc1d425add8f172838ea450cfc2955ade1e73a0c warp-wireguard.sh fde080bb07f33a8caa3c8741d6cb47d281f05da683c0861c845799cf75df9040' ;;
+    masque) printf '%s\n' '0157Martin/warp-masque-manager 93cd9564cb9e7d6872916dab5ef00bbf4d21816b warp-masque.sh e36c316d2920338b7b5526b0dc7e13a7ec219a08e51c57910d5d7a91db5a323b' ;;
+    *) return 1 ;;
+  esac
+}
+
+download_file() {
+  curl --fail --show-error --location --proto '=https' --proto-redir '=https' \
+    --retry 3 --connect-timeout 15 --max-time 120 --output "$2" "$1"
+}
+
+verify_component() {
+  local manifest repository revision file expected actual
+  manifest=$(component_manifest "$1") || return 1
+  read -r repository revision file expected <<< "$manifest"
+  [[ -f $2 && -x $2 ]] || return 1
+  actual=$(sha256sum "$2") || return 1
+  [[ ${actual%% *} == "$expected" ]] || {
+    red "组件 $1 与本版本锁定摘要不符，请通过对应的 install/repair 命令更新。" >&2
+    return 1
+  }
+}
+
+install_component() (
+  set -Eeuo pipefail
+  local name=$1 destination=$2 repository revision file expected actual temporary manifest
+  manifest=$(component_manifest "$name") || return 1
+  read -r repository revision file expected <<< "$manifest"
+  # Verify existing installations too; do not silently execute a mutable legacy copy.
+  if [[ -f $destination && -x $destination ]]; then
+    actual=$(sha256sum "$destination") || return 1
+    [[ ${actual%% *} != "$expected" ]] || return 0
+  fi
+  acquire_mutation_lock || return 1
+  if [[ ${V2M_INTERNAL_MIGRATION:-0} != 1 ]]; then require_no_pending_manager || return 1; fi
+  temporary=$(mktemp) || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  download_file "https://raw.githubusercontent.com/$repository/$revision/$file" "$temporary" || return 1
+  actual=$(sha256sum "$temporary") || return 1
+  [[ ${actual%% *} == "$expected" ]] || { red "组件 $name 的 SHA-256 校验失败，保留原文件。" >&2; return 1; }
+  bash -n "$temporary" || return 1
+  install -d -m 755 "$(dirname "$destination")" || return 1
+  atomic_install "$temporary" "$destination" 755 || return 1
+)
 
 red() { printf '\033[31m%s\033[0m\n' "$*"; }
 green() { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -85,10 +138,20 @@ acquire_mutation_lock() {
 mutation_entry() {
   local operation=${1:-}
   case "$operation" in
-    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|call_caddy_branch|call_cloudflare_ip_branch|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|update_manager|rollback_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
+    apply_desired|set_xhttp_mode) ;;
+    install_xray|add_inbound|modify_inbound|disable_inbound|enable_inbound|delete_inbound|change_menu|rotate_reality_keys|add_sub_links|delete_sub_link|replace_sub_link|set_sub_link_count|service_action|install_caddy|configure_caddy_site|deploy_caddy_page|call_caddy_branch|call_cloudflare_ip_branch|install_warp|set_warp_policy|disable_warp_policy|set_warp_ip_strategy|repair_warp|uninstall_warp|update_core|rollback_core|update_manager|rollback_manager|recover_manager|restore_latest|manual_backup|open_enabled_inbound_ports|uninstall_xray|refresh_tls_certificates|migrate_project_state) ;;
     *) die "不允许的内部修改操作。" ;;
   esac
   acquire_mutation_lock
+  # Manager transactions own a durable snapshot, including the executable. Do
+  # not wrap them in the generic config-only EXIT handler or migrate first.
+  case "$operation" in
+    recover_manager) "$@"; return ;;
+    update_manager|rollback_manager) require_no_pending_manager; "$@"; return ;;
+  esac
+  if [[ $operation != migrate_project_state || ${V2M_INTERNAL_MIGRATION:-0} != 1 ]]; then
+    require_no_pending_manager
+  fi
   begin_mutation_snapshot
   if [[ $operation != migrate_project_state && $operation != uninstall_xray ]]; then
     ensure_project_state_current menu
@@ -261,19 +324,20 @@ install_dependencies() {
 # not insert raw iptables/nftables rules: their persistence and policy are owned
 # by the server administrator.
 open_local_firewall_port() {
-  local port=${1:?missing port}
+  local port=${1:?missing port} transport=${2:-tcp}
   valid_port "$port" || die "端口无效：$port"
+  [[ $transport == tcp || $transport == udp ]] || die '端口传输类型无效。'
 
   if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-    ufw allow "${port}/tcp" >/dev/null
-    green "本机 UFW 已放行 TCP ${port}。"
+    ufw allow "${port}/${transport}" >/dev/null
+    green "本机 UFW 已放行 ${transport^^} ${port}。"
     return
   fi
 
   if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd --permanent --add-port="${port}/tcp" >/dev/null
+    firewall-cmd --permanent --add-port="${port}/${transport}" >/dev/null
     firewall-cmd --reload >/dev/null
-    green "本机 firewalld 已放行 TCP ${port}。"
+    green "本机 firewalld 已放行 ${transport^^} ${port}。"
     return
   fi
 
@@ -281,18 +345,19 @@ open_local_firewall_port() {
 }
 
 open_enabled_inbound_ports() (
-  local node_file node_port seen=' '
+  local node_file node_port transport seen=' '
   [[ -d $NODES_DIR ]] || { yellow "尚无入站配置可放行。"; return; }
   for node_file in "$NODES_DIR"/*.env; do
     [[ -e $node_file ]] || continue
     # shellcheck disable=SC1090
-    . "$node_file"
+    load_state_file "$node_file"
     node_port=$PORT
-    [[ $seen == *" ${node_port} "* ]] && continue
-    seen+="${node_port} "
-    open_local_firewall_port "$node_port"
+    transport=$(profile_transport)
+    [[ $seen == *" ${node_port}/${transport} "* ]] && continue
+    seen+="${node_port}/${transport} "
+    open_local_firewall_port "$node_port" "$transport"
   done
-  yellow "云服务商安全组不会由脚本自动修改；请确认已放行上述 TCP 端口。"
+  yellow "云服务商安全组不会由脚本自动修改；请确认已放行上述对应 TCP/UDP 端口。"
 )
 
 ensure_service_user() {
@@ -310,12 +375,49 @@ arch_name() {
   esac
 }
 
+valid_core_version() { [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; }
+
+resolve_core_version() {
+  local requested=${1:-${V2M_XRAY_VERSION:-$RECOMMENDED_XRAY_VERSION}} tag
+  if [[ $requested != latest ]]; then
+    valid_core_version "$requested" || { red '内核版本必须是 v 开头的完整发布标签。' >&2; return 1; }
+    printf '%s\n' "$requested"
+    return
+  fi
+  tag=$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+    --retry 3 --connect-timeout 15 --max-time 60 -H 'Accept: application/vnd.github+json' \
+    "$RELEASE_API" | jq -er '.tag_name') || return 1
+  valid_core_version "$tag" || { red '无法读取有效的 Xray 发布标签。' >&2; return 1; }
+  printf '%s\n' "$tag"
+}
+
+check_core_update() {
+  local tag
+  tag=$(resolve_core_version "${1:-}") || return 1
+  printf '当前内核：%s\n固定基线：%s\n目标版本：%s\n' "$(command_version_line "$XRAY_BIN" '未安装')" "$RECOMMENDED_XRAY_VERSION" "$tag"
+}
+
+core_update_command() {
+  local version='' check=0 version_seen=0
+  while (( $# )); do
+    case "$1" in
+      --version)
+        (( $# >= 2 && ! version_seen )) || die '用法：v2ray update.core [--version <vX.Y.Z> | --latest] [--check]'
+        version=$2; version_seen=1; valid_core_version "$version" || die '无效的内核版本。'; shift 2 ;;
+      --latest)
+        (( ! version_seen )) || die '--latest 与 --version 不能同时指定。'
+        version=latest; version_seen=1; shift ;;
+      --check) check=1; shift ;;
+      *) die '用法：v2ray update.core [--version <vX.Y.Z> | --latest] [--check]' ;;
+    esac
+  done
+  if (( check )); then check_core_update "$version"; else run_mutation update_core "$version"; fi
+}
+
 fetch_core() {
   local temp_dir=$1 arch tag url expected actual
   arch=$(arch_name) || return 1
-  tag=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
-    --max-time 60 -H 'Accept: application/vnd.github+json' "$RELEASE_API" | jq -r '.tag_name') || return 1
-  [[ -n "$tag" && "$tag" != "null" ]] || die "无法读取 Xray Core 最新稳定版本。"
+  tag=$(resolve_core_version "${2:-}") || return 1
   url="https://github.com/XTLS/Xray-core/releases/download/${tag}/Xray-linux-${arch}.zip"
   step "下载 Xray Core > ${tag} (${arch})"
   curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 600 \
@@ -390,7 +492,9 @@ check_reality_target() {
 }
 valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
-valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws ]]; }
+valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws || $1 == hysteria-tls-quic ]]; }
+profile_transport() { if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then printf udp; else printf tcp; fi; }
+valid_xhttp_mode() { [[ $1 == auto || $1 == packet-up || $1 == stream-up ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 # TLS-XHTTP terminates public TLS at Caddy. Its Xray listener is a loopback
 # h2c upstream, so it neither owns a certificate nor exposes its backend port.
@@ -425,6 +529,7 @@ profile_name() {
     vmess-tls-ws) printf 'VMess-WebSocket-TLS-Legacy' ;;
     vmess-tls-grpc) printf 'VMess-gRPC-TLS-Legacy' ;;
     trojan-tls-ws) printf 'Trojan-WebSocket-TLS' ;;
+    hysteria-tls-quic) printf 'Hysteria-2-TLS-QUIC (实验)' ;;
   esac
 }
 
@@ -451,8 +556,9 @@ choose_profile() {
   ui_menu_item '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反向代理]'
   ui_menu_item '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]'
   ui_menu_item '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
+  ui_menu_item '13) Hysteria 2 TLS/QUIC     [实验：UDP 直连，自有证书，不走 HTTP CDN]'
   ui_box_bottom
-  read -r -p '请选择协议组合 [1-12]:' choice
+  read -r -p '请选择协议组合 [1-13]:' choice
   case "$choice" in
     1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
     2)
@@ -489,6 +595,7 @@ choose_profile() {
     7) PROFILE=trojan-reality-raw; PATH_VALUE='' ;;
     8) PROFILE=vmess-tcp; PATH_VALUE='' ;;
     12) PROFILE=vless-tls-raw; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
+    13) PROFILE=hysteria-tls-quic; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
     *) die "协议组合选择无效。" ;;
   esac
   green "已选择协议：$(profile_name)"
@@ -533,6 +640,9 @@ ask_server_values() {
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
     PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
+    if [[ $PROFILE == hysteria-tls-quic && ${V2M_EXPERIMENTAL:-0} != 1 ]]; then die 'Hysteria 2 自动配置需设置 V2M_EXPERIMENTAL=1。'; fi
+    XHTTP_MODE=${V2M_XHTTP_MODE:-${XHTTP_MODE:-auto}}
+    valid_xhttp_mode "$XHTTP_MODE" || die 'XHTTP 模式必须为 auto、packet-up 或 stream-up。'
     PATH_VALUE=${V2M_PATH:-${PATH_VALUE:-}}
     valid_profile "$PROFILE" || die "V2M_PROFILE 无效。"
     if [[ $PROFILE == *-tls-ws || $PROFILE == vless-reality-xhttp || $PROFILE == vless-tls-xhttp ]]; then
@@ -811,17 +921,18 @@ tls_key_path() {
 }
 
 ensure_port_available() {
-  local listeners
-  listeners=$(ss -H -lntp "sport = :${PORT}" 2>/dev/null || true)
+  local listeners transport
+  transport=$(profile_transport)
+  if [[ $transport == udp ]]; then listeners=$(ss -H -lnup "sport = :${PORT}" 2>/dev/null) || die '无法检查 UDP 监听。'
+  else listeners=$(ss -H -lntp "sport = :${PORT}" 2>/dev/null) || die '无法检查 TCP 监听。'; fi
   [[ -z $listeners ]] && return 0
   if grep -q 'xray-core' <<<"$listeners"; then
     return 0
   fi
-  red "错误：TCP 端口 ${PORT} 已被其他服务占用："
+  red "错误：${transport^^} 端口 ${PORT} 已被其他服务占用："
   printf '%s\n' "$listeners"
   die "请选择其他端口，不会停止现有服务。"
 }
-
 render_config() (
   umask 077
   local destination=$1 rendered
@@ -844,15 +955,16 @@ render_config() (
         tag: "vless-reality",
         listen: $listen,
         port: $port,
-        protocol: (if ($profile | startswith("trojan-")) then "trojan" elif ($profile | startswith("vmess-")) then "vmess" else "vless" end),
-        settings: (if ($profile | startswith("trojan-")) then {clients: (([$id] + ($extraIds | split(",") | map(select(length > 0)))) | map({password: .}))}
+        protocol: (if $profile == "hysteria-tls-quic" then "hysteria" elif ($profile | startswith("trojan-")) then "trojan" elif ($profile | startswith("vmess-")) then "vmess" else "vless" end),
+        settings: (if $profile == "hysteria-tls-quic" then {version:2,clients: (([$id] + ($extraIds | split(",") | map(select(length > 0)))) | map({auth: .}))}
+        elif ($profile | startswith("trojan-")) then {clients: (([$id] + ($extraIds | split(",") | map(select(length > 0)))) | map({password: .}))}
         elif ($profile | startswith("vmess-")) then {clients: (([$id] + ($extraIds | split(",") | map(select(length > 0)))) | map({id: ., alterId: 0}))}
         else {
           clients: (([$id] + ($extraIds | split(",") | map(select(length > 0)))) | map({id: .} + (if ($profile == "vless-reality-raw" or $profile == "vless-tls-raw") then {flow: "xtls-rprx-vision"} else {} end))),
           decryption: "none"
         } end),
         streamSettings: ({
-          network: (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif ($profile | endswith("-grpc")) then "grpc" elif ($profile | endswith("-ws")) then "ws" else "raw" end),
+          network: (if $profile == "hysteria-tls-quic" then "hysteria" elif ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then "xhttp" elif ($profile | endswith("-grpc")) then "grpc" elif ($profile | endswith("-ws")) then "ws" else "raw" end),
           security: (if $profile == "vless-tls-xhttp" then "none" elif ($profile | contains("-tls-")) then "tls" elif ($profile | contains("-reality-")) then "reality" else "none" end)
         } + (if ($profile | contains("-reality-")) then {realitySettings: {
             show: false,
@@ -861,8 +973,9 @@ render_config() (
             serverNames: [$server],
             privateKey: $private,
             shortIds: [$short]
-          }} elif ($profile | contains("-tls-") and $profile != "vless-tls-xhttp") then {tlsSettings: {certificates: [{certificateFile: $cert, keyFile: $key}]}} else {} end)
-          + (if ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path, mode: "auto"}}
+          }} elif ($profile | contains("-tls-") and $profile != "vless-tls-xhttp") then {tlsSettings: ({certificates: [{certificateFile: $cert, keyFile: $key}]} + (if $profile == "hysteria-tls-quic" then {alpn:["h3"]} else {} end))} else {} end)
+          + (if $profile == "hysteria-tls-quic" then {hysteriaSettings:{version:2}}
+            elif ($profile == "vless-reality-xhttp" or $profile == "vless-tls-xhttp") then {xhttpSettings: {path: $path, mode: "auto"}}
             elif ($profile | endswith("-grpc")) then {grpcSettings: {serviceName: $path, multiMode: false}}
             elif ($profile | endswith("-ws")) then {wsSettings: {path: $path}}
             else {} end)),
@@ -886,7 +999,7 @@ apply_warp_config() {
   WARP_IP_STRATEGY=UseIPv4v6
   # This file is generated by this script with mode 0600.
   # shellcheck disable=SC1090
-  . "$WARP_STATE_FILE"
+  load_state_file "$WARP_STATE_FILE"
   mode=${WARP_MODE:-off}
   domains=${WARP_DOMAINS:-}
   strategy=${WARP_IP_STRATEGY:-UseIPv4v6}
@@ -962,11 +1075,88 @@ write_empty_config() {
   write_data_schema_marker "$STATE_FILE"
 }
 
+valid_state_key() {
+  case "$1" in
+    DATA_SCHEMA|PORT|UUID|EXTRA_UUIDS|ADDRESS|PROFILE|PATH_VALUE|CERT_SOURCE|KEY_SOURCE|SERVER_NAME|PRIVATE_KEY|PUBLIC_KEY|SHORT_ID|REMARK|XHTTP_MODE|WARP_MODE|WARP_DOMAINS|WARP_IP_STRATEGY|WARP_BACKEND) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Decode the literal formats emitted by Bash printf %q, never eval/source them.
+decode_legacy_value() {
+  local encoded=$1 char index
+  DECODED_STATE_VALUE=''
+  if [[ $encoded == \$\'*\' ]]; then
+    DECODED_STATE_VALUE=$(printf '%b.' "${encoded:2:${#encoded}-3}")
+    DECODED_STATE_VALUE=${DECODED_STATE_VALUE%.}
+  elif [[ $encoded == \"*\" || $encoded == \'*\' ]]; then
+    DECODED_STATE_VALUE=${encoded:1:${#encoded}-2}
+  else
+    for ((index=0; index<${#encoded}; index++)); do
+      char=${encoded:index:1}
+      if [[ $char == $'\\' ]]; then
+        ((index+=1)); (( index < ${#encoded} )) || return 1
+        char=${encoded:index:1}
+      elif [[ $char == [[:space:]] || $char == [\$\`\'\"\;\&\|\<\>\(\)\{\}] ]]; then
+        return 1
+      fi
+      DECODED_STATE_VALUE+=$char
+    done
+  fi
+}
+
+state_to_json() {
+  local file=$1 first line key encoded
+  [[ -f $file ]] || return 1
+  first=$(head -c 1 "$file") || return 1
+  if [[ $first == '{' ]]; then
+    jq -e 'type == "object"' "$file" >/dev/null || return 1
+    cat "$file"
+  else
+    (
+      while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%$'\r'}
+        [[ -n $line && $line != \#* ]] || continue
+        [[ $line == *=* ]] || return 1
+        key=${line%%=*}; encoded=${line#*=}
+        valid_state_key "$key" || return 1
+        decode_legacy_value "$encoded" || return 1
+        jq -cn --arg key "$key" --arg value "$DECODED_STATE_VALUE" '{key:$key,value:$value}'
+      done < "$file"
+    ) | jq -s 'from_entries |
+      if has("DATA_SCHEMA") then .DATA_SCHEMA |= tonumber else . end |
+      if has("PORT") then .PORT |= tonumber else . end'
+  fi
+}
+
+load_state_file() {
+  local file=$1 temporary key value invalid=0
+  temporary=$(mktemp) || return 1
+  if ! state_to_json "$file" | jq -ej '
+      if (type == "object" and all(.[]; type == "string" or type == "number") and all(.[] | tostring | explode; index(0) == null))
+      then to_entries[] | .key, "\u0000", (.value|tostring), "\u0000" else error("invalid state") end' > "$temporary"; then
+    rm -f -- "$temporary"; red '状态文件格式无效，未执行其内容。' >&2; return 1
+  fi
+  # Validate every key before assigning any field.
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    valid_state_key "$key" || invalid=1
+  done < "$temporary"
+  if (( invalid )); then rm -f -- "$temporary"; return 1; fi
+  EXTRA_UUIDS=''; XHTTP_MODE=auto
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    printf -v "$key" '%s' "$value"
+  done < "$temporary"
+  rm -f -- "$temporary"
+}
+
+state_schema() { state_to_json "$1" | jq -r '.DATA_SCHEMA // 1'; }
+
 save_current_node() (
   umask 077
-  local destination=$1 temporary
+  local destination=$1 temporary json_file
   temporary=$(mktemp "${destination}.XXXXXX") || return 1
-  trap 'rm -f -- "$temporary"' EXIT
+  json_file=$(mktemp "${destination}.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary" "$json_file"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
   cat > "$temporary" <<EOF || return 1
@@ -984,8 +1174,10 @@ PRIVATE_KEY=$(printf %q "${PRIVATE_KEY:-}")
 PUBLIC_KEY=$(printf %q "${PUBLIC_KEY:-}")
 SHORT_ID=$(printf %q "${SHORT_ID:-}")
 REMARK=$(printf %q "$REMARK")
+XHTTP_MODE=$(printf %q "${XHTTP_MODE:-auto}")
 EOF
-  mv -f -- "$temporary" "$destination"
+  state_to_json "$temporary" > "$json_file" || return 1
+  mv -f -- "$json_file" "$destination"
 )
 
 rebuild_config_from_nodes() (
@@ -1001,7 +1193,7 @@ rebuild_config_from_nodes() (
     # shellcheck disable=SC1090
     EXTRA_UUIDS=''
     # shellcheck disable=SC1090
-    . "$node_file" || return 1
+    load_state_file "$node_file" || return 1
     node_id=$(basename "$node_file" .env)
     rendered="$work_dir/${node_id}.json"
     render_config "$rendered" || return 1
@@ -1083,7 +1275,6 @@ stop_legacy_service() {
     systemctl disable --now v2ray 2>/dev/null || true
   fi
 }
-
 install_xray() {
   require_supported_os
   # Install the manager first so users retain a recovery path if download or validation fails.
@@ -1128,7 +1319,7 @@ load_state() {
   EXTRA_UUIDS=''
   DATA_SCHEMA=1
   # shellcheck disable=SC1090
-  . "$STATE_FILE"
+  load_state_file "$STATE_FILE"
   PROFILE=${PROFILE:-vless-reality-raw}
   PATH_VALUE=${PATH_VALUE:-}
   EXTRA_UUIDS=${EXTRA_UUIDS:-}
@@ -1288,7 +1479,7 @@ load_connection_state() {
     # shellcheck disable=SC1090
     EXTRA_UUIDS=''
     # shellcheck disable=SC1090
-    . "$node_file"
+    load_state_file "$node_file"
   else
     load_state
   fi
@@ -1302,7 +1493,7 @@ show_connection() (
       return 1
     fi
     # shellcheck disable=SC1090
-    . "$NODES_DIR/$node_id.env"
+    load_state_file "$NODES_DIR/$node_id.env"
   else
     load_connection_state || return 1
   fi
@@ -1330,12 +1521,13 @@ show_connection() (
 # server certificates, private keys or REALITY target settings.
 render_client_config() {
   local client_port
+  valid_xhttp_mode "${XHTTP_MODE:-auto}" || return 1
   client_port=$(client_entry_port)
   render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
-    --arg profile "${PROFILE:-}" '
+    --arg profile "${PROFILE:-}" --arg xhttpMode "${XHTTP_MODE:-auto}" '
     .inbounds[0] as $in |
-    $in.settings.clients[0] as $user |
+    ($in.settings.clients[0] // $in.settings.users[0]) as $user |
     ($in.streamSettings | del(.tlsSettings, .realitySettings) |
       if $profile == "vless-tls-xhttp" then
         .security = "tls"
@@ -1345,7 +1537,8 @@ render_client_config() {
       } elif .security == "tls" then .tlsSettings = {
         serverName: $server, fingerprint: "chrome"
       } else . end |
-      if .network == "xhttp" and .security == "tls" then .xhttpSettings.host = $server | .xhttpSettings.mode = "auto"
+      if .network == "hysteria" then .hysteriaSettings.auth = $user.auth | del(.tlsSettings.fingerprint) | .tlsSettings.alpn = ["h3"]
+      elif .network == "xhttp" then .xhttpSettings.mode = $xhttpMode | if .security == "tls" then .xhttpSettings.host = $server else . end
       elif .network == "ws" and .security == "tls" then .wsSettings.headers.Host = $server
       else . end) as $stream |
     {
@@ -1355,7 +1548,8 @@ render_client_config() {
         {tag: "http", listen: "127.0.0.1", port: 10801, protocol: "http", settings: {}}
       ],
       outbounds: [{tag: "proxy", protocol: $in.protocol,
-        settings: (if $in.protocol == "trojan" then {
+        settings: (if $in.protocol == "hysteria" then {version:2,address:($address | ltrimstr("[") | rtrimstr("]")),port:$clientPort}
+        elif $in.protocol == "trojan" then {
           servers: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $clientPort, password: $user.password}]
         } else {vnext: [{address: ($address | ltrimstr("[") | rtrimstr("]")), port: $clientPort,
           users: [($user + (if $in.protocol == "vless" then {encryption: "none"} else {security: "auto"} end))]}]} end),
@@ -1371,7 +1565,7 @@ export_client() (
       return 1
     fi
     # shellcheck disable=SC1090
-    source "$NODES_DIR/$1.env"
+    load_state_file "$NODES_DIR/$1.env" || return 1
   else
     load_connection_state || return 1
   fi
@@ -1384,7 +1578,7 @@ connection_matches_config() {
   [[ -r $config_file ]] || return 1
   render_config /dev/stdout | jq -e --slurpfile live "$config_file" '
     def signature: {
-      port, protocol, clients: .settings.clients,
+      port, protocol, clients: (.settings.clients // .settings.users),
       network: (if .streamSettings.network == "tcp" then "raw" else .streamSettings.network end),
       security: (.streamSettings.security // "none"),
       reality: (if .streamSettings.security == "reality" then {
@@ -1426,7 +1620,6 @@ client_entry_port() {
     printf '%s' "$PORT"
   fi
 }
-
 show_connection_loaded() (
   local address uri_address encoded_name encoded_path link transport security flow query display_name protocol vmess_payload client_port
   local credential link_name index=0
@@ -1468,6 +1661,10 @@ show_connection_loaded() (
   protocol=vless
   link=''
   case "$PROFILE" in
+    hysteria-tls-quic)
+      protocol=hysteria2; transport=quic; security=tls; flow=none
+      query="sni=${SERVER_NAME}&alpn=h3"
+      ;;
     vless-tls-raw)
       transport=raw; security=tls; flow=xtls-rprx-vision
       query="encryption=none&flow=${flow}&security=tls&sni=${SERVER_NAME}&fp=chrome&type=tcp"
@@ -1478,7 +1675,7 @@ show_connection_loaded() (
       ;;
     vless-reality-xhttp)
       transport=xhttp; security=reality; flow=none
-      query="encryption=none&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${encoded_path}&mode=auto"
+      query="encryption=none&security=reality&sni=${SERVER_NAME}&fp=chrome&pbk=${PUBLIC_KEY}&sid=${SHORT_ID}&type=xhttp&path=${encoded_path}&mode=${XHTTP_MODE:-auto}"
       ;;
     vless-reality-grpc)
       transport=grpc; security=reality; flow=none
@@ -1486,7 +1683,7 @@ show_connection_loaded() (
       ;;
     vless-tls-xhttp)
       transport=xhttp; security=tls; flow=none
-      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&alpn=h2&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=auto"
+      query="encryption=none&security=tls&sni=${SERVER_NAME}&fp=chrome&alpn=h2&type=xhttp&host=${SERVER_NAME}&path=${encoded_path}&mode=${XHTTP_MODE:-auto}"
       ;;
     vless-tls-ws)
       transport=websocket; security=tls; flow=none
@@ -1545,7 +1742,7 @@ show_connection_loaded() (
     cyan_value "$link"; printf '\n'
   done
   printf '%s\n\n' '---------------------- END ----------------------'
-  yellow "请确认云服务商安全组已放行客户端入口 TCP ${client_port}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
+  yellow "请确认云服务商安全组已放行客户端入口 $(profile_transport) ${client_port}；可执行 v2ray firewall 放行已启用入站的本机 UFW/firewalld 规则。私钥仅保存在服务器，不要公开。"
 )
 
 # manager.env may have stale or no connection data; edits use the node registry.
@@ -1570,7 +1767,7 @@ load_edit_node() {
   EDIT_NODE_FILE="$NODES_DIR/$node_id.env"
   EXTRA_UUIDS=''
   # shellcheck disable=SC1090
-  . "$EDIT_NODE_FILE"
+  load_state_file "$EDIT_NODE_FILE"
 }
 
 change_config() {
@@ -1644,8 +1841,11 @@ change_menu() {
 }
 
 find_free_port() {
-  local candidate=${1:-24443}
-  while ss -H -lnt "sport = :${candidate}" 2>/dev/null | grep -q .; do ((candidate+=1)); done
+  local candidate=${1:-24443} flags=-lnt
+  [[ $(profile_transport) != udp ]] || flags=-lnu
+  while ss -H "$flags" "sport = :${candidate}" 2>/dev/null | grep -q .; do
+    ((candidate+=1)); (( candidate <= 65535 )) || return 1
+  done
   printf '%s' "$candidate"
 }
 
@@ -1668,7 +1868,7 @@ list_inbounds() (
       # Node files are generated by this script with mode 0600.
       EXTRA_UUIDS=''
       # shellcheck disable=SC1090
-      . "$node_file"
+      load_state_file "$node_file"
       group=$(profile_group)
       [[ $group == "$wanted_group" ]] || continue
       node_id=$(basename "$node_file"); node_id=${node_id%.env}; node_id=${node_id%.disabled}
@@ -1718,7 +1918,7 @@ show_all_links() (
     # shellcheck disable=SC1090
     EXTRA_UUIDS=''
     # shellcheck disable=SC1090
-    . "$node_file"
+    load_state_file "$node_file"
     node_id=$(basename "$node_file" .env)
     ((count+=1))
     printf '\n================ %s ================\n' "$node_id"
@@ -1736,7 +1936,7 @@ load_sub_link_credentials() {
   node_file="$NODES_DIR/$node_id.env"
   EXTRA_UUIDS=''
   # shellcheck disable=SC1090
-  . "$node_file"
+  load_state_file "$node_file"
   SUB_LINK_CREDENTIALS=("$UUID")
   if [[ -n ${EXTRA_UUIDS:-} ]]; then
     IFS=',' read -r -a extra_credentials <<<"$EXTRA_UUIDS"
@@ -1965,7 +2165,7 @@ modify_inbound() (
         valid_server_name "$value" || die '请输入有效的完整入口域名。'
         for node_file in "${SELECTED_NODE_FILES[@]}"; do
           # shellcheck disable=SC1090
-          . "$node_file"
+          load_state_file "$node_file"
           ADDRESS=$value
           save_current_node "$node_file"
         done
@@ -1977,12 +2177,12 @@ modify_inbound() (
         reality_target_supported "$value" || die "当前 Xray 版本不支持稳定使用 $value；请改用 $DEFAULT_REALITY_SERVER_NAME。"
         for node_file in "${SELECTED_NODE_FILES[@]}"; do
           # shellcheck disable=SC1090
-          . "$node_file"
+          load_state_file "$node_file"
           profile_uses_reality || die "$(basename "$node_file") 不是 REALITY 入站，批量操作已取消。"
         done
         for node_file in "${SELECTED_NODE_FILES[@]}"; do
           # shellcheck disable=SC1090
-          . "$node_file"
+          load_state_file "$node_file"
           SERVER_NAME=$value
           save_current_node "$node_file"
         done
@@ -1993,7 +2193,7 @@ modify_inbound() (
           cyan_value "正在修改：$node_id"; printf '\n'
           EXTRA_UUIDS=''
           # shellcheck disable=SC1090
-          . "$node_file"
+          load_state_file "$node_file"
           ask_server_values
           ensure_port_available
           prepare_tls_material
@@ -2007,7 +2207,7 @@ modify_inbound() (
     node_file=${SELECTED_NODE_FILES[0]}
     EXTRA_UUIDS=''
     # shellcheck disable=SC1090
-    . "$node_file"
+    load_state_file "$node_file"
     ask_server_values
     ensure_port_available
     prepare_tls_material
@@ -2339,7 +2539,7 @@ render_caddy_xray_site() {
       PROFILE=''; SERVER_NAME=''; PORT=''; PATH_VALUE=''
       # Node files are generated by this script with mode 0600.
       # shellcheck disable=SC1090
-      . "$node_file"
+      load_state_file "$node_file"
       profile_supports_caddy_route "$PROFILE" || continue
       [[ $SERVER_NAME == "$domain" ]] || continue
       if ! valid_port "$PORT" || ! valid_transport_path "$PATH_VALUE"; then
@@ -2401,20 +2601,11 @@ caddy_ports_available() {
 }
 
 install_cloudflare_ip_branch_command() {
-  local temporary
-  temporary=$(mktemp) || return 1
-  if ! curl --fail --show-error --location --retry 3 "$CFIP_BRANCH_URL" -o "$temporary"; then
-    rm -f -- "$temporary"; red '无法下载 Cloudflare 优选 IP 分支项目。' >&2; return 1
-  fi
-  bash -n "$temporary" || { rm -f -- "$temporary"; red 'Cloudflare 优选 IP 分支脚本语法校验失败。' >&2; return 1; }
-  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; red 'Cloudflare 优选 IP 分支脚本缺少许可证标识。' >&2; return 1; }
-  install -d -m 755 "$(dirname "$CFIP_BRANCH_BIN")"
-  install -m 755 "$temporary" "$CFIP_BRANCH_BIN"
-  rm -f -- "$temporary"
+  install_component cfip "$CFIP_BRANCH_BIN"
 }
 
 call_cloudflare_ip_branch() {
-  [[ -x $CFIP_BRANCH_BIN ]] || install_cloudflare_ip_branch_command || return 1
+  install_cloudflare_ip_branch_command || return 1
   "$CFIP_BRANCH_BIN" "$@"
 }
 
@@ -2472,22 +2663,32 @@ cloudflare_ip_command() {
 }
 
 install_caddy_branch_command() {
-  local temporary
-  temporary=$(mktemp) || return 1
-  if ! curl --fail --show-error --location --retry 3 "$CADDY_BRANCH_URL" -o "$temporary"; then
-    rm -f -- "$temporary"; red '无法下载 Caddy 分支项目。' >&2; return 1
-  fi
-  bash -n "$temporary" || { rm -f -- "$temporary"; red 'Caddy 分支脚本语法校验失败。' >&2; return 1; }
-  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; red 'Caddy 分支脚本缺少许可证标识。' >&2; return 1; }
-  install -d -m 755 "$(dirname "$CADDY_BRANCH_BIN")"
-  install -m 755 "$temporary" "$CADDY_BRANCH_BIN"
-  rm -f -- "$temporary"
+  install_component caddy "$CADDY_BRANCH_BIN"
 }
 
-call_caddy_branch() {
-  [[ -x $CADDY_BRANCH_BIN ]] || install_caddy_branch_command || return 1
-  env V2M_NODES_DIR="$NODES_DIR" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
-}
+call_caddy_branch() (
+  install_caddy_branch_command || return 1
+  local bridge node_file
+  bridge=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$bridge"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # The locked external component still reads shell literals. Translate only
+  # validated state into a private, disposable compatibility view.
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    export_legacy_node "$node_file" > "$bridge/$(basename "$node_file")" || return 1
+  done
+  env V2M_NODES_DIR="$bridge" V2M_XRAY_CONFIG="$CONFIG_FILE" CADDY_CONFIG="$CADDY_CONFIG" CADDY_SITE_DIR="$CADDY_SITE_DIR" CADDY_WEB_ROOT="$CADDY_WEB_ROOT" "$CADDY_BRANCH_BIN" "$@"
+)
+
+export_legacy_node() (
+  local key
+  load_state_file "$1" || return 1
+  for key in DATA_SCHEMA PORT UUID EXTRA_UUIDS ADDRESS PROFILE PATH_VALUE CERT_SOURCE KEY_SOURCE SERVER_NAME PRIVATE_KEY PUBLIC_KEY SHORT_ID REMARK XHTTP_MODE; do
+    printf '%s=%q\n' "$key" "${!key:-}"
+  done
+)
 
 install_caddy() {
   install_caddy_branch_command || return 1
@@ -2532,7 +2733,7 @@ find_caddy_xray_defaults() {
     PROFILE=''; SERVER_NAME=''; PORT=''; PATH_VALUE=''
     # Node files are generated by this script with mode 0600.
     # shellcheck disable=SC1090
-    . "$node_file"
+    load_state_file "$node_file"
     profile_supports_caddy_route "$PROFILE" || continue
     [[ $SERVER_NAME == "$wanted_domain" ]] || continue
     if ! valid_port "$PORT" || ! valid_transport_path "$PATH_VALUE"; then continue; fi
@@ -2632,7 +2833,6 @@ caddy_menu() {
     esac
   done
 }
-
 caddy_command() {
   local action=${1:-menu} domain=${2:-} upstream=${3:-} path=${4:-}
   case "$action" in
@@ -2658,9 +2858,7 @@ valid_warp_backend() {
 active_warp_backend() {
   local WARP_BACKEND=''
   if [[ -r $WARP_BACKEND_STATE_FILE ]]; then
-    # This file is created by this script with mode 0600.
-    # shellcheck disable=SC1090
-    source "$WARP_BACKEND_STATE_FILE"
+    load_state_file "$WARP_BACKEND_STATE_FILE" || return 1
   fi
   if valid_warp_backend "${WARP_BACKEND:-}"; then
     printf '%s' "$WARP_BACKEND"
@@ -2677,35 +2875,18 @@ warp_backend_bin() {
   esac
 }
 
-warp_backend_url() {
-  case $1 in
-    wireguard) printf '%s' "$WARP_WIREGUARD_URL" ;;
-    masque) printf '%s' "$WARP_MASQUE_URL" ;;
-    *) return 1 ;;
-  esac
-}
-
 install_warp_backend_command() {
-  local backend=$1 destination url temporary
+  local backend=$1 destination
   valid_warp_backend "$backend" || die "未知 WARP 后端：$backend"
   destination=$(warp_backend_bin "$backend")
-  url=$(warp_backend_url "$backend")
-  temporary=$(mktemp)
-  if ! curl --fail --show-error --location --retry 3 "$url" -o "$temporary"; then
-    rm -f -- "$temporary"
-    die "无法下载 WARP 后端：$backend"
-  fi
-  bash -n "$temporary" || { rm -f -- "$temporary"; die "WARP 后端脚本语法校验失败：$backend"; }
-  grep -q '^# SPDX-License-Identifier: GPL-3.0-or-later$' "$temporary" || { rm -f -- "$temporary"; die "WARP 后端脚本缺少许可证标识：$backend"; }
-  install -d -m 755 "$WARP_BACKEND_BIN_DIR"
-  install -m 755 "$temporary" "$destination"
-  rm -f -- "$temporary"
+  install_component "$backend" "$destination"
 }
 
 stop_warp_backend() {
   local command
   command=$(warp_backend_bin "$1" 2>/dev/null || true)
   if [[ -x $command ]]; then
+    verify_component "$1" "$command" || return 1
     "$command" stop >/dev/null 2>&1 || true
   fi
 }
@@ -2714,6 +2895,7 @@ start_warp_backend() {
   local command
   command=$(warp_backend_bin "$1" 2>/dev/null || true)
   if [[ -x $command ]]; then
+    verify_component "$1" "$command" || return 1
     "$command" start >/dev/null 2>&1 || true
   fi
 }
@@ -2752,6 +2934,7 @@ warp_trace() {
   [[ $backend != none ]] || { red "WARP 后端尚未安装。" >&2; return 1; }
   command=$(warp_backend_bin "$backend")
   [[ -x $command ]] || { red "WARP 后端命令缺失：$backend" >&2; return 1; }
+  verify_component "$backend" "$command" || return 1
   "$command" test "$WARP_PROXY_PORT" >/dev/null || return 1
   trace=$(curl --fail --silent --show-error --max-time 15 --proxy "socks5h://127.0.0.1:${WARP_PROXY_PORT}" \
     https://www.cloudflare.com/cdn-cgi/trace) || { red "无法通过 WARP 本机代理联网。" >&2; return 1; }
@@ -2788,7 +2971,7 @@ set_warp_policy() {
   if [[ -r $WARP_STATE_FILE ]]; then
     WARP_IP_STRATEGY=UseIPv4v6
     # shellcheck disable=SC1090
-    . "$WARP_STATE_FILE"
+    load_state_file "$WARP_STATE_FILE"
     strategy=${WARP_IP_STRATEGY:-UseIPv4v6}
   fi
   create_backup
@@ -2825,6 +3008,7 @@ show_warp_status() {
   if [[ $backend != none ]]; then
     command=$(warp_backend_bin "$backend")
     if [[ -x $command ]]; then
+      verify_component "$backend" "$command" || return 1
       "$command" status || yellow "WARP 后端状态检查失败：$backend"
     else
       yellow "WARP 后端命令缺失：$backend"
@@ -2835,7 +3019,7 @@ show_warp_status() {
   if [[ -r $WARP_STATE_FILE ]]; then
     WARP_MODE=off; WARP_DOMAINS=''; WARP_IP_STRATEGY=UseIPv4v6
     # shellcheck disable=SC1090
-    . "$WARP_STATE_FILE"
+    load_state_file "$WARP_STATE_FILE"
     printf 'Xray WARP 策略：%s\n' "$WARP_MODE"
     printf '目标地址策略：%s\n' "${WARP_IP_STRATEGY:-UseIPv4v6}"
     [[ -z ${WARP_DOMAINS:-} ]] || printf '分流规则：%s\n' "$WARP_DOMAINS"
@@ -2850,7 +3034,7 @@ set_warp_ip_strategy() {
   [[ $strategy == UseIPv4v6 || $strategy == UseIPv4 || $strategy == UseIPv6 ]] || die "WARP IP 策略无效。"
   WARP_MODE=off; WARP_DOMAINS=''
   # shellcheck disable=SC1090
-  . "$WARP_STATE_FILE"
+  load_state_file "$WARP_STATE_FILE"
   create_backup
   cat > "$WARP_STATE_FILE" <<EOF
 WARP_MODE=${WARP_MODE}
@@ -2928,6 +3112,7 @@ uninstall_warp() {
   fi
   command=$(warp_backend_bin "$backend")
   if [[ -x $command ]]; then
+    verify_component "$backend" "$command" || return 1
     "$command" uninstall || true
   fi
   rm -f -- "$command" "$WARP_BACKEND_STATE_FILE"
@@ -3011,7 +3196,10 @@ warp_command() {
     diagnose)
       backend=$(active_warp_backend)
       command=$(warp_backend_bin "$backend" 2>/dev/null || true)
-      if [[ -x $command ]]; then "$command" diagnose 2>/dev/null || "$command" status || true; else yellow 'WARP 后端尚未安装。'; fi
+      if [[ -x $command ]]; then
+        verify_component "$backend" "$command" || return 1
+        "$command" diagnose 2>/dev/null || "$command" status || true
+      else yellow 'WARP 后端尚未安装。'; fi
       ;;
     check) check_warp_services ;;
     repair) run_mutation repair_warp ;;
@@ -3026,8 +3214,142 @@ warp_command() {
   esac
 }
 
+# Machine-readable local checks deliberately do not probe third-party websites.
+# Configuration/key contents and raw process output never enter this report.
+doctor_report() (
+  local core=missing config=invalid service=unknown state=invalid transaction=clear listeners='[]'
+  local port transport listening result output failures
+  command -v jq >/dev/null || { red '结构化诊断需要 jq。' >&2; return 2; }
+  [[ ! -x $XRAY_BIN ]] || core=present
+  if [[ -r $CONFIG_FILE ]] && jq -e 'type == "object" and (.inbounds | type == "array")' "$CONFIG_FILE" >/dev/null 2>&1; then
+    if [[ $core == present ]] && XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$CONFIG_FILE" >/dev/null 2>&1; then config=valid; fi
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then service=active; else service=inactive; fi
+  fi
+  if check_state_schema >/dev/null 2>&1; then
+    if [[ -r $STATE_FILE ]]; then state=valid; else state=missing; fi
+  fi
+  [[ ! -e $BACKUP_DIR/manager.pending ]] || transaction=pending
+  if [[ $config == valid ]]; then
+    while IFS=$'\t' read -r port transport; do
+      listening=unknown
+      if command -v ss >/dev/null 2>&1; then
+        if [[ $transport == udp ]]; then output=$(ss -H -lnu "sport = :$port" 2>/dev/null) && listening=absent
+        else output=$(ss -H -lnt "sport = :$port" 2>/dev/null) && listening=absent; fi
+        if [[ $listening != unknown && -n $output ]]; then listening=present; fi
+      fi
+      listeners=$(jq -cn --argjson current "$listeners" --argjson port "$port" --arg transport "$transport" --arg status "$listening" \
+        '$current + [{port:$port,transport:$transport,status:$status}]') || return 2
+    done < <(jq -r '.inbounds[] | [.port, (if .protocol == "hysteria" then "udp" else "tcp" end)] | @tsv' "$CONFIG_FILE")
+  fi
+  result=$(jq -n --arg core "$core" --arg config "$config" --arg service "$service" --arg state "$state" \
+    --arg transaction "$transaction" --argjson listeners "$listeners" '{
+      schema_version:1, scope:"local", checks:{core:$core,config:$config,service:$service,state:$state,transaction:$transaction},
+      listeners:$listeners, local_handshake:"not_checked", public_reachability:"not_checked",
+      failures: (([$core != "present", $config != "valid", $service == "inactive", $state != "valid", $transaction == "pending"] | map(select(.)) | length)
+        + ([$listeners[] | select(.status == "absent")] | length)),
+      unknowns: (([$service == "unknown"] | map(select(.)) | length) + ([$listeners[] | select(.status == "unknown")] | length))
+    } | .status = (if .failures > 0 then "failed" elif .unknowns > 0 then "incomplete" else "passed" end)') || return 2
+  printf '%s\n' "$result"
+  failures=$(jq -r '.failures' <<< "$result")
+  (( failures == 0 )) || return 1
+  [[ $(jq -r '.status' <<< "$result") != incomplete ]] || return 2
+)
+
+doctor_metrics() {
+  local report status=0
+  report=$(doctor_report) || status=$?
+  [[ -n $report ]] || return "$status"
+  jq -r '"# HELP v2ray_manager_local_check_success Local checks passed; does not establish public connectivity.",
+    "# TYPE v2ray_manager_local_check_success gauge",
+    ("v2ray_manager_local_check_success " + (if .status == "passed" then "1" else "0" end)),
+    "# TYPE v2ray_manager_check_failures gauge", ("v2ray_manager_check_failures " + (.failures|tostring)),
+    "# TYPE v2ray_manager_checks_unknown gauge", ("v2ray_manager_checks_unknown " + (.unknowns|tostring))' <<< "$report"
+  return "$status"
+}
+
+doctor_command() {
+  case "${1:-}" in
+    '') doctor ;;
+    --json) doctor_report ;;
+    --prometheus) doctor_metrics ;;
+    *) die '用法：v2ray doctor [--json|--prometheus]' ;;
+  esac
+}
+
+set_xhttp_mode() {
+  local node=${1:-} mode=${2:-}
+  valid_xhttp_mode "$mode" || die 'XHTTP 模式必须为 auto、packet-up 或 stream-up。'
+  load_edit_node "$node"
+  [[ $PROFILE == *-xhttp ]] || die '该入站没有使用 XHTTP。'
+  XHTTP_MODE=$mode
+  write_config "$EDIT_NODE_FILE"
+  restart_or_rollback
+  green 'XHTTP 客户端预设已更新，请重新导出客户端配置。'
+}
+
+plan_desired() (
+  local file=${1:-} spec id source current next changes='[]' address mode
+  local ADDRESS='' PROFILE='' REMARK='' XHTTP_MODE=auto
+  [[ -r $file ]] || { red '需要可读的声明式 JSON 文件。' >&2; return 1; }
+  jq -e 'type == "object" and .schema_version == 1 and ((keys - ["schema_version","nodes"]) | length == 0)
+    and (.nodes | type == "array" and length > 0 and length <= 1000)
+    and (([.nodes[].id] | unique | length) == (.nodes|length))
+    and all(.nodes[]; type == "object" and ((keys - ["id","enabled","address","remark","xhttp_mode"])|length == 0)
+      and (.id|type == "string") and (.enabled|type == "boolean")
+      and (if has("address") then (.address|type == "string") else true end)
+      and (if has("remark") then (.remark|type == "string" and length <= 128) else true end)
+      and (if has("xhttp_mode") then (.xhttp_mode|type == "string") else true end))' "$file" >/dev/null || return 1
+  while IFS= read -r spec; do
+    id=$(jq -r '.id' <<< "$spec") || return 1
+    valid_node_id "$id" || return 1
+    source="$NODES_DIR/$id.env"
+    [[ -f $source ]] || source="$NODES_DIR/$id.disabled"
+    [[ -f $source ]] || { red "未知入站：$id" >&2; return 1; }
+    load_state_file "$source" || return 1
+    address=$(jq -r --arg current "${ADDRESS:-}" '.address // $current' <<< "$spec")
+    valid_server_name "$address" || return 1
+    mode=$(jq -r --arg current "${XHTTP_MODE:-auto}" '.xhttp_mode // $current' <<< "$spec")
+    valid_xhttp_mode "$mode" || return 1
+    if jq -e 'has("xhttp_mode")' <<< "$spec" >/dev/null; then [[ $PROFILE == *-xhttp ]] || return 1; fi
+    current=$(jq -cn --arg address "${ADDRESS:-}" --arg remark "${REMARK:-}" --arg mode "${XHTTP_MODE:-auto}" \
+      --argjson enabled "$(if [[ $source == *.disabled ]]; then printf false; else printf true; fi)" \
+      '{enabled:$enabled,address:$address,remark:$remark,xhttp_mode:$mode}') || return 1
+    next=$(jq -cn --argjson current "$current" --argjson spec "$spec" '$current + ($spec | del(.id))') || return 1
+    changes=$(jq -cn --argjson changes "$changes" --arg id "$id" --argjson before "$current" --argjson after "$next" \
+      '$changes + [{id:$id,before:$before,after:$after,changed:($before != $after)}]') || return 1
+  done < <(jq -c '.nodes[]' "$file")
+  jq -n --argjson changes "$changes" '{schema_version:1,scope:"existing_nodes",changes:$changes,restart_required:any($changes[];.changed)}'
+)
+
+apply_desired() (
+  umask 077
+  local file=${1:-} staged report spec id source destination
+  staged=$(mktemp) || return 1
+  trap 'rm -f -- "$staged"' EXIT
+  cp -- "$file" "$staged" || return 1
+  report=$(plan_desired "$staged") || return 1
+  if ! jq -e '.restart_required' <<< "$report" >/dev/null; then printf '%s\n' "$report"; return 0; fi
+  create_backup
+  while IFS= read -r spec; do
+    id=$(jq -r '.id' <<< "$spec")
+    source="$NODES_DIR/$id.env"; [[ -f $source ]] || source="$NODES_DIR/$id.disabled"
+    load_state_file "$source" || return 1
+    ADDRESS=$(jq -r '.after.address' <<< "$spec")
+    REMARK=$(jq -r '.after.remark' <<< "$spec")
+    XHTTP_MODE=$(jq -r '.after.xhttp_mode' <<< "$spec")
+    if jq -e '.after.enabled' <<< "$spec" >/dev/null; then destination="$NODES_DIR/$id.env"; else destination="$NODES_DIR/$id.disabled"; fi
+    save_current_node "$destination" || return 1
+    [[ $source == "$destination" ]] || rm -f -- "$source" || return 1
+  done < <(jq -c '.changes[] | select(.changed)' <<< "$report")
+  rebuild_config_from_nodes || return 1
+  restart_or_rollback || return 1
+  printf '%s\n' "$report"
+)
+
 doctor() {
-  local failures=0 port security target node_file node_count=0 fallback route_status
+  local failures=0 port security target transport flags node_file node_count=0 fallback route_status
   printf '%s\n' "===== v2ray-manager 诊断 ====="
 
   if [[ -x "$XRAY_BIN" ]]; then green "[通过] Xray Core 可执行文件"; else red "[失败] 缺少 Xray Core"; ((failures+=1)); fi
@@ -3061,11 +3383,12 @@ doctor() {
   fi
 
   if [[ -r $CONFIG_FILE ]]; then
-    while IFS=$'\t' read -r port security target; do
-      if ss -H -lnt "sport = :$port" | grep -q .; then
-        green "[通过] TCP $port 正在监听"
+    while IFS=$'\t' read -r port security target transport; do
+      flags=-lnt; [[ $transport != udp ]] || flags=-lnu
+      if ss -H "$flags" "sport = :$port" | grep -q .; then
+        green "[通过] ${transport^^} $port 正在监听"
       else
-        red "[失败] TCP $port 未监听"; ((failures+=1))
+        red "[失败] ${transport^^} $port 未监听"; ((failures+=1))
       fi
       if [[ $security == reality ]]; then
         if getent ahosts "$target" >/dev/null 2>&1; then
@@ -3090,7 +3413,7 @@ doctor() {
           yellow "[未检查] 缺少 openssl/timeout，无法验证 REALITY 目标握手。"
         fi
       fi
-    done < <(jq -r '.inbounds[] | [(.port|tostring), (.streamSettings.security // "none"), (.streamSettings.realitySettings.serverNames[0] // "-")] | @tsv' "$CONFIG_FILE")
+    done < <(jq -r '.inbounds[] | [(.port|tostring), (.streamSettings.security // "none"), (.streamSettings.realitySettings.serverNames[0] // "-"), (if .protocol == "hysteria" then "udp" else "tcp" end)] | @tsv' "$CONFIG_FILE")
   fi
 
   for node_file in "$NODES_DIR"/*.env; do
@@ -3100,7 +3423,7 @@ doctor() {
       # shellcheck disable=SC1090
       EXTRA_UUIDS=''
       # shellcheck disable=SC1090
-      . "$node_file"
+      load_state_file "$node_file"
       show_connection_loaded "$CONFIG_FILE" >/dev/null || exit 1
       if profile_requires_xray_tls && ! tls_chain_valid "$(tls_cert_path)"; then
         red "TLS 证书链未通过本机系统 CA 信任校验；检查完整链或客户端自建 CA 配置。" >&2
@@ -3113,7 +3436,7 @@ doctor() {
     fi
     if (
       # shellcheck disable=SC1090
-      . "$node_file"
+      load_state_file "$node_file"
       profile_supports_caddy_route || exit 3
       if profile_uses_managed_caddy_route; then
         systemctl is-active --quiet caddy || exit 4
@@ -3189,13 +3512,19 @@ update_core() (
   mkdir "$transaction/previous"
   cp -p "$XRAY_BIN" "$transaction/previous/xray"
   cp -p "$ASSET_DIR/geoip.dat" "$ASSET_DIR/geosite.dat" "$transaction/previous/"
-  fetch_core "$transaction"
+  if [[ -n ${2:-} ]]; then
+    mkdir "$transaction/core"
+    cp -p -- "$2/xray" "$2/geoip.dat" "$2/geosite.dat" "$transaction/core/"
+  else
+    fetch_core "$transaction" "${1:-}"
+  fi
   XRAY_LOCATION_ASSET="$transaction/core" "$transaction/core/xray" run -test -config "$CONFIG_FILE"
   changed=1
   install_core_files "$transaction/core"
   if (( was_active )); then
     restart_checked || die "新内核未通过健康检查，正在回退。"
   fi
+  publish_manager_pointer "$BACKUP_DIR/core.rollback" "$transaction"
   committed=1
   green "Xray Core 已更新；原先停止的服务会保持停止。"
   version_output=$("$XRAY_BIN" version)
@@ -3216,8 +3545,18 @@ finish_core_update() {
     fi
     status=1
   fi
-  rm -rf -- "$transaction_dir"
+  # Keep successful generations for an explicit rollback discovered after the
+  # short startup observation. Failed candidates are disposable after recovery.
+  if (( ! update_committed )); then rm -rf -- "$transaction_dir"; fi
   exit "$status"
+}
+
+rollback_core() {
+  local id
+  [[ -f $BACKUP_DIR/core.rollback ]] || die '没有可恢复的内核版本。'
+  IFS= read -r id < "$BACKUP_DIR/core.rollback" || return 1
+  [[ $id =~ ^core-update\.[A-Za-z0-9]+$ && -d $BACKUP_DIR/$id/previous && ! -L $BACKUP_DIR/$id ]] || die '内核回退记录无效。'
+  update_core '' "$BACKUP_DIR/$id/previous"
 }
 
 validate_manager() {
@@ -3234,24 +3573,25 @@ write_data_schema_marker() (
   trap 'rm -f -- "$temporary"' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  {
-    printf 'DATA_SCHEMA=%s\n' "$DATA_SCHEMA_VERSION"
-    if [[ -f $state_file ]]; then awk '!/^DATA_SCHEMA=/' "$state_file" || return 1; fi
-  } > "$temporary"
+  if [[ -f $state_file ]]; then
+    state_to_json "$state_file" | jq --argjson schema "$DATA_SCHEMA_VERSION" '.DATA_SCHEMA=$schema' > "$temporary" || return 1
+  else
+    jq -n --argjson schema "$DATA_SCHEMA_VERSION" '{DATA_SCHEMA:$schema}' > "$temporary" || return 1
+  fi
   mv -f -- "$temporary" "$state_file"
 )
-
 migrate_project_state() (
   local before after node_file credential domain upstream path has_tls_xhttp=0 was_active=0
   local migration_dir
   migration_dir=$(mktemp -d) || return 1
   trap 'rm -rf -- "$migration_dir"' EXIT
   local -a extra_credentials
+  check_state_schema || return 1
   [[ -d $NODES_DIR ]] || { green "项目脚本已更新；当前没有需要迁移的入站状态。"; return 0; }
-  compgen -G "$NODES_DIR/*.env" >/dev/null || {
-    green "项目脚本已更新；当前没有启用的入站需要迁移。"
+  if ! compgen -G "$NODES_DIR/*.env" >/dev/null && ! compgen -G "$NODES_DIR/*.disabled" >/dev/null; then
+    green "项目脚本已更新；当前没有需要迁移的入站。"
     return 0
-  }
+  fi
   [[ -r $CONFIG_FILE && -x $XRAY_BIN ]] || die "更新后迁移需要现有 Xray 配置和内核。"
   systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
   cp "$CONFIG_FILE" "$migration_dir/before.json" || return 1
@@ -3265,7 +3605,7 @@ migrate_project_state() (
     EXTRA_UUIDS=''
     # Node files are generated by this script with mode 0600.
     # shellcheck disable=SC1090
-    . "$node_file" || { restore_archive "$LAST_BACKUP"; die "无法读取入站状态，已恢复更新前配置。"; }
+    load_state_file "$node_file" || { restore_archive "$LAST_BACKUP"; die "无法读取入站状态，已恢复更新前配置。"; }
     [[ ${DATA_SCHEMA:-1} =~ ^[0-9]+$ ]] || {
       restore_archive "$LAST_BACKUP"
       die "入站数据版本无效，已恢复更新前配置。"
@@ -3324,7 +3664,7 @@ migrate_project_state() (
       [[ -f $node_file ]] || continue
       PROFILE=''; SERVER_NAME=''
       # shellcheck disable=SC1090
-      . "$node_file"
+      load_state_file "$node_file"
       [[ $PROFILE == vless-tls-xhttp ]] && printf '%s\n' "$SERVER_NAME"
     done | sort -u)
   fi
@@ -3332,23 +3672,158 @@ migrate_project_state() (
   green "项目数据已迁移到版本 $DATA_SCHEMA_VERSION；已核验各入站连接参数。"
 )
 
+check_state_schema() {
+  local state schema supported=${1:-$DATA_SCHEMA_VERSION}
+  [[ $supported =~ ^[1-9][0-9]{0,5}$ ]] || { red '候选脚本未声明有效的数据结构版本。' >&2; return 1; }
+  for state in "$STATE_FILE" "$NODES_DIR"/*.env "$NODES_DIR"/*.disabled; do
+    [[ -f $state ]] || continue
+    schema=$(state_schema "$state") || return 1
+    schema=${schema:-1}
+    [[ $schema =~ ^[1-9][0-9]{0,5}$ ]] || { red "数据版本无效：$state" >&2; return 1; }
+    (( schema <= supported )) || { red "数据版本 $schema 高于目标脚本支持的 $supported，拒绝降级迁移。" >&2; return 1; }
+  done
+}
+
 ensure_project_state_current() {
-  local command_name=${1:-menu} node_file schema
+  local command_name=${1:-menu} node_file schema needs_migration=0
   [[ $command_name != migrate && $command_name != uninstall ]] || return 0
-  [[ -d $NODES_DIR ]] || return 0
-  for node_file in "$NODES_DIR"/*.env; do [[ -f $node_file ]] && break; done
-  [[ -f ${node_file:-} ]] || return 0
-  schema=$(awk -F= '/^DATA_SCHEMA=/{print $2; exit}' "$node_file")
-  [[ $schema == "$DATA_SCHEMA_VERSION" ]] && return 0
+  check_state_schema || return 1
+  for node_file in "$NODES_DIR"/*.env "$NODES_DIR"/*.disabled; do
+    [[ -f $node_file ]] || continue
+    schema=$(state_schema "$node_file")
+    [[ ${schema:-1} == "$DATA_SCHEMA_VERSION" ]] || needs_migration=1
+  done
+  (( needs_migration )) || return 0
   yellow "检测到旧版项目数据，正在自动迁移并保护现有链接…"
   run_mutation migrate_project_state
 }
 
+manager_bundle_path() {
+  case "$1" in
+    manager) printf '%s\n' "$MANAGER_BIN" ;;
+    config) printf '%s\n' "$CONFIG_DIR" ;;
+    caddy-main) printf '%s\n' "$CADDY_CONFIG" ;;
+    caddy-sites) printf '%s\n' "$CADDY_SITE_DIR" ;;
+    service) printf '%s\n' "$SERVICE_FILE" ;;
+    components) printf '%s\n' "$WARP_BACKEND_BIN_DIR" ;;
+    *) return 1 ;;
+  esac
+}
+
+capture_manager_bundle() (
+  set -Eeuo pipefail
+  umask 077
+  local bundle=$1 name path links xray_active=false caddy_active=false
+  mkdir "$bundle/files" || return 1
+  for name in manager config caddy-main caddy-sites service components; do
+    path=$(manager_bundle_path "$name") || return 1
+    if [[ -e $path || -L $path ]]; then
+      # cp -a would preserve references to mutable external files rather than
+      # their state. Refuse that layout before journaling or replacing anything.
+      links=$(find "$path" -type l -print -quit) || return 1
+      [[ -z $links ]] || { red "关联快照暂不支持符号链接：$links；未修改现有安装。" >&2; return 1; }
+      cp -a -- "$path" "$bundle/files/$name" || return 1
+    fi
+  done
+  [[ -f $bundle/files/manager ]] || return 1
+  systemctl is-active --quiet "$SERVICE_NAME" && xray_active=true
+  systemctl is-active --quiet caddy && caddy_active=true
+  jq -n --arg version "$MANAGER_VERSION" --argjson schema "$DATA_SCHEMA_VERSION" \
+    --argjson xray "$xray_active" --argjson caddy "$caddy_active" \
+    '{format:1,manager_version:$version,data_schema:$schema,xray_active:$xray,caddy_active:$caddy}' > "$bundle/metadata.json" || return 1
+  # A saved coordinator remains usable even if the installed manager is older
+  # and does not yet implement the recover command.
+  cp -- "${BASH_SOURCE[0]}" "$bundle/recovery.sh" || return 1
+  (cd "$bundle" && find files -type f -exec sha256sum {} + > checksums && sha256sum metadata.json recovery.sh >> checksums) || return 1
+)
+
+read_manager_pointer() {
+  local id
+  [[ -f $1 ]] || return 1
+  IFS= read -r id < "$1" || return 1
+  [[ $id =~ ^manager-transaction\.[A-Za-z0-9]+$ ]] || return 1
+  [[ -d $BACKUP_DIR/$id && ! -L $BACKUP_DIR/$id ]] || return 1
+  printf '%s\n' "$BACKUP_DIR/$id"
+}
+
+publish_manager_pointer() (
+  local destination=$1 bundle=$2 temporary
+  temporary=$(mktemp "$BACKUP_DIR/pointer.XXXXXX") || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  printf '%s\n' "${bundle##*/}" > "$temporary" || return 1
+  atomic_install "$temporary" "$destination" 600
+)
+
+require_no_pending_manager() {
+  [[ ! -e $BACKUP_DIR/manager.pending ]] || {
+    red "存在未完成的管理脚本事务。先运行 v2ray recover；恢复入口位于 $BACKUP_DIR/manager-transaction.*/recovery.sh。" >&2
+    return 1
+  }
+}
+
+restore_manager_bundle() {
+  local bundle=$1 name path xray_active caddy_active
+  [[ -f $bundle/checksums && -f $bundle/metadata.json && -f $bundle/files/manager ]] || return 1
+  (cd "$bundle" && sha256sum -c checksums >/dev/null) || return 1
+  jq -e '.format == 1 and (.xray_active | type == "boolean") and (.caddy_active | type == "boolean")' "$bundle/metadata.json" >/dev/null || return 1
+  validate_manager "$bundle/files/manager" || return 1
+  xray_active=$(jq -r '.xray_active' "$bundle/metadata.json") || return 1
+  caddy_active=$(jq -r '.caddy_active' "$bundle/metadata.json") || return 1
+  # Restore directories exactly, including removal of post-upgrade nodes.
+  # Manager replacement is last; the saved recovery entry survives partial I/O.
+  for name in config caddy-main caddy-sites service components; do
+    path=$(manager_bundle_path "$name") || return 1
+    rm -rf -- "$path" || return 1
+    if [[ -e $bundle/files/$name ]]; then
+      mkdir -p -- "$(dirname "$path")" || return 1
+      cp -a -- "$bundle/files/$name" "$path" || return 1
+    fi
+  done
+  atomic_install "$bundle/files/manager" "$MANAGER_BIN" 755 || return 1
+  systemctl daemon-reload || return 1
+  if [[ -f $CONFIG_FILE ]]; then
+    XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$CONFIG_FILE" >/dev/null || return 1
+  fi
+  if [[ $xray_active == true ]]; then restart_checked || return 1
+  elif systemctl is-active --quiet "$SERVICE_NAME"; then systemctl stop "$SERVICE_NAME" || return 1; fi
+  if [[ $caddy_active == true ]]; then
+    caddy validate --config "$CADDY_CONFIG" >/dev/null || return 1
+    systemctl restart caddy || return 1
+    systemctl is-active --quiet caddy || return 1
+  elif systemctl is-active --quiet caddy; then systemctl stop caddy || return 1; fi
+}
+
+finish_manager_transaction() {
+  local status=$1 bundle=$2 armed=$3 committed=$4
+  trap - EXIT INT TERM
+  if (( armed && ! committed )); then
+    if restore_manager_bundle "$bundle"; then
+      rm -f -- "$BACKUP_DIR/manager.pending" || exit 1
+      yellow '操作失败，已恢复关联的管理脚本、数据、组件脚本和服务状态。' >&2
+    else
+      red "自动恢复未完成；保留现场。运行：bash $bundle/recovery.sh recover" >&2
+    fi
+    exit 1
+  fi
+  exit "$status"
+}
+
+recover_manager() {
+  local bundle
+  bundle=$(read_manager_pointer "$BACKUP_DIR/manager.pending") || die '没有有效的待恢复事务。'
+  restore_manager_bundle "$bundle" || die "恢复未完成，快照保留在 $bundle。"
+  rm -f -- "$BACKUP_DIR/manager.pending" || return 1
+  green '已恢复中断操作之前的管理脚本与关联数据。'
+}
+
 update_manager() (
   set -Eeuo pipefail
-  local temporary revision url
+  local temporary revision url candidate_schema bundle='' armed=0 committed=0
   temporary=$(mktemp)
-  trap 'rm -f -- "$temporary"' EXIT
+  trap 'status=$?; rm -f -- "$temporary"; finish_manager_transaction "$status" "$bundle" "$armed" "$committed"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  require_no_pending_manager
   revision=${V2M_MANAGER_REF:-}
   if [[ -z $revision ]]; then
     revision=$(curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 \
@@ -3360,27 +3835,45 @@ update_manager() (
   [[ $revision =~ ^[0-9a-f]{40}$ ]] || die "管理脚本版本必须是完整的 Git 提交 SHA。"
   url="${MANAGER_URL%/main/v2ray.sh}/$revision/v2ray.sh"
   green "下载管理脚本提交：$revision"
-  curl --fail --show-error --location --retry 3 --connect-timeout 15 --max-time 120 \
-    --output "$temporary" "$url"
+  download_file "$url" "$temporary"
   validate_manager "$temporary" || die "下载的管理脚本未通过语法或项目标识检查，未更新。"
+  candidate_schema=$(awk -F '"' '/^readonly DATA_SCHEMA_VERSION="/{print $2; exit}' "$temporary")
+  [[ -n $candidate_schema ]] || die '候选脚本缺少数据结构版本，拒绝覆盖现有安装。'
+  check_state_schema "$candidate_schema"
   [[ -f $MANAGER_BIN ]] || die "找不到当前管理脚本。"
   install -d -m 700 "$BACKUP_DIR"
+  bundle=$(mktemp -d "$BACKUP_DIR/manager-transaction.XXXXXX")
+  capture_manager_bundle "$bundle"
+  publish_manager_pointer "$BACKUP_DIR/manager.pending" "$bundle"
+  armed=1
+  # Kept for manual inspection only. Automated rollback requires the bundle.
   atomic_install "$MANAGER_BIN" "$BACKUP_DIR/manager.previous.sh" 700
   atomic_install "$temporary" "$MANAGER_BIN" 755
-  if ! V2M_INTERNAL_MIGRATION=1 "$MANAGER_BIN" migrate; then
-    atomic_install "$BACKUP_DIR/manager.previous.sh" "$MANAGER_BIN" 755 || true
-    die "项目数据迁移失败，管理脚本已恢复到更新前版本。"
-  fi
-  green "项目脚本与数据结构已一键更新。旧版本：$BACKUP_DIR/manager.previous.sh；可运行 v2ray rollback.sh 恢复。"
+  V2M_INTERNAL_MIGRATION=1 "$MANAGER_BIN" migrate
+  publish_manager_pointer "$BACKUP_DIR/manager.rollback" "$bundle"
+  committed=1
+  rm -f -- "$BACKUP_DIR/manager.pending"
+  green "项目脚本与数据结构已更新。关联快照：$bundle；v2ray rollback.sh 将恢复该快照中的数据和服务状态。"
 )
 
-rollback_manager() {
-  local previous="$BACKUP_DIR/manager.previous.sh"
-  [[ -r $previous ]] || die "没有可恢复的管理脚本。"
-  validate_manager "$previous" || die "备份管理脚本未通过校验。"
-  atomic_install "$previous" "$MANAGER_BIN" 755 || die "管理脚本恢复失败。"
-  green "已恢复上一版管理脚本，重新运行 v2ray 即可。"
-}
+rollback_manager() (
+  set -Eeuo pipefail
+  local previous bundle='' armed=0 committed=0
+  require_no_pending_manager
+  previous=$(read_manager_pointer "$BACKUP_DIR/manager.rollback") || die '没有关联数据快照；拒绝仅恢复旧脚本。请保留当前数据并使用匹配版本。'
+  bundle=$(mktemp -d "$BACKUP_DIR/manager-transaction.XXXXXX")
+  trap 'finish_manager_transaction "$?" "$bundle" "$armed" "$committed"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  capture_manager_bundle "$bundle"
+  publish_manager_pointer "$BACKUP_DIR/manager.pending" "$bundle"
+  armed=1
+  restore_manager_bundle "$previous"
+  publish_manager_pointer "$BACKUP_DIR/manager.rollback" "$bundle"
+  committed=1
+  rm -f -- "$BACKUP_DIR/manager.pending"
+  green "已恢复关联的脚本与数据。回退前状态保留在 $bundle。"
+)
 
 uninstall_xray() {
   read -r -p "将停止服务并删除 Xray 程序与 /etc/xray 配置。继续？[y/N] " answer
@@ -3429,7 +3922,7 @@ maintenance_menu() {
     ui_menu_item '5) 备份配置'
     ui_menu_item '6) 恢复最近备份'
     ui_menu_item '7) 轮换 REALITY 密钥'
-    ui_menu_item '8) 恢复上一版管理脚本'
+    ui_menu_item '8) 恢复上一版管理脚本及关联数据（撤销快照后修改）'
     ui_menu_item '9) 路由、丢包与延迟测试'
     ui_menu_item '10) 查看项目信息'
     ui_box_divider
@@ -3444,7 +3937,6 @@ maintenance_menu() {
     esac
   done
 }
-
 show_help() {
   printf '%s\n' \
     '直接运行 v2ray 打开主菜单。' \
@@ -3462,7 +3954,15 @@ show_help() {
     'v2ray cfip     管理独立 Cloudflare 优选 IP 分支项目' \
     'v2ray warp     管理全部协议共用的 WARP 出站策略' \
     'v2ray upgrade  一键更新项目脚本、迁移数据并保留现有链接' \
-    'v2ray doctor   运行综合诊断' \
+    'v2ray update.core [--version <vX.Y.Z> | --latest] [--check] 默认固定基线，可指定版本' \
+    'v2ray versions 查看当前内核与上游最新版本' \
+    'v2ray rollback.core 恢复上次内核和 GeoData（先校验当前配置）' \
+    'v2ray rollback.sh 恢复上一关联快照（包含数据，会撤销快照后的配置修改）' \
+    'v2ray recover 恢复中断的管理脚本事务' \
+    'v2ray doctor [--json|--prometheus] 本机诊断或导出监控指标' \
+    'v2ray plan <文件.json> 预览已有入站的声明式变更' \
+    'v2ray apply <文件.json> 在事务中应用声明式变更' \
+    'v2ray xhttp-mode <入站ID> <auto|packet-up|stream-up> 设置客户端模式' \
     'v2ray help     查看完整命令用法'
 }
 
@@ -3523,7 +4023,8 @@ menu() {
 main() {
   require_root
   if [[ ${1:-} == __mutation ]]; then shift; mutation_entry "$@"; return; fi
-  ensure_project_state_current "${1:-menu}"
+  # Read-only commands must not trigger migration. All mutations validate state
+  # after taking the lock; rollback/recovery must remain usable with newer data.
   case "${1:-menu}" in
     menu) menu ;;
     install) run_mutation install_xray ;;
@@ -3545,14 +4046,20 @@ main() {
     caddy) caddy_command "${2:-menu}" "${3:-}" "${4:-}" "${5:-}" ;;
     cfip|cloudflare-ip) cloudflare_ip_command "${@:2}" ;;
     warp) warp_command "${2:-menu}" "${3:-}" ;;
-    update) run_mutation update_core ;;
+    update|update.core) core_update_command "${@:2}" ;;
+    versions) check_core_update latest ;;
+    rollback.core) run_mutation rollback_core ;;
     upgrade|update.sh) run_mutation update_manager ;;
     migrate) run_mutation migrate_project_state ;;
     rollback.sh) run_mutation rollback_manager ;;
+    recover) run_mutation recover_manager ;;
     rotate) run_mutation rotate_reality_keys "${2:-}" ;;
     backup) run_mutation manual_backup ;;
     restore) run_mutation restore_latest ;;
-    doctor) doctor ;;
+    doctor) doctor_command "${2:-}" ;;
+    plan) plan_desired "${2:-}" ;;
+    apply) run_mutation apply_desired "${2:-}" ;;
+    xhttp-mode) run_mutation set_xhttp_mode "${2:-}" "${3:-}" ;;
     uninstall) run_mutation uninstall_xray ;;
     version) printf '%s %s by %s\n' "$APP_NAME" "$MANAGER_VERSION" "$AUTHOR" ;;
     about) show_about ;;

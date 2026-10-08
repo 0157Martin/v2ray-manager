@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {
+      "id": "primary",
+      "enabled": true,
+      "address": "edge.example.com",
+      "remark": "primary-edge",
+      "xhttp_mode": "packet-up"
+    }
+  ]
+}

@@ -27,7 +27,7 @@ restored configuration. A failed rollback reports the retained backup for manual
 
 ## Updating
 
-- `v2ray update` stages the latest stable Xray Core and GeoData, verifies the release digest, and
+- `v2ray update` stages the project's pinned Xray baseline and GeoData, verifies the release digest, and
   validates the existing config before replacing installed files. It restores the previous core
   and GeoData on copy or restart/health-check failure. A stopped service remains stopped. If rollback
   fails, the transaction directory is retained and printed for manual recovery. The service unit
@@ -38,9 +38,23 @@ restored configuration. A failed rollback reports the retained backup for manual
   pre-update configuration. Unexpected changes restore both configuration and the previous manager.
   Set `V2M_MANAGER_REF` to a full 40-character commit SHA to pin a specific revision. The bootstrapper
   uses the same policy. Syntax and identity checks supplement HTTPS; they are not signature checks.
-- `v2ray rollback.sh` restores `/var/backups/v2ray-manager/manager.previous.sh`. If the current
-  command is broken, run as root:
-  `install -m 755 /var/backups/v2ray-manager/manager.previous.sh /usr/local/bin/v2ray`.
+- `v2ray update.core --version v26.3.27` selects a release explicitly; `--latest` opts into the latest
+  upstream release. Add `--check` for a read-only version query. Default installations and updates use
+  `RECOMMENDED_XRAY_VERSION`; `V2M_XRAY_VERSION` overrides the default. `v2ray rollback.core` restores
+  the previous core and matching GeoData only after validating the current configuration.
+- `v2ray rollback.sh` restores the paired manager/data snapshot, including Caddy configuration,
+  the Xray service unit, component scripts and previous Xray/Caddy active states. It removes changes
+  made after that snapshot. It does not restore system packages, web content, the core, or external
+  WARP backend state. Legacy script-only backups are rejected by automated rollback.
+- `v2ray recover` restores an interrupted manager transaction recorded by `manager.pending`.
+  If the installed command cannot run, use the exact `recovery.sh` path printed by the failure.
+  Snapshots include SHA-256 manifests; corruption fails closed. Transaction generations are retained
+  separately from the ten rotating configuration archives; monitor disk space and never remove a
+  generation referenced by a pending or rollback pointer.
+
+Only mutating operations trigger schema migration, after acquiring the lock. Read-only commands do
+not migrate state. Higher schema versions in either enabled or disabled nodes are rejected.
+See [RELIABILITY.md](RELIABILITY.md) for dependency pinning and recovery boundaries.
 
 Health checks require the same active PID and restart count for five seconds. They detect immediate
 crashes but do not prove remote connectivity, firewall reachability, or long-term stability.

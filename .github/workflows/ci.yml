@@ -9,9 +9,13 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify repository layout and Bash syntax
         run: bash tools/verify-layout.sh
       - name: Install verification dependencies
@@ -22,7 +26,7 @@ jobs:
         run: |
           shellcheck --version
           status=0
-          shellcheck -f json1 install.sh v2ray.sh config/defaults.sh tools/verify-layout.sh tests/*.sh > shellcheck.json || status=$?
+          shellcheck -f json1 install.sh v2ray.sh config/defaults.sh tools/*.sh tests/*.sh > shellcheck.json || status=$?
           if (( status != 0 )); then
             jq -r '.comments[] | "::error file=\(.file),line=\(.line),col=\(.column)::SC\(.code): \(.message)"' shellcheck.json
             exit "$status"
@@ -42,14 +46,59 @@ jobs:
           bash tests/bootstrap.sh
           bash tests/editing.sh
           bash tests/hardening.sh
+          bash tests/reliability.sh
 
   xray-config:
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [baseline, latest]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install test dependencies
         run: sudo apt-get update && sudo apt-get install -y curl jq unzip openssl python3
-      - name: Validate generated configuration with latest stable Xray
+      - name: Validate configurations and real traffic with Xray
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: bash tests/xray-config.sh
+          TEST_CHANNEL: ${{ matrix.channel }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/caddy-test"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
+            -o "$RUNNER_TEMP/caddy-test/archive.tar.gz"
+          printf '%s  %s\n' 727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b "$RUNNER_TEMP/caddy-test/archive.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/caddy-test/archive.tar.gz" -C "$RUNNER_TEMP/caddy-test" caddy
+          export CADDY_TEST_BIN="$RUNNER_TEMP/caddy-test/caddy"
+          if [[ $TEST_CHANNEL == baseline ]]; then
+            source ./v2ray.sh
+            export XRAY_TEST_TAG="$RECOMMENDED_XRAY_VERSION"
+          fi
+          bash tests/xray-config.sh
+
+  debian-regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12-slim, debian:13-slim]
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install test dependencies
+        run: |
+          apt-get update
+          apt-get install -y git ca-certificates curl jq openssl shellcheck coreutils diffutils findutils tar util-linux
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Test Bash and transactional behavior on Debian
+        run: |
+          bash tools/verify-layout.sh
+          shellcheck install.sh v2ray.sh config/defaults.sh tools/*.sh tests/*.sh
+          bash tests/unit.sh
+          bash tests/recovery.sh
+          bash tests/bootstrap.sh
+          bash tests/editing.sh
+          bash tests/hardening.sh
+          bash tests/reliability.sh
