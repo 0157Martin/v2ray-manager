@@ -16,7 +16,8 @@ Local host: Windows / Git Bash; ShellCheck 0.11.0; jq 1.8.2; Xray 26.3.27 and Ca
   Declarative planning is read-only; apply/no-op, XHTTP mode persistence, redacted JSON diagnostics and
   Prometheus text output have regression coverage.
 - `tools/build.sh --check` verifies that the deployable `v2ray.sh` exactly matches the ordered `src/`
-  modules. The modified GitHub Actions workflow has not yet run remotely.
+  modules. The complete Ubuntu, ARM64, Debian and baseline/latest Xray matrix passed in
+  [GitHub Actions run 37705794635](https://github.com/0157Martin/v2ray-manager/actions/runs/37705794635).
 
 Still not established locally: Debian/Ubuntu systemd and ownership behavior, native Linux flock and
 symlink checks, public UDP/TCP ingress, ACME issuance, cloud firewall rules, CDN behavior, and live
