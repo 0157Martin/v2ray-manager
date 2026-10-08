@@ -125,6 +125,8 @@ PROFILE=vless-tls-raw
 [[ $(profile_group) == modern-direct ]] || fail 'VLESS Vision RAW was classified as compatibility'
 PROFILE=hysteria-tls-quic
 [[ $(profile_group) == modern-direct ]] || fail 'Hysteria2 was classified as compatibility'
+profile_available_for_new_deployment && fail 'broken Xray Hysteria2 inbound was offered for new deployment'
+profile_available_for_new_deployment vless-tls-raw || fail 'supported profile was blocked from new deployment'
 PROFILE=trojan-tls-ws
 [[ $(profile_group) == http-tls ]] || fail 'Trojan WebSocket was not classified by its HTTP/CDN path'
 PROFILE=vmess-tcp

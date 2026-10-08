@@ -9,9 +9,9 @@ Local host: Windows / Git Bash; ShellCheck 0.11.0; jq 1.8.2; Xray 26.3.27 and Ca
   a controlled HTTP request over loopback. REALITY covered RAW, gRPC and XHTTP; ordinary TLS covered
   RAW, WebSocket and gRPC; XHTTP traversed a real generated Caddy route in `auto`, `packet-up` and
   `stream-up` modes.
-- Hysteria2 used a UDP listener with TLS/QUIC, carried the controlled request with valid authentication,
+- Hysteria2 used Xray at both ends of a UDP listener with TLS/QUIC and carried the controlled request with valid authentication,
   and rejected an invalid credential. This establishes same-version Xray interoperability on the local
-  host, not public-network reachability or compatibility with every third-party Hysteria2 client.
+  host. It did not establish compatibility with sing-box or the official Hysteria2 client; that Xray inbound is now blocked for new deployments.
 - JSON state parsing rejects command substitution and unknown fields without executing file contents.
   Declarative planning is read-only; apply/no-op, XHTTP mode persistence, redacted JSON diagnostics and
   Prometheus text output have regression coverage.

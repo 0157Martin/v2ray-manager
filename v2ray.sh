@@ -500,6 +500,7 @@ valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws || $1 == hysteria-tls-quic ]]; }
 profile_transport() { if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then printf udp; else printf tcp; fi; }
+profile_available_for_new_deployment() { [[ ${1:-${PROFILE:-}} != hysteria-tls-quic ]]; }
 valid_xhttp_mode() { [[ $1 == auto || $1 == packet-up || $1 == stream-up ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 # TLS-XHTTP terminates public TLS at Caddy. Its Xray listener is a loopback
@@ -537,7 +538,7 @@ profile_name() {
     vmess-tls-ws) printf 'VMess-WebSocket-TLS-Legacy' ;;
     vmess-tls-grpc) printf 'VMess-gRPC-TLS-Legacy' ;;
     trojan-tls-ws) printf 'Trojan-WebSocket-TLS' ;;
-    hysteria-tls-quic) printf 'Hysteria-2-TLS-QUIC (实验)' ;;
+    hysteria-tls-quic) printf 'Hysteria-2-TLS-QUIC (Xray 入站已停用)' ;;
   esac
 }
 
@@ -583,7 +584,7 @@ choose_profile() {
   ui_box_divider
   ui_menu_item '现代证书直连（不能经过普通橙云）'
   ui_menu_item '11) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
-  ui_menu_item '12) Hysteria 2 TLS/QUIC      [实验：UDP/QUIC 直连，需要自有证书]'
+  ui_menu_item '12) Hysteria 2 TLS/QUIC      [暂不可新建：Xray 入站存在已知互通故障]'
   ui_box_divider
   ui_menu_item '兼容保留（新部署不优先）'
   ui_menu_item '13) VMess-TCP                [无 TLS，仅限旧客户端或可信链路]'
@@ -596,6 +597,7 @@ choose_profile() {
     return 125
   fi
   PROFILE=$(profile_from_menu_choice "$choice") || die "协议组合选择无效。"
+  profile_available_for_new_deployment || die '当前 Xray Hysteria2 入站与标准 Hysteria2/sing-box 客户端存在已知互通故障，已停止新建。请按 docs/HYSTERIA2_MIGRATION.md 迁移到官方 Hysteria2 服务端。'
   case "$PROFILE" in
     vless-reality-raw|trojan-reality-raw|vmess-tcp) PATH_VALUE='' ;;
     vless-reality-xhttp)
@@ -667,7 +669,7 @@ ask_server_values() {
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
     PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
-    if [[ $PROFILE == hysteria-tls-quic && ${V2M_EXPERIMENTAL:-0} != 1 ]]; then die 'Hysteria 2 自动配置需设置 V2M_EXPERIMENTAL=1。'; fi
+    profile_available_for_new_deployment "$PROFILE" || die '不再支持新建 Xray Hysteria2 入站；请迁移到官方 Hysteria2 服务端。'
     XHTTP_MODE=${V2M_XHTTP_MODE:-${XHTTP_MODE:-auto}}
     valid_xhttp_mode "$XHTTP_MODE" || die 'XHTTP 模式必须为 auto、packet-up 或 stream-up。'
     PATH_VALUE=${V2M_PATH:-${PATH_VALUE:-}}
