@@ -535,6 +535,28 @@ profile_name() {
   esac
 }
 
+# Menu numbers are presentation-only. Persisted state and non-interactive
+# automation use the stable profile IDs returned here, so a menu reorder never
+# rewrites an existing node or changes its connection semantics.
+profile_from_menu_choice() {
+  case ${1:-} in
+    1) printf 'vless-reality-raw' ;;
+    2) printf 'vless-reality-xhttp' ;;
+    3) printf 'vless-reality-grpc' ;;
+    4) printf 'trojan-reality-raw' ;;
+    5) printf 'vless-tls-xhttp' ;;
+    6) printf 'vless-tls-ws' ;;
+    7) printf 'vless-tls-grpc' ;;
+    8) printf 'vmess-tls-ws' ;;
+    9) printf 'vmess-tls-grpc' ;;
+    10) printf 'trojan-tls-ws' ;;
+    11) printf 'vless-tls-raw' ;;
+    12) printf 'hysteria-tls-quic' ;;
+    13) printf 'vmess-tcp' ;;
+    *) return 1 ;;
+  esac
+}
+
 choose_profile() {
   local choice default_path
   printf '\n'
@@ -543,47 +565,42 @@ choose_profile() {
   ui_menu_item '1) VLESS-REALITY-Vision-RAW  [高级：目标站/客户端兼容性通过检测后使用]'
   ui_menu_item '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]'
   ui_menu_item '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]'
-  ui_menu_item '7) Trojan-REALITY-RAW        [Trojan 认证语义；REALITY 仍须直连]'
+  ui_menu_item '4) Trojan-REALITY-RAW        [Trojan 认证语义；REALITY 仍须直连]'
   ui_box_divider
   ui_menu_item 'HTTP/CDN / Cloudflare 橙云（需要自有域名）'
-  ui_menu_item '4) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]'
-  ui_menu_item '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]'
-  ui_menu_item '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]'
-  ui_menu_item '9) VMess-WebSocket-TLS       [VMess 兼容；可经 Caddy/CDN]'
-  ui_menu_item '10) VMess-gRPC-TLS           [VMess 兼容；适合既有 HTTP/2 反代]'
-  ui_menu_item '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]'
+  ui_menu_item '5) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]'
+  ui_menu_item '6) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]'
+  ui_menu_item '7) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]'
+  ui_menu_item '8) VMess-WebSocket-TLS       [VMess 兼容；可经 Caddy/CDN]'
+  ui_menu_item '9) VMess-gRPC-TLS            [VMess 兼容；适合既有 HTTP/2 反代]'
+  ui_menu_item '10) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]'
   ui_box_divider
   ui_menu_item '现代证书直连（不能经过普通橙云）'
-  ui_menu_item '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
-  ui_menu_item '13) Hysteria 2 TLS/QUIC      [实验：UDP/QUIC 直连，需要自有证书]'
+  ui_menu_item '11) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
+  ui_menu_item '12) Hysteria 2 TLS/QUIC      [实验：UDP/QUIC 直连，需要自有证书]'
   ui_box_divider
   ui_menu_item '兼容保留（新部署不优先）'
-  ui_menu_item '8) VMess-TCP                 [无 TLS，仅限旧客户端或可信链路]'
+  ui_menu_item '13) VMess-TCP                [无 TLS，仅限旧客户端或可信链路]'
   ui_box_bottom
   read -r -p '请选择协议组合 [1-13]:' choice
-  case "$choice" in
-    1) PROFILE=vless-reality-raw; PATH_VALUE='' ;;
-    2)
-      PROFILE=vless-reality-xhttp
+  PROFILE=$(profile_from_menu_choice "$choice") || die "协议组合选择无效。"
+  case "$PROFILE" in
+    vless-reality-raw|trojan-reality-raw|vmess-tcp) PATH_VALUE='' ;;
+    vless-reality-xhttp)
       default_path=${PATH_VALUE:-/$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
       [[ $default_path == /* ]] || default_path="/$default_path"
       read -r -p "XHTTP 路径 [${default_path}]:" PATH_VALUE
       PATH_VALUE=${PATH_VALUE:-$default_path}
       [[ $PATH_VALUE == /* ]] || PATH_VALUE="/$PATH_VALUE"
       ;;
-    3)
-      PROFILE=vless-reality-grpc
+    vless-reality-grpc)
       default_path=${PATH_VALUE:-grpc-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
       default_path=${default_path#/}
       read -r -p "gRPC serviceName [${default_path}]:" PATH_VALUE
       PATH_VALUE=${PATH_VALUE:-$default_path}
       PATH_VALUE=${PATH_VALUE#/}
       ;;
-    4|5|6|9|10|11)
-      case "$choice" in
-        4) PROFILE=vless-tls-xhttp ;; 5) PROFILE=vless-tls-ws ;; 6) PROFILE=vless-tls-grpc ;;
-        9) PROFILE=vmess-tls-ws ;; 10) PROFILE=vmess-tls-grpc ;; 11) PROFILE=trojan-tls-ws ;;
-      esac
+    *-tls-xhttp|*-tls-ws|*-tls-grpc)
       default_path=${PATH_VALUE:-/$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')}
       if [[ $PROFILE == *-tls-grpc ]]; then
         default_path=${default_path#/}; read -r -p "gRPC serviceName [${default_path}]:" PATH_VALUE; PATH_VALUE=${PATH_VALUE:-$default_path}; PATH_VALUE=${PATH_VALUE#/}
@@ -594,11 +611,7 @@ choose_profile() {
       CERT_SOURCE=
       KEY_SOURCE=
       ;;
-    7) PROFILE=trojan-reality-raw; PATH_VALUE='' ;;
-    8) PROFILE=vmess-tcp; PATH_VALUE='' ;;
-    12) PROFILE=vless-tls-raw; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
-    13) PROFILE=hysteria-tls-quic; PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
-    *) die "协议组合选择无效。" ;;
+    vless-tls-raw|hysteria-tls-quic) PATH_VALUE=''; CERT_SOURCE=''; KEY_SOURCE='' ;;
   esac
   green "已选择协议：$(profile_name)"
 }

@@ -3,7 +3,7 @@
 ## Unreleased
 
 - 协议菜单改为按实际网络路径分类：REALITY 直连、HTTP/CDN、现代证书直连和兼容保留；不再把 VLESS Vision、Hysteria2 与 Trojan WebSocket 笼统归为“旧版兼容”。
-- 入站列表采用相同分类规则，保留原有 1–13 编号和配置标识，现有节点与自动化调用无需迁移。
+- 协议编号按分类重排为连续的 1–13；持久化 profile ID 保持不变，现有节点无需数据迁移。依赖旧交互数字的自动化需改用 `V2M_PROFILE`。
 - 新增面向用户的 6.5.0 项目更新说明，补充升级方式、功能边界和协议选择建议。
 - 6.5.0：节点状态升级为不可执行的 JSON；旧 `%q` 状态通过严格解析器迁移，未知字段和 Shell 表达式被拒绝。
 - 新增 `doctor --json/--prometheus`、已有节点范围内的 `plan/apply`、XHTTP 客户端模式切换和实验性 Hysteria2 TLS/QUIC。
