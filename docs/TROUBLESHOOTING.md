@@ -92,18 +92,24 @@ VLESS WebSocket TLS 不强制依赖 Cloudflare 橙云。
      https://example.com/客户端保存的路径
    ```
 
-### 已验证的直连恢复步骤
+### 解决方法
 
-1. 删除或停用已失配的旧入站；
-2. 从“入站管理”重新创建 `VLESS-WebSocket-TLS`；
-3. 使用 `v2ray link <WebSocket入站ID>` 重新导出；
-4. 在客户端删除旧节点后重新导入，不能只保留旧节点并手工替换其中一个字段；
-5. 暂不执行旧版本的 Caddy 路径同步，先按新链接的实际入站端口完成灰云直连测试。
+1. 进入“维护与诊断”，选择 `2) 一键更新项目脚本并迁移数据`。这一步会更新主脚本，并按主项目
+   锁定的提交和 SHA-256 更新修正后的 Caddy 组件；
+2. 删除或停用与服务器 Path、传输类型不一致的旧入站，重新创建 `VLESS-WebSocket-TLS`；
+3. 运行 `v2ray caddy`，选择 `4) 同步 Xray XHTTP/WS 路径反代`，为同一域名重新生成全部
+   已启用的 XHTTP/WS 路由；
+4. 使用 `v2ray link <WebSocket入站ID>` 重新导出，在客户端删除旧节点后重新导入。不要只修改
+   旧节点的 Path，因为端口、Host、SNI、UUID 和传输类型也必须与本次生成结果一致；
+5. 校验并加载配置：
 
-### 修正版 Caddy 同步
+   ```bash
+   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   systemctl reload caddy
+   systemctl restart xray
+   ```
 
-更新管理器后再运行 `v2ray caddy`，选择“同步 Xray XHTTP/WS 路径反代”。生成的 WebSocket
-后端必须包含：
+修正后的 WebSocket 后端必须包含：
 
 ```caddyfile
 reverse_proxy @xray_ws https://127.0.0.1:后端端口 {
@@ -115,37 +121,19 @@ reverse_proxy @xray_ws https://127.0.0.1:后端端口 {
 }
 ```
 
-如果 `v2ray inbounds` 显示已启用 WS 入站，而站点文件只出现 XHTTP 路由，说明服务器仍在使用
-漏扫 WS profile 的旧 Caddy 组件。执行管理器更新后重新同步；更新会按固定提交和 SHA-256
-替换组件，不能只修改现有 Caddyfile 中的一条 Path。
+如果 `v2ray inbounds` 显示已启用 WS 入站，而站点文件只出现 XHTTP 路由，说明旧 Caddy 组件仍在
+漏扫 WS profile；应先更新管理器和组件，再重新同步，不能只向现有 Caddyfile 手工补一条 Path。
 
-然后执行 Caddy 校验并重载：
+### 恢复确认
 
-   ```bash
-   caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-   systemctl reload caddy
-   systemctl restart xray
-   ```
+- Caddy 站点文件包含该域名下每个已启用的 XHTTP/WS Path；
+- XHTTP 后端使用 `h2c`，WebSocket 后端使用 HTTPS 且明确包含 `versions 1.1`；
+- 每条路由的后端端口与 `v2ray inbounds`、`/etc/xray/config.json` 一致；
+- `tls_server_name`、客户端 Host/SNI 和证书域名一致；
+- `caddy validate` 返回 `Valid configuration`；
+- 灰云（DNS only）状态下客户端实际连接成功。
 
-保持灰云复测，确认客户端的协议、域名、端口、Host/SNI 和 Path 都来自同一次导出。
-
-### 生产环境复核记录（2026-10-08）
-
-实际恢复流程如下：
-
-1. 进入“维护与诊断”，选择 `2) 一键更新项目脚本并迁移数据`，把管理器更新到 `6.5.1`；
-2. 进入 `v2ray caddy`，选择 `4) 同步 Xray XHTTP/WS 路径反代`；
-3. 同步后的同一域名站点文件同时保留了三条已启用的路由：一条 XHTTP 后端和两条
-   VLESS-WebSocket-TLS 后端；
-4. XHTTP 路由使用 `h2c://127.0.0.1:24443` 和 `versions h2c`；两个 WebSocket 路由分别转发到
-   `https://127.0.0.1:24445`、`https://127.0.0.1:24444`，并都包含 `versions 1.1` 及正确的
-   `tls_server_name`；
-5. `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile` 返回
-   `Valid configuration`，随后 reload Caddy、restart Xray，客户端恢复使用。
-
-这次实测确认故障来自旧 Caddy 组件漏扫 WS profile 和 WS 上游协议选择，并非 VLESS WebSocket
-TLS 必须经过 Cloudflare 橙云。检查修复是否生效时，应以“全部已启用路径均存在、后端端口正确、
-WS 明确使用 HTTP/1.1、Caddy 校验成功、客户端实测通过”作为完整验收条件。
+满足以上条件即可确认恢复。VLESS WebSocket TLS 本身不要求经过 Cloudflare 橙云。
 
 ### 避免错误处理
 

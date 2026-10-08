@@ -3,7 +3,7 @@
 ## Unreleased
 
 - 6.5.1：修复独立 `caddy-manager` 使用旧 profile 名称导致同步时漏掉全部 VLESS/VMess/Trojan WebSocket 入站；同域名的 XHTTP 与 WS 路径现在会一起保留。
-- 补充 6.5.1 生产验证记录：升级组件并重新同步后，一条 XHTTP 与两条 VLESS WebSocket 路由同时保留，Caddy 配置校验及灰云客户端连接均恢复正常。
+- 补充 6.5.1 故障笔记：归纳 Caddy 同步漏掉 WS 路由的原因、标准处理步骤和灰云恢复验收条件。
 - 修复 Caddy 同步后 VLESS WebSocket TLS 失效：HTTPS WS 后端固定使用 HTTP/1.1 Upgrade，避免默认上游 ALPN 选择 HTTP/2；故障笔记同时记录旧节点失配与同步后再次失效的实际顺序。
 - 停止新建 Xray 实验性 Hysteria2 入站；官方报告确认其可能收包但不回包，而 v2rayN 分享链接默认由 sing-box 连接。保留稳定 profile ID 以支持旧节点识别、导出和迁移，并新增官方 Hysteria2 服务端迁移指南。
 - 协议选择菜单新增 `0) 取消并返回`；取消会通过事务回滚保证单节点和批量修改不留下部分配置。
