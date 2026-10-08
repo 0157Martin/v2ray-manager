@@ -15,7 +15,8 @@ Xray 客户端 JSON。一个 Xray 服务可以运行多个独立入站；每个�
 快速导航：[选择协议](#如何选择协议) · [安装](#一行安装) · [管理命令](#管理命令) ·
 [Caddy](#caddy-网站伪装与反向代理) · [非交互安装](#非交互安装) ·
 [WARP](#warp-出站管理) · [连接排障](#导入后延迟为--1--无法连接) ·
-[完整项目讲解](docs/PROJECT_GUIDE.md) · [6.0.0 更新说明](docs/RELEASE_6.0.0.md)
+[已验证故障笔记](docs/TROUBLESHOOTING.md) · [完整项目讲解](docs/PROJECT_GUIDE.md) ·
+[6.0.0 更新说明](docs/RELEASE_6.0.0.md)
 
 第一次使用建议先阅读 [项目使用与原理指南](docs/PROJECT_GUIDE.md)。它按客户端、Caddy、
 Xray、WARP 和目标网站的实际流量顺序解释组件职责，并给出安装、端口规划、多人使用、

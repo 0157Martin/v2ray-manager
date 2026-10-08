@@ -957,7 +957,10 @@ render_caddy_xray_site() {
         printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\tversions h2c\n\t\t}\n\t}\n'
       else
         printf '\treverse_proxy @xray_%s https://%s {\n' "$index" "${route_upstreams[$index]}"
-        printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\ttls_server_name %s\n\t\t}\n\t}\n' "$domain"
+        # Xray WebSocket uses an HTTP/1.1 Upgrade handshake. Caddy's HTTPS
+        # transport otherwise offers both HTTP/1.1 and HTTP/2 to the upstream;
+        # pinning 1.1 prevents ALPN from selecting HTTP/2 for a WS backend.
+        printf '\t\tflush_interval -1\n\t\ttransport http {\n\t\t\tversions 1.1\n\t\t\ttls_server_name %s\n\t\t}\n\t}\n' "$domain"
       fi
     done
     printf '\troot * %s/%s\n\tencode zstd gzip\n\tfile_server\n}\n' "$CADDY_WEB_ROOT" "$domain"
