@@ -1121,9 +1121,9 @@ state_to_json() {
         key=${line%%=*}; encoded=${line#*=}
         valid_state_key "$key" || return 1
         decode_legacy_value "$encoded" || return 1
-        printf '%s\0%s\0' "$key" "$DECODED_STATE_VALUE"
+        jq -cn --arg key "$key" --arg value "$DECODED_STATE_VALUE" '{key:$key,value:$value}'
       done < "$file"
-    ) | jq -Rs 'split("\u0000")[:-1] | . as $p | [range(0; length; 2) | {key:$p[.],value:$p[.+1]}] | from_entries |
+    ) | jq -s 'from_entries |
       if has("DATA_SCHEMA") then .DATA_SCHEMA |= tonumber else . end |
       if has("PORT") then .PORT |= tonumber else . end'
   fi
@@ -1133,7 +1133,7 @@ load_state_file() {
   local file=$1 temporary key value invalid=0
   temporary=$(mktemp) || return 1
   if ! state_to_json "$file" | jq -ej '
-      if (type == "object" and all(.[]; type == "string" or type == "number") and all(.[] | tostring; contains("\u0000") | not))
+      if (type == "object" and all(.[]; type == "string" or type == "number") and all(.[] | tostring | explode; index(0) == null))
       then to_entries[] | .key, "\u0000", (.value|tostring), "\u0000" else error("invalid state") end' > "$temporary"; then
     rm -f -- "$temporary"; red '状态文件格式无效，未执行其内容。' >&2; return 1
   fi
