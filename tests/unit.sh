@@ -130,6 +130,23 @@ PROFILE=trojan-tls-ws
 PROFILE=vmess-tcp
 [[ $(profile_group) == compatibility ]] || fail 'VMess TCP compatibility classification mismatch'
 
+expected_menu_profiles=(
+  vless-reality-raw vless-reality-xhttp vless-reality-grpc trojan-reality-raw
+  vless-tls-xhttp vless-tls-ws vless-tls-grpc vmess-tls-ws vmess-tls-grpc
+  trojan-tls-ws vless-tls-raw hysteria-tls-quic vmess-tcp
+)
+for index in "${!expected_menu_profiles[@]}"; do
+  choice=$((index + 1))
+  [[ $(profile_from_menu_choice "$choice") == "${expected_menu_profiles[$index]}" ]] || fail "menu profile mapping mismatch: $choice"
+done
+profile_from_menu_choice 0 >/dev/null 2>&1 && fail 'invalid menu profile choice was accepted'
+
+# A reordered menu must not require persisted-state migration: stored profile
+# IDs remain valid and resolve independently of their old or new menu number.
+for PROFILE in "${expected_menu_profiles[@]}"; do
+  valid_profile "$PROFILE" || fail "stable profile ID became invalid: $PROFILE"
+done
+
 printf '%s\n' 'Unit tests passed.'
 
 # Exercise the existing certificate discovery validation with real certificate/key pairs.

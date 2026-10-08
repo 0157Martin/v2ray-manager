@@ -50,7 +50,7 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 系统软件包安装、外部 ACME 账户或 WARP 设备注册，也不能保证 SIGKILL/断电后的自动恢复。
 
 - 安装或更新 Xray Core，并校验官方发布包的 SHA-256 摘要。
-- 交互选择 12 种协议组合；安装过程不会静默创建或输出默认链接。
+- 交互选择 13 种协议组合；安装过程不会静默创建或输出默认链接。
 - 管理多个入站，包括添加、修改、启用、停用、删除和批量导出。
 - 为单个入站维护 1–10 个独立用户凭据，配置失败时自动回滚。
 - 自动生成并校验 UUID、REALITY X25519 密钥、Short ID 和 TLS 证书。
@@ -78,16 +78,16 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 | 1 | VLESS-REALITY-Vision-RAW | 推荐的高性能直连方案，无需自有证书 | 不支持 |
 | 2 | VLESS-REALITY-XHTTP | 使用 XHTTP 传输，但 REALITY 仍需直连 | 不支持 |
 | 3 | VLESS-REALITY-gRPC | 使用 gRPC 传输，但 REALITY 仍需直连 | 不支持 |
-| 4 | VLESS-XHTTP-TLS | Caddy 在 443 终止 TLS，通过本机 h2c 转发到 Xray；支持 HTTP CDN | 支持 |
-| 5 | VLESS-WebSocket-TLS | 广泛兼容客户端和 HTTP CDN | 支持 |
-| 6 | VLESS-gRPC-TLS | 已有 HTTP/2 或 gRPC 反向代理 | 有条件支持 |
-| 7 | Trojan-REALITY-RAW | 需要 Trojan 客户端语义的 REALITY 直连 | 不支持 |
-| 8 | VMess-TCP | 兼容保留；无 TLS，仅用于旧客户端或可信链路 | 不支持 |
-| 9 | VMess-WebSocket-TLS | VMess 客户端与 HTTP CDN 兼容 | 支持 |
-| 10 | VMess-gRPC-TLS | VMess 客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
-| 11 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
-| 12 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
-| 13 | Hysteria2-TLS-QUIC（实验） | UDP/QUIC 直连，需要证书和开放 UDP 端口 | 不支持 |
+| 4 | Trojan-REALITY-RAW | 需要 Trojan 客户端语义的 REALITY 直连 | 不支持 |
+| 5 | VLESS-XHTTP-TLS | Caddy 在 443 终止 TLS，通过本机 h2c 转发到 Xray；支持 HTTP CDN | 支持 |
+| 6 | VLESS-WebSocket-TLS | 广泛兼容客户端和 HTTP CDN | 支持 |
+| 7 | VLESS-gRPC-TLS | 已有 HTTP/2 或 gRPC 反向代理 | 有条件支持 |
+| 8 | VMess-WebSocket-TLS | VMess 客户端与 HTTP CDN 兼容 | 支持 |
+| 9 | VMess-gRPC-TLS | VMess 客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
+| 10 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
+| 11 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
+| 12 | Hysteria2-TLS-QUIC（实验） | UDP/QUIC 直连，需要证书和开放 UDP 端口 | 不支持 |
+| 13 | VMess-TCP | 兼容保留；无 TLS，仅用于旧客户端或可信链路 | 不支持 |
 
 ### REALITY 使用前须知
 
@@ -609,7 +609,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/0157Martin/cloudflare-ip-man
 webroot 证书申请和原生客户端配置导出。生成字段会使用 Xray 最新稳定版进行 CI 验证；
 官方教程中的网站回落、地区分流、SSH 和内核参数需要根据服务器用途配置，脚本不会自动套用。
 
-选择菜单协议 12，或使用 `V2M_PROFILE=vless-tls-raw`，即可部署 TLS + Vision。该组合需要自有域名及有效证书，直接连接 Xray 的 TLS 端口，不能把它当成 WebSocket 节点放到普通 HTTP CDN 后面。
+选择菜单协议 11，或使用 `V2M_PROFILE=vless-tls-raw`，即可部署 TLS + Vision。该组合需要自有域名及有效证书，直接连接 Xray 的 TLS 端口，不能把它当成 WebSocket 节点放到普通 HTTP CDN 后面。
 
 以 root 在服务器上导出：
 

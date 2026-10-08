@@ -35,8 +35,25 @@ Hysteria2，容易让人误以为后两者也是旧协议。现在按实际网�
 | 现代证书直连 | VLESS-TLS-Vision-RAW、Hysteria2 TLS/QUIC | 拥有证书；RAW 使用 TCP，Hysteria2 使用 UDP/QUIC |
 | 兼容保留 | VMess-TCP | 面向旧客户端或可信链路，新部署不优先 |
 
-原有 1–13 编号、内部配置名称和已保存节点均未改变，因此此次菜单调整不需要迁移节点，也不会
-使现有分享链接失效。
+菜单编号已按上述分类重排为连续的 1–13。编号只用于交互选择；节点状态保存的仍是
+`vless-reality-raw` 等稳定 profile ID。因此现有节点无需改写或提升数据 schema，分享链接也不受影响。
+依赖旧菜单数字的键盘录制或标准输入脚本必须改用 `V2M_PROFILE` 稳定 ID，或按新编号更新。
+
+| 稳定 profile ID | 旧编号 | 新编号 |
+| --- | ---: | ---: |
+| `vless-reality-raw` | 1 | 1 |
+| `vless-reality-xhttp` | 2 | 2 |
+| `vless-reality-grpc` | 3 | 3 |
+| `trojan-reality-raw` | 7 | 4 |
+| `vless-tls-xhttp` | 4 | 5 |
+| `vless-tls-ws` | 5 | 6 |
+| `vless-tls-grpc` | 6 | 7 |
+| `vmess-tls-ws` | 9 | 8 |
+| `vmess-tls-grpc` | 10 | 9 |
+| `trojan-tls-ws` | 11 | 10 |
+| `vless-tls-raw` | 12 | 11 |
+| `hysteria-tls-quic` | 13 | 12 |
+| `vmess-tcp` | 8 | 13 |
 
 ## 验证情况
 
