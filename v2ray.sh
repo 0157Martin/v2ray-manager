@@ -10,7 +10,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="Martin&林知远"
-readonly MANAGER_VERSION="6.5.0"
+readonly MANAGER_VERSION="6.5.1"
 readonly DATA_SCHEMA_VERSION="5"
 readonly RECOMMENDED_XRAY_VERSION="v26.3.27"
 readonly DEFAULT_PORT="443"
@@ -51,7 +51,7 @@ readonly CFIP_BRANCH_BIN="/usr/local/libexec/v2ray-manager/cloudflare-ip-manager
 # tests; checksums are not fetched from the same mutable source as the scripts.
 component_manifest() {
   case "$1" in
-    caddy) printf '%s\n' '0157Martin/caddy-manager f5b872a2ff4fe602ce7509737869d829e4b80e2d caddy-manager.sh 9b2cffc9ba249d8ef0099cc9b48cac6609156c7f77b6180c7b8629d70688c392' ;;
+    caddy) printf '%s\n' '0157Martin/caddy-manager bfd682404b38e53280b227ad385843f5c1e6bc33 caddy-manager.sh 33b9e550e09e2629af606e70f53da1976aee3a4d300e1199899866565f13de17' ;;
     cfip) printf '%s\n' '0157Martin/cloudflare-ip-manager c6a2e4c8c8a7543e523468f396c6cdbae3b5564e cloudflare-ip-manager.sh a6ecf8bcc4e2ba26dbbb8aa2073c96736d6b95e40f079fb265f4cb9a8e599450' ;;
     wireguard) printf '%s\n' '0157Martin/warp-wireguard-manager bc1d425add8f172838ea450cfc2955ade1e73a0c warp-wireguard.sh fde080bb07f33a8caa3c8741d6cb47d281f05da683c0861c845799cf75df9040' ;;
     masque) printf '%s\n' '0157Martin/warp-masque-manager 93cd9564cb9e7d6872916dab5ef00bbf4d21816b warp-masque.sh e36c316d2920338b7b5526b0dc7e13a7ec219a08e51c57910d5d7a91db5a323b' ;;

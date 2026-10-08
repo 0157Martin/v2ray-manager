@@ -37,10 +37,14 @@ backend = h2c://127.0.0.1:24443
 执行旧版“同步 Xray XHTTP/WS 路径反代”，连接再次失效。因此最终确认存在两个连续问题：
 
 1. 旧客户端节点的 Path/传输与服务器当时的有效入站不一致；重新创建和重新导入解决了这一层；
-2. 旧版 Caddy 生成器为 HTTPS WebSocket 后端使用 Caddy 默认的 `HTTP/1.1 + HTTP/2` 上游协商，
-   没有把 Xray WebSocket 的 Upgrade 请求固定为 HTTP/1.1；执行同步后引入第二层故障。
+2. 旧版独立 Caddy 组件检查的是已经废弃的 `vless-ws-tls`、`vmess-ws-tls`、
+   `trojan-ws-tls` profile 名称，而主项目实际保存 `vless-tls-ws`、`vmess-tls-ws`、
+   `trojan-tls-ws`，因此同步时会漏掉全部 WS 入站，只保留当次手工选中的 XHTTP 路由；
+3. 旧版 Caddy 生成器为 HTTPS WebSocket 后端使用 Caddy 默认的 `HTTP/1.1 + HTTP/2` 上游协商，
+   没有把 Xray WebSocket 的 Upgrade 请求固定为 HTTP/1.1。
 
-项目现已在 WebSocket 上游中生成 `versions 1.1`。XHTTP 仍使用 `h2c`，两种传输不能互换。
+项目现已修正组件的 profile 名称，并在 WebSocket 上游中生成 `versions 1.1`。同步同一域名时，
+配置必须同时出现所有已启用的 XHTTP/WS Path。XHTTP 仍使用 `h2c`，两种传输不能互换。
 VLESS WebSocket TLS 不强制依赖 Cloudflare 橙云。
 
 ### 诊断步骤
@@ -110,6 +114,10 @@ reverse_proxy @xray_ws https://127.0.0.1:后端端口 {
     }
 }
 ```
+
+如果 `v2ray inbounds` 显示已启用 WS 入站，而站点文件只出现 XHTTP 路由，说明服务器仍在使用
+漏扫 WS profile 的旧 Caddy 组件。执行管理器更新后重新同步；更新会按固定提交和 SHA-256
+替换组件，不能只修改现有 Caddyfile 中的一条 Path。
 
 然后执行 Caddy 校验并重载：
 
