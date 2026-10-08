@@ -62,12 +62,16 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 
 ## 如何选择协议
 
-如果没有必须兼容的旧客户端，可从下面三类中选择：
+菜单按网络路径和部署方式分类，而不是简单按协议出现时间分类：
 
 - **直接连接、没有自有证书：**优先选择 `VLESS-REALITY-Vision-RAW`。
 - **需要 Cloudflare 橙云或 HTTP CDN：**选择普通 TLS 的 XHTTP、WebSocket 或 gRPC；其中
-  WebSocket 的客户端和 CDN 兼容范围通常最广。
-- **已有旧版客户端：**使用 VMess 或传统 Trojan 组合；新部署优先考虑 VLESS。
+  WebSocket 的客户端和 CDN 兼容范围通常最广。VMess/Trojan 的 HTTP 传输也归在这里，但会
+  明确标注其兼容用途。
+- **拥有证书且希望直连：**选择 `VLESS-TLS-Vision-RAW`；需要 UDP/QUIC 且能够开放 UDP 时，
+  可评估实验性的 Hysteria2。
+- **必须兼容旧客户端：**保留 VMess；新部署优先考虑 VLESS。Trojan-WebSocket-TLS 按其实际
+  HTTP/CDN 路径归类，不再笼统放入“旧版”分组。
 
 | 编号 | 菜单名称 | 适用场景 | Cloudflare 普通橙云 |
 | --- | --- | --- | --- |
@@ -78,9 +82,9 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 | 5 | VLESS-WebSocket-TLS | 广泛兼容客户端和 HTTP CDN | 支持 |
 | 6 | VLESS-gRPC-TLS | 已有 HTTP/2 或 gRPC 反向代理 | 有条件支持 |
 | 7 | Trojan-REALITY-RAW | 需要 Trojan 客户端语义的 REALITY 直连 | 不支持 |
-| 8 | VMess-TCP | 无 TLS 的旧版兼容或可信链路 | 不支持 |
-| 9 | VMess-WebSocket-TLS | 旧客户端与 HTTP CDN 兼容 | 支持 |
-| 10 | VMess-gRPC-TLS | 旧客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
+| 8 | VMess-TCP | 兼容保留；无 TLS，仅用于旧客户端或可信链路 | 不支持 |
+| 9 | VMess-WebSocket-TLS | VMess 客户端与 HTTP CDN 兼容 | 支持 |
+| 10 | VMess-gRPC-TLS | VMess 客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
 | 11 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
 | 12 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
 | 13 | Hysteria2-TLS-QUIC（实验） | UDP/QUIC 直连，需要证书和开放 UDP 端口 | 不支持 |
@@ -338,7 +342,7 @@ Xray、Caddy 运行状态以及启用、停用入站数量。安装结束时不�
 `DELETE` 才会执行。
 
 “连接与导出 → 子链接用户管理”提供查看、新增、删除、重新生成和输出链接。入站列表按
-REALITY 直连、TLS HTTP/CDN、其他直连与旧版兼容分组，并直接显示每个入站的链接数量。
+REALITY 直连、TLS HTTP/CDN、现代证书直连、兼容保留和其他协议分组，并直接显示每个入站的链接数量。
 用户列表通过序号和脱敏凭据标识区分链接，避免普通查看操作打印完整 UUID。
 
 这些链接共享协议、域名、端口、传输路径和 TLS/REALITY 参数，但 UUID（Trojan 中作为

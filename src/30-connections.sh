@@ -234,11 +234,13 @@ list_inbounds() (
   ui_box_title '入站列表'
   printf '  %-22s %-7s %-30s %-8s %s\n' '入站 ID' '状态' '协议组合' '链接数' '端口'
   printf '  %s\n' '-------------------------------------------------------------------------------'
-  for wanted_group in reality http-tls other; do
+  for wanted_group in reality http-tls modern-direct compatibility other; do
     case $wanted_group in
       reality) heading='REALITY 直连（灰云 / DNS only）' ;;
       http-tls) heading='TLS HTTP/CDN（XHTTP / WebSocket / gRPC）' ;;
-      other) heading='其他直连与旧版兼容' ;;
+      modern-direct) heading='现代证书直连（Vision RAW / Hysteria2）' ;;
+      compatibility) heading='兼容保留（新部署不优先）' ;;
+      other) heading='其他协议' ;;
     esac
     printf '\n[%s]\n' "$heading"
     for node_file in "$NODES_DIR"/*.env "$NODES_DIR"/*.disabled; do

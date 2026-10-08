@@ -511,6 +511,8 @@ profile_group() {
   case ${PROFILE:-vless-reality-raw} in
     *-reality-*) printf 'reality' ;;
     *-tls-xhttp|*-tls-ws|*-tls-grpc) printf 'http-tls' ;;
+    vless-tls-raw|hysteria-tls-quic) printf 'modern-direct' ;;
+    vmess-tcp) printf 'compatibility' ;;
     *) printf 'other' ;;
   esac
 }
@@ -541,22 +543,22 @@ choose_profile() {
   ui_menu_item '1) VLESS-REALITY-Vision-RAW  [高级：目标站/客户端兼容性通过检测后使用]'
   ui_menu_item '2) VLESS-REALITY-XHTTP       [新式 HTTP 传输；REALITY 仍须直连]'
   ui_menu_item '3) VLESS-REALITY-gRPC        [HTTP/2 传输；REALITY 仍须直连]'
+  ui_menu_item '7) Trojan-REALITY-RAW        [Trojan 认证语义；REALITY 仍须直连]'
   ui_box_divider
   ui_menu_item 'HTTP/CDN / Cloudflare 橙云（需要自有域名）'
   ui_menu_item '4) VLESS-XHTTP-TLS           [Caddy 终止 TLS，h2c 转发；适合 CDN]'
   ui_menu_item '5) VLESS-WebSocket-TLS       [客户端兼容广，适合 Caddy/CDN]'
   ui_menu_item '6) VLESS-gRPC-TLS            [适合现有 HTTP/2 反向代理]'
-  ui_box_divider
-  ui_menu_item '其他直连协议'
-  ui_menu_item '7) Trojan-REALITY-RAW        [Trojan 兼容；REALITY 仍须直连]'
-  ui_box_divider
-  ui_menu_item '旧版兼容（非默认推荐）'
-  ui_menu_item '8) VMess-TCP                 [无 TLS，仅限兼容或可信链路]'
-  ui_menu_item '9) VMess-WebSocket-TLS       [老客户端及 CDN 兼容]'
-  ui_menu_item '10) VMess-gRPC-TLS           [兼容既有 HTTP/2 反向代理]'
+  ui_menu_item '9) VMess-WebSocket-TLS       [VMess 兼容；可经 Caddy/CDN]'
+  ui_menu_item '10) VMess-gRPC-TLS           [VMess 兼容；适合既有 HTTP/2 反代]'
   ui_menu_item '11) Trojan-WebSocket-TLS     [传统 Trojan + WS + TLS]'
+  ui_box_divider
+  ui_menu_item '现代证书直连（不能经过普通橙云）'
   ui_menu_item '12) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
-  ui_menu_item '13) Hysteria 2 TLS/QUIC     [实验：UDP 直连，自有证书，不走 HTTP CDN]'
+  ui_menu_item '13) Hysteria 2 TLS/QUIC      [实验：UDP/QUIC 直连，需要自有证书]'
+  ui_box_divider
+  ui_menu_item '兼容保留（新部署不优先）'
+  ui_menu_item '8) VMess-TCP                 [无 TLS，仅限旧客户端或可信链路]'
   ui_box_bottom
   read -r -p '请选择协议组合 [1-13]:' choice
   case "$choice" in
@@ -1856,11 +1858,13 @@ list_inbounds() (
   ui_box_title '入站列表'
   printf '  %-22s %-7s %-30s %-8s %s\n' '入站 ID' '状态' '协议组合' '链接数' '端口'
   printf '  %s\n' '-------------------------------------------------------------------------------'
-  for wanted_group in reality http-tls other; do
+  for wanted_group in reality http-tls modern-direct compatibility other; do
     case $wanted_group in
       reality) heading='REALITY 直连（灰云 / DNS only）' ;;
       http-tls) heading='TLS HTTP/CDN（XHTTP / WebSocket / gRPC）' ;;
-      other) heading='其他直连与旧版兼容' ;;
+      modern-direct) heading='现代证书直连（Vision RAW / Hysteria2）' ;;
+      compatibility) heading='兼容保留（新部署不优先）' ;;
+      other) heading='其他协议' ;;
     esac
     printf '\n[%s]\n' "$heading"
     for node_file in "$NODES_DIR"/*.env "$NODES_DIR"/*.disabled; do

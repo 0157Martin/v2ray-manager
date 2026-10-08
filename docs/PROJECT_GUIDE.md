@@ -261,8 +261,9 @@ v2ray doctor
 ## 7. 入站和子链接的原理
 
 一个入站对应一个监听端口和一组协议参数。项目将每个入站保存成独立状态文件，然后合并生成
-一份 `/etc/xray/config.json`。查看入站时会按 REALITY、TLS HTTP/CDN、其他直连和旧版兼容
-分组，并显示该入站当前包含多少条链接。
+一份 `/etc/xray/config.json`。查看入站时会按 REALITY 直连、TLS HTTP/CDN、现代证书直连、
+兼容保留和其他协议分组，并显示该入站当前包含多少条链接。分类依据是实际网络路径和部署方式，
+不会把 VLESS Vision、Hysteria2 或能够经过 HTTP/CDN 的 Trojan 统称为“旧版”。
 
 一个入站可以拥有 1–10 个用户凭据。它们共享：
 
