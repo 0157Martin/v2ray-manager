@@ -50,7 +50,7 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 系统软件包安装、外部 ACME 账户或 WARP 设备注册，也不能保证 SIGKILL/断电后的自动恢复。
 
 - 安装或更新 Xray Core，并校验官方发布包的 SHA-256 摘要。
-- 交互选择 13 种协议组合；安装过程不会静默创建或输出默认链接。
+- 菜单保留 13 个稳定编号，其中 12 种可新建；安装过程不会静默创建或输出默认链接。
 - 管理多个入站，包括添加、修改、启用、停用、删除和批量导出。
 - 为单个入站维护 1–10 个独立用户凭据，配置失败时自动回滚。
 - 自动生成并校验 UUID、REALITY X25519 密钥、Short ID 和 TLS 证书。
@@ -86,7 +86,7 @@ Xray 配置、节点状态、证书和 Caddy 配置。恢复失败时会输出�
 | 9 | VMess-gRPC-TLS | VMess 客户端与现有 HTTP/2 反代兼容 | 有条件支持 |
 | 10 | Trojan-WebSocket-TLS | 传统 Trojan、WebSocket 和 TLS | 支持 |
 | 11 | VLESS-TLS-Vision-RAW | 自有证书的 Vision 直连方案 | 不支持 |
-| 12 | Hysteria2-TLS-QUIC（实验） | UDP/QUIC 直连，需要证书和开放 UDP 端口 | 不支持 |
+| 12 | Hysteria2-TLS-QUIC（暂停新建） | Xray 入站存在已知互通故障；旧节点仅供迁移 | 不支持 |
 | 13 | VMess-TCP | 兼容保留；无 TLS，仅用于旧客户端或可信链路 | 不支持 |
 
 协议选择菜单可输入 `0` 取消并返回。取消会终止当前配置事务；如果在批量修改中取消，
@@ -330,8 +330,10 @@ v2ray uninstall
 凭据或新建节点。示例见 [`examples/desired-state.json`](examples/desired-state.json)。状态文件名继续保留
 `.env`/`.disabled` 以兼容现有目录布局，但 6.5.0 起内容为 JSON，管理器不会执行其中的 Shell。
 
-Hysteria2 TLS/QUIC 是实验性配置，要求 Xray `v26.3.27` 或更新版本，并需放行对应 UDP 端口。
-非交互创建时还需显式设置 `V2M_EXPERIMENTAL=1`。本机诊断只检查本机配置、进程和监听状态；
+Hysteria2 TLS/QUIC 不再允许新建。Xray `v26.3.27` 的实验入站存在收到 UDP 包却不回应的
+已知互通故障，而 v2rayN 导入分享链接后默认使用 sing-box。旧节点 profile ID 保持有效，
+请按 [Hysteria2 故障说明与迁移](docs/HYSTERIA2_MIGRATION.md) 改用官方 Hysteria2 服务端。
+本机诊断只检查本机配置、进程和监听状态；
 `public_reachability: "not_checked"` 表示它不能替代外网客户端连通性验证。
 
 主菜单按“安装、入站管理、连接与导出、Xray 服务、Caddy、WARP、维护诊断、卸载”分组，并显示
