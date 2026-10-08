@@ -182,8 +182,9 @@ begin_mutation_snapshot() {
 }
 
 finish_mutation() {
-  local status=$1 name path failed=0 xray_changed=0 caddy_changed=0 unit_changed=0
+  local status=$1 name path failed=0 xray_changed=0 caddy_changed=0 unit_changed=0 cancelled=0
   trap - EXIT INT TERM
+  (( status == 125 )) && cancelled=1
   if (( status != 0 )); then
     for name in config caddy-main caddy-sites service; do
       case "$name" in
@@ -222,9 +223,14 @@ finish_mutation() {
       red "自动恢复未完成；完整现场保留在 $MUTATION_SNAPSHOT。" >&2
       exit 1
     fi
-    yellow '操作失败，已恢复修改前的配置、证书、Caddy 路由和服务状态。' >&2
+    if (( cancelled )); then
+      yellow '已取消操作，配置和服务状态保持不变。' >&2
+    else
+      yellow '操作失败，已恢复修改前的配置、证书、Caddy 路由和服务状态。' >&2
+    fi
   fi
   rm -rf -- "$MUTATION_SNAPSHOT"
+  (( cancelled )) && exit 0
   exit "$status"
 }
 
@@ -581,8 +587,14 @@ choose_profile() {
   ui_box_divider
   ui_menu_item '兼容保留（新部署不优先）'
   ui_menu_item '13) VMess-TCP                [无 TLS，仅限旧客户端或可信链路]'
+  ui_box_divider
+  ui_menu_item '0) 取消并返回'
   ui_box_bottom
-  read -r -p '请选择协议组合 [1-13]:' choice
+  read -r -p '请选择协议组合 [0-13]:' choice
+  if [[ $choice == 0 ]]; then
+    yellow '已取消协议选择。'
+    return 125
+  fi
   PROFILE=$(profile_from_menu_choice "$choice") || die "协议组合选择无效。"
   case "$PROFILE" in
     vless-reality-raw|trojan-reality-raw|vmess-tcp) PATH_VALUE='' ;;

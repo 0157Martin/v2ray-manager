@@ -141,6 +141,12 @@ for index in "${!expected_menu_profiles[@]}"; do
 done
 profile_from_menu_choice 0 >/dev/null 2>&1 && fail 'invalid menu profile choice was accepted'
 
+set +e
+choose_profile <<< '0' >/dev/null
+cancel_status=$?
+set -e
+[[ $cancel_status == 125 ]] || fail 'protocol menu did not return the transaction cancellation status'
+
 # A reordered menu must not require persisted-state migration: stored profile
 # IDs remain valid and resolve independently of their old or new menu number.
 for PROFILE in "${expected_menu_profiles[@]}"; do

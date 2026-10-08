@@ -54,6 +54,10 @@ configure_caddy_site() {
 }
 change_menu() {
   load_edit_node primary
+  if [[ ${TEST_SCENARIO:-} == cancel ]]; then
+    printf broken > "$CONFIG_FILE"
+    return 125
+  fi
   PROFILE=vless-tls-ws; PATH_VALUE=/ws
   CERT_SOURCE="$sandbox/new-cert"; KEY_SOURCE="$sandbox/new-key"
   if [[ ${TEST_SCENARIO:-} == tls-preflight ]]; then validate_pending_config() { return 1; }; fi
@@ -121,6 +125,17 @@ for TEST_SCENARIO in tls-copy tls-preflight signal; do
   assert_restored
   printf 'PASS: complete rollback after %s\n' "$TEST_SCENARIO"
 done
+unset TEST_SCENARIO
+
+export TEST_SCENARIO=cancel
+bash "$manager" change primary > "$sandbox/output" 2>&1 || {
+  cat "$sandbox/output"
+  printf 'FAIL: cancellation returned an error\n' >&2
+  exit 1
+}
+assert_restored
+grep -q '已取消操作' "$sandbox/output"
+printf 'PASS: cancellation rolls back partial state and exits successfully\n'
 unset TEST_SCENARIO
 
 printf 'authenticator = standalone\n' > "$ACME_RENEWAL_DIR/example.com.conf"
