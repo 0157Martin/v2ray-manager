@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 修复 Caddy 同步后 VLESS WebSocket TLS 失效：HTTPS WS 后端固定使用 HTTP/1.1 Upgrade，避免默认上游 ALPN 选择 HTTP/2；故障笔记同时记录旧节点失配与同步后再次失效的实际顺序。
 - 停止新建 Xray 实验性 Hysteria2 入站；官方报告确认其可能收包但不回包，而 v2rayN 分享链接默认由 sing-box 连接。保留稳定 profile ID 以支持旧节点识别、导出和迁移，并新增官方 Hysteria2 服务端迁移指南。
 - 协议选择菜单新增 `0) 取消并返回`；取消会通过事务回滚保证单节点和批量修改不留下部分配置。
 - 协议菜单改为按实际网络路径分类：REALITY 直连、HTTP/CDN、现代证书直连和兼容保留；不再把 VLESS Vision、Hysteria2 与 Trojan WebSocket 笼统归为“旧版兼容”。

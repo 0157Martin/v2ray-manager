@@ -4,6 +4,8 @@
 
 Run `v2ray doctor` after installation, configuration changes, operating-system upgrades, or
 firewall changes. Use `v2ray status` for the full systemd state and `v2ray log` for recent logs.
+Resolved production cases and their evidence-based recovery steps are recorded in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## Backup and recovery
 
