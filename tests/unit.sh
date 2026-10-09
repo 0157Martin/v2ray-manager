@@ -134,6 +134,9 @@ jq -e '.outbounds[0].type == "hysteria2"
   and .outbounds[0].tls.server_name == "cdn.example.com"' --arg password "$UUID" \
   <<<"$hysteria_client" >/dev/null || fail 'Hysteria2 sing-box client export mismatch'
 hysteria_link=$(
+  # shellcheck disable=SC2317
+  tls_pair_valid() { return 0; }
+  # shellcheck disable=SC2317
   connection_matches_config() { return 0; }
   show_connection_loaded "$temporary"
 )

@@ -1361,7 +1361,8 @@ EOF
 }
 
 render_hysteria_node() {
-  local node_id=$1 config=$HYSTERIA_CONFIG_DIR/$node_id.yaml auth_file=$HYSTERIA_CONFIG_DIR/$node_id.auth auth_cmd=$HYSTERIA_CONFIG_DIR/$node_id-auth
+  local node_id=$1
+  local config=$HYSTERIA_CONFIG_DIR/$node_id.yaml auth_file=$HYSTERIA_CONFIG_DIR/$node_id.auth auth_cmd=$HYSTERIA_CONFIG_DIR/$node_id-auth
   local credential
   valid_node_id "$node_id" || return 1
   valid_port "$PORT" && valid_server_name "$SERVER_NAME" || return 1

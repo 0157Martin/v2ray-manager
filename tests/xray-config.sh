@@ -139,5 +139,5 @@ inject_warp_config "$temporary_dir/warp-all.json" all
 jq -e '.routing.rules[] | select(.outboundTag == "warp") | .network == "tcp"' "$temporary_dir/warp-all.json" >/dev/null
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/warp-all.json"
 
-printf 'Xray %s accepted the empty state, all protocol profiles, combined inbounds, and shared WARP routing.\n' "$tag"
+printf 'Xray %s accepted the empty state, all Xray-backed profiles, combined inbounds, and shared WARP routing.\n' "$tag"
 "${PYTHON:-python3}" "$repo_dir/tests/private-routing.py" "$temporary_dir" "$core_binary"
