@@ -57,6 +57,7 @@ run_mutation() { "$@"; }
 mkdir -p "$BIN_DIR" "$ASSET_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
 
 install_dependencies() { :; }
+sync_hysteria_services() { :; }
 # Ownership is a Linux integration concern. File contents/copy failures remain real.
 install() {
   local -a args=()
@@ -213,6 +214,7 @@ case "$scenario" in
     export scenario sandbox XRAY_BIN ASSET_DIR CONFIG_FILE BACKUP_DIR RELEASE_API
     export -f update_core rollback_core finish_core_update fetch_core install_core_files atomic_install \
       publish_manager_pointer install_dependencies install systemctl service_healthy restart_checked sleep die red green yellow
+    export -f sync_hysteria_services
     if declare -F real_atomic_install >/dev/null; then export -f real_atomic_install; fi
     status=0
     bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core; if [[ $scenario == update-explicit-rollback ]]; then rollback_core; fi' > "$sandbox/output" 2>&1 || status=$?
