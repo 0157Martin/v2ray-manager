@@ -228,7 +228,9 @@ def real_traffic(folder, core, server, data, profile="vless-reality-raw"):
 if __name__ == "__main__":
     folder, core = map(Path, sys.argv[1:3])
     profiles = [path.stem for path in sorted(folder.glob("*.link"))]
-    assert len(profiles) == 13
+    # Hysteria2 now uses the official server and a sing-box client config; its
+    # URI/client export is covered by unit.sh instead of Xray round trips.
+    assert len(profiles) == 12
     fixtures = {profile: check_export(folder, profile) for profile in profiles}
     if "--configuration-only" in sys.argv[3:]:
         print("SKIP: live loopback traffic test was explicitly disabled; export checks alone do not prove connectivity.", flush=True)

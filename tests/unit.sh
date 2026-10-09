@@ -125,7 +125,23 @@ PROFILE=vless-tls-raw
 [[ $(profile_group) == modern-direct ]] || fail 'VLESS Vision RAW was classified as compatibility'
 PROFILE=hysteria-tls-quic
 [[ $(profile_group) == modern-direct ]] || fail 'Hysteria2 was classified as compatibility'
-profile_available_for_new_deployment && fail 'broken Xray Hysteria2 inbound was offered for new deployment'
+profile_available_for_new_deployment || fail 'official Hysteria2 profile was blocked from new deployment'
+hysteria_client=$(render_client_config)
+jq -e '.outbounds[0].type == "hysteria2"
+  and .outbounds[0].server == "cdn.example.com"
+  and .outbounds[0].server_port == 24444
+  and .outbounds[0].password == $password
+  and .outbounds[0].tls.server_name == "cdn.example.com"' --arg password "$UUID" \
+  <<<"$hysteria_client" >/dev/null || fail 'Hysteria2 sing-box client export mismatch'
+hysteria_link=$(
+  # shellcheck disable=SC2317
+  tls_pair_valid() { return 0; }
+  # shellcheck disable=SC2317
+  connection_matches_config() { return 0; }
+  show_connection_loaded "$temporary"
+)
+[[ $hysteria_link == *'hysteria2://'*'@cdn.example.com:24444/?sni=cdn.example.com#'* ]] || fail 'Hysteria2 official URI layout mismatch'
+[[ $hysteria_link != *'alpn='* ]] || fail 'Hysteria2 URI contains a nonessential ALPN parameter'
 profile_available_for_new_deployment vless-tls-raw || fail 'supported profile was blocked from new deployment'
 PROFILE=trojan-tls-ws
 [[ $(profile_group) == http-tls ]] || fail 'Trojan WebSocket was not classified by its HTTP/CDN path'

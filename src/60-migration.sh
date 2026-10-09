@@ -124,6 +124,9 @@ manager_bundle_path() {
     caddy-sites) printf '%s\n' "$CADDY_SITE_DIR" ;;
     service) printf '%s\n' "$SERVICE_FILE" ;;
     components) printf '%s\n' "$WARP_BACKEND_BIN_DIR" ;;
+    hysteria-bin) printf '%s\n' "$HYSTERIA_BIN" ;;
+    hysteria-config) printf '%s\n' "$HYSTERIA_CONFIG_DIR" ;;
+    hysteria-service) printf '%s\n' "$HYSTERIA_SERVICE_TEMPLATE" ;;
     *) return 1 ;;
   esac
 }
@@ -133,7 +136,7 @@ capture_manager_bundle() (
   umask 077
   local bundle=$1 name path links xray_active=false caddy_active=false
   mkdir "$bundle/files" || return 1
-  for name in manager config caddy-main caddy-sites service components; do
+  for name in manager config caddy-main caddy-sites service components hysteria-bin hysteria-config hysteria-service; do
     path=$(manager_bundle_path "$name") || return 1
     if [[ -e $path || -L $path ]]; then
       # cp -a would preserve references to mutable external files rather than
@@ -189,7 +192,8 @@ restore_manager_bundle() {
   caddy_active=$(jq -r '.caddy_active' "$bundle/metadata.json") || return 1
   # Restore directories exactly, including removal of post-upgrade nodes.
   # Manager replacement is last; the saved recovery entry survives partial I/O.
-  for name in config caddy-main caddy-sites service components; do
+  systemctl stop 'hysteria-v2ray-manager@*.service' >/dev/null 2>&1 || true
+  for name in config caddy-main caddy-sites service components hysteria-bin hysteria-config hysteria-service; do
     path=$(manager_bundle_path "$name") || return 1
     rm -rf -- "$path" || return 1
     if [[ -e $bundle/files/$name ]]; then
@@ -202,8 +206,12 @@ restore_manager_bundle() {
   if [[ -f $CONFIG_FILE ]]; then
     XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$CONFIG_FILE" >/dev/null || return 1
   fi
-  if [[ $xray_active == true ]]; then restart_checked || return 1
+  if [[ $xray_active == true ]]; then
+    systemctl restart "$SERVICE_NAME" && service_healthy || return 1
   elif systemctl is-active --quiet "$SERVICE_NAME"; then systemctl stop "$SERVICE_NAME" || return 1; fi
+  if [[ $xray_active == true && -d $bundle/files/hysteria-config ]]; then
+    sync_hysteria_services || return 1
+  fi
   if [[ $caddy_active == true ]]; then
     caddy validate --config "$CADDY_CONFIG" >/dev/null || return 1
     systemctl restart caddy || return 1
@@ -297,8 +305,9 @@ uninstall_xray() {
   read -r -p "将停止服务并删除 Xray 程序与 /etc/xray 配置。继续？[y/N] " answer
   [[ ${answer,,} == y || ${answer,,} == yes ]] || return
   systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-  rm -f "$SERVICE_FILE" "$XRAY_BIN" "$MANAGER_BIN"
-  rm -rf "$CONFIG_DIR" "$ASSET_DIR"
+  systemctl disable --now 'hysteria-v2ray-manager@*.service' 2>/dev/null || true
+  rm -f "$SERVICE_FILE" "$XRAY_BIN" "$MANAGER_BIN" "$HYSTERIA_BIN" "$HYSTERIA_SERVICE_TEMPLATE"
+  rm -rf "$CONFIG_DIR" "$ASSET_DIR" "$HYSTERIA_CONFIG_DIR"
   if [[ -e "$LEGACY_MANAGER_BACKUP" ]]; then
     install -m 755 "$LEGACY_MANAGER_BACKUP" "$MANAGER_BIN"
     green "已恢复安装前的 v2ray 管理命令。"

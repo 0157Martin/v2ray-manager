@@ -45,6 +45,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly CADDY_SITE_DIR=.*|readonly CADDY_SITE_DIR=\"$sandbox/caddy-sites\"|" \
   -e "s|readonly CADDY_WEB_ROOT=.*|readonly CADDY_WEB_ROOT=\"$sandbox/www\"|" \
   -e "s|readonly WARP_BACKEND_BIN_DIR=.*|readonly WARP_BACKEND_BIN_DIR=\"$sandbox/components\"|" \
+  -e "s|readonly HYSTERIA_BIN=.*|readonly HYSTERIA_BIN=\"$sandbox/bin/hysteria\"|" \
+  -e "s|readonly HYSTERIA_CONFIG_DIR=.*|readonly HYSTERIA_CONFIG_DIR=\"$sandbox/hysteria\"|" \
+  -e "s|readonly HYSTERIA_SERVICE_TEMPLATE=.*|readonly HYSTERIA_SERVICE_TEMPLATE=\"$sandbox/hysteria.service\"|" \
   "$repo_dir/v2ray.sh" > "$sandbox/manager.sh"
 # shellcheck disable=SC1091
 source "$sandbox/manager.sh"
@@ -54,6 +57,7 @@ run_mutation() { "$@"; }
 mkdir -p "$BIN_DIR" "$ASSET_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
 
 install_dependencies() { :; }
+sync_hysteria_services() { :; }
 # Ownership is a Linux integration concern. File contents/copy failures remain real.
 install() {
   local -a args=()
@@ -210,6 +214,7 @@ case "$scenario" in
     export scenario sandbox XRAY_BIN ASSET_DIR CONFIG_FILE BACKUP_DIR RELEASE_API
     export -f update_core rollback_core finish_core_update fetch_core install_core_files atomic_install \
       publish_manager_pointer install_dependencies install systemctl service_healthy restart_checked sleep die red green yellow
+    export -f sync_hysteria_services
     if declare -F real_atomic_install >/dev/null; then export -f real_atomic_install; fi
     status=0
     bash -c 'set -Eeuo pipefail; SERVICE_NAME=xray; update_core; if [[ $scenario == update-explicit-rollback ]]; then rollback_core; fi' > "$sandbox/output" 2>&1 || status=$?

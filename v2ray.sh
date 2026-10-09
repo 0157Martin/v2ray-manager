@@ -10,7 +10,7 @@ set -Eeuo pipefail
 
 readonly APP_NAME="v2ray-manager"
 readonly AUTHOR="Martin&林知远"
-readonly MANAGER_VERSION="6.5.1"
+readonly MANAGER_VERSION="6.5.2"
 readonly DATA_SCHEMA_VERSION="5"
 readonly RECOMMENDED_XRAY_VERSION="v26.3.27"
 readonly DEFAULT_PORT="443"
@@ -46,6 +46,10 @@ readonly CADDY_SITE_DIR="/etc/caddy/conf.d"
 readonly CADDY_WEB_ROOT="/var/www/v2ray-manager"
 readonly CADDY_BRANCH_BIN="/usr/local/libexec/v2ray-manager/caddy-manager"
 readonly CFIP_BRANCH_BIN="/usr/local/libexec/v2ray-manager/cloudflare-ip-manager"
+readonly HYSTERIA_BIN="/usr/local/bin/hysteria"
+readonly HYSTERIA_CONFIG_DIR="/etc/hysteria-v2ray-manager"
+readonly HYSTERIA_SERVICE_TEMPLATE="/etc/systemd/system/hysteria-v2ray-manager@.service"
+readonly HYSTERIA_VERSION="v2.13.0"
 
 # Release lock embedded in the standalone artifact. Changes require review and
 # tests; checksums are not fetched from the same mutable source as the scripts.
@@ -304,7 +308,7 @@ check_caddy_activation_compatibility() {
 }
 
 migration_connection_fingerprint() {
-  jq -cS '[.inbounds[] | {
+  jq -cS '[.inbounds[] | select(.protocol != "hysteria") | {
     tag, listen, port, protocol, settings, streamSettings
   } | if .protocol == "vless" and .streamSettings.network == "xhttp" and
     (.streamSettings.security == "tls" or .streamSettings.security == "none") then
@@ -500,7 +504,7 @@ valid_transport_path() { [[ $1 =~ ^/[A-Za-z0-9._~/-]+$ && $1 != *//* ]]; }
 valid_route_target() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.:%_-]*$ && $1 != *..* ]]; }
 valid_profile() { [[ $1 == vless-reality-raw || $1 == vless-reality-xhttp || $1 == vless-reality-grpc || $1 == vless-tls-raw || $1 == vless-tls-xhttp || $1 == vless-tls-ws || $1 == vless-tls-grpc || $1 == trojan-reality-raw || $1 == vmess-tcp || $1 == vmess-tls-ws || $1 == vmess-tls-grpc || $1 == trojan-tls-ws || $1 == hysteria-tls-quic ]]; }
 profile_transport() { if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then printf udp; else printf tcp; fi; }
-profile_available_for_new_deployment() { [[ ${1:-${PROFILE:-}} != hysteria-tls-quic ]]; }
+profile_available_for_new_deployment() { valid_profile "${1:-${PROFILE:-}}"; }
 valid_xhttp_mode() { [[ $1 == auto || $1 == packet-up || $1 == stream-up ]]; }
 profile_uses_tls() { [[ ${PROFILE:-} == *-tls-* ]]; }
 # TLS-XHTTP terminates public TLS at Caddy. Its Xray listener is a loopback
@@ -538,7 +542,7 @@ profile_name() {
     vmess-tls-ws) printf 'VMess-WebSocket-TLS-Legacy' ;;
     vmess-tls-grpc) printf 'VMess-gRPC-TLS-Legacy' ;;
     trojan-tls-ws) printf 'Trojan-WebSocket-TLS' ;;
-    hysteria-tls-quic) printf 'Hysteria-2-TLS-QUIC (Xray 入站已停用)' ;;
+    hysteria-tls-quic) printf 'Hysteria-2-TLS-QUIC (官方服务端)' ;;
   esac
 }
 
@@ -584,7 +588,7 @@ choose_profile() {
   ui_box_divider
   ui_menu_item '现代证书直连（不能经过普通橙云）'
   ui_menu_item '11) VLESS-TLS-Vision-RAW     [自有证书、直连；RAW 不走橙云]'
-  ui_menu_item '12) Hysteria 2 TLS/QUIC      [暂不可新建：Xray 入站存在已知互通故障]'
+  ui_menu_item '12) Hysteria 2 TLS/QUIC      [官方 Hysteria 服务端；UDP/QUIC 直连]'
   ui_box_divider
   ui_menu_item '兼容保留（新部署不优先）'
   ui_menu_item '13) VMess-TCP                [无 TLS，仅限旧客户端或可信链路]'
@@ -597,7 +601,6 @@ choose_profile() {
     return 125
   fi
   PROFILE=$(profile_from_menu_choice "$choice") || die "协议组合选择无效。"
-  profile_available_for_new_deployment || die '当前 Xray Hysteria2 入站与标准 Hysteria2/sing-box 客户端存在已知互通故障，已停止新建。请按 docs/HYSTERIA2_MIGRATION.md 迁移到官方 Hysteria2 服务端。'
   case "$PROFILE" in
     vless-reality-raw|trojan-reality-raw|vmess-tcp) PATH_VALUE='' ;;
     vless-reality-xhttp)
@@ -669,7 +672,6 @@ ask_server_values() {
 
   if [[ ${V2M_NONINTERACTIVE:-0} == 1 ]]; then
     PROFILE=${V2M_PROFILE:-${PROFILE:-vless-reality-raw}}
-    profile_available_for_new_deployment "$PROFILE" || die '不再支持新建 Xray Hysteria2 入站；请迁移到官方 Hysteria2 服务端。'
     XHTTP_MODE=${V2M_XHTTP_MODE:-${XHTTP_MODE:-auto}}
     valid_xhttp_mode "$XHTTP_MODE" || die 'XHTTP 模式必须为 auto、packet-up 或 stream-up。'
     PATH_VALUE=${V2M_PATH:-${PATH_VALUE:-}}
@@ -1224,6 +1226,9 @@ rebuild_config_from_nodes() (
     # shellcheck disable=SC1090
     load_state_file "$node_file" || return 1
     node_id=$(basename "$node_file" .env)
+    # Hysteria2 is served by the official Hysteria process. Keeping it out of
+    # Xray avoids the known Xray inbound interoperability failures.
+    [[ $PROFILE == hysteria-tls-quic ]] && continue
     rendered="$work_dir/${node_id}.json"
     render_config "$rendered" || return 1
     jq --arg tag "$node_id" '.inbounds[0].tag=$tag | .inbounds[0]' "$rendered" > "$work_dir/inbound.json" || return 1
@@ -1303,6 +1308,149 @@ stop_legacy_service() {
     yellow "检测到本项目 1.x 服务，正在停用；旧文件会保留以便人工回退。"
     systemctl disable --now v2ray 2>/dev/null || true
   fi
+}
+hysteria_asset() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf '%s\t%s\n' hysteria-linux-amd64 907ba8c9693edb104b20582681fb7dc15639d5b64a9cbb616a7b539190a86691 ;;
+    aarch64|arm64) printf '%s\t%s\n' hysteria-linux-arm64 a68a61a84452ca250ce0368202521965ca9cc9d801a404f1dc9008ac6cf677a7 ;;
+    *) red "Hysteria 官方服务端暂不支持此架构：$(uname -m)" >&2; return 1 ;;
+  esac
+}
+
+install_hysteria_core() (
+  set -Eeuo pipefail
+  local asset expected actual temporary
+  IFS=$'\t' read -r asset expected < <(hysteria_asset) || return 1
+  if [[ -x $HYSTERIA_BIN ]]; then
+    actual=$(sha256sum "$HYSTERIA_BIN") || return 1
+    [[ ${actual%% *} == "$expected" ]] && return 0
+  fi
+  temporary=$(mktemp) || return 1
+  trap 'rm -f -- "$temporary"' EXIT
+  download_file "https://github.com/HyNetworks/hysteria/releases/download/app%2F${HYSTERIA_VERSION}/${asset}" "$temporary" || return 1
+  actual=$(sha256sum "$temporary") || return 1
+  [[ ${actual%% *} == "$expected" ]] || { red 'Hysteria 官方二进制 SHA-256 校验失败。' >&2; return 1; }
+  chmod 755 "$temporary"
+  "$temporary" version >/dev/null || return 1
+  atomic_install "$temporary" "$HYSTERIA_BIN" 755
+)
+
+write_hysteria_service_template() {
+  cat > "$HYSTERIA_SERVICE_TEMPLATE" <<EOF
+[Unit]
+Description=Hysteria2 inbound %i managed by v2ray-manager
+Documentation=https://v2.hysteria.network/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=$HYSTERIA_BIN server -c $HYSTERIA_CONFIG_DIR/%i.yaml
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=$TLS_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+render_hysteria_node() {
+  local node_id=$1
+  local config=$HYSTERIA_CONFIG_DIR/$node_id.yaml auth_file=$HYSTERIA_CONFIG_DIR/$node_id.auth auth_cmd=$HYSTERIA_CONFIG_DIR/$node_id-auth
+  local credential
+  valid_node_id "$node_id" || return 1
+  valid_port "$PORT" && valid_server_name "$SERVER_NAME" || return 1
+  tls_pair_valid "$(tls_cert_path)" "$(tls_key_path)" || return 1
+  install -d -m 700 "$HYSTERIA_CONFIG_DIR"
+  {
+    printf '%s\n' "$UUID"
+    if [[ -n ${EXTRA_UUIDS:-} ]]; then tr ',' '\n' <<<"$EXTRA_UUIDS"; fi
+  } > "$auth_file"
+  chmod 600 "$auth_file"
+  while IFS= read -r credential; do valid_uuid "$credential" || return 1; done < "$auth_file"
+  cat > "$auth_cmd" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+grep -Fqx -- "\${2:-}" "$auth_file"
+printf '%s\n' "\${2:-}"
+EOF
+  chmod 700 "$auth_cmd"
+  cat > "$config" <<EOF
+listen: ":$PORT"
+tls:
+  cert: "$(tls_cert_path)"
+  key: "$(tls_key_path)"
+  sniGuard: strict
+auth:
+  type: command
+  command: "$auth_cmd"
+masquerade:
+  type: string
+  string:
+    content: "404 Not Found"
+    headers:
+      content-type: "text/plain; charset=utf-8"
+    statusCode: 404
+EOF
+  chmod 600 "$config"
+}
+
+sync_hysteria_services() (
+  set -Eeuo pipefail
+  local node_file node_id config found=0
+  declare -A enabled=()
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    EXTRA_UUIDS=''; load_state_file "$node_file" || return 1
+    [[ $PROFILE == hysteria-tls-quic ]] || continue
+    ((found+=1)); node_id=$(basename "$node_file" .env); enabled["$node_id"]=1
+  done
+  if (( found )); then
+    install_hysteria_core || return 1
+    install -d -m 700 "$HYSTERIA_CONFIG_DIR"
+    write_hysteria_service_template || return 1
+    for node_file in "$NODES_DIR"/*.env; do
+      [[ -f $node_file ]] || continue
+      EXTRA_UUIDS=''; load_state_file "$node_file" || return 1
+      [[ $PROFILE == hysteria-tls-quic ]] || continue
+      node_id=$(basename "$node_file" .env)
+      render_hysteria_node "$node_id" || return 1
+    done
+    systemctl daemon-reload || return 1
+  fi
+  [[ -d $HYSTERIA_CONFIG_DIR ]] || return 0
+  for config in "$HYSTERIA_CONFIG_DIR"/*.yaml; do
+    [[ -f $config ]] || continue
+    node_id=$(basename "$config" .yaml)
+    if [[ -n ${enabled[$node_id]:-} ]]; then
+      systemctl enable "hysteria-v2ray-manager@${node_id}.service" >/dev/null
+      systemctl restart "hysteria-v2ray-manager@${node_id}.service" || return 1
+      systemctl is-active --quiet "hysteria-v2ray-manager@${node_id}.service" || return 1
+    else
+      systemctl disable --now "hysteria-v2ray-manager@${node_id}.service" >/dev/null 2>&1 || true
+      rm -f -- "$config" "$HYSTERIA_CONFIG_DIR/$node_id.auth" "$HYSTERIA_CONFIG_DIR/$node_id-auth"
+    fi
+  done
+  systemctl daemon-reload || return 1
+)
+
+hysteria_node_matches_runtime() {
+  local node_id node_file
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    node_id=$(basename "$node_file" .env)
+    [[ -r $HYSTERIA_CONFIG_DIR/$node_id.yaml ]] || continue
+    grep -Fqx "listen: \":$PORT\"" "$HYSTERIA_CONFIG_DIR/$node_id.yaml" || continue
+    grep -Fqx "$UUID" "$HYSTERIA_CONFIG_DIR/$node_id.auth" || continue
+    systemctl is-active --quiet "hysteria-v2ray-manager@${node_id}.service" && return 0
+  done
+  return 1
 }
 install_xray() {
   require_supported_os
@@ -1464,7 +1612,7 @@ service_healthy() {
 }
 
 restart_checked() {
-  systemctl restart "$SERVICE_NAME" && service_healthy
+  systemctl restart "$SERVICE_NAME" && service_healthy && sync_hysteria_services
 }
 
 restart_or_rollback() {
@@ -1552,6 +1700,19 @@ render_client_config() {
   local client_port
   valid_xhttp_mode "${XHTTP_MODE:-auto}" || return 1
   client_port=$(client_entry_port)
+  if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then
+    jq -n --arg address "$(server_address)" --argjson port "$client_port" \
+      --arg password "$UUID" --arg server "$SERVER_NAME" '{
+      log:{level:"warn"},
+      inbounds:[
+        {type:"socks",tag:"socks-in",listen:"127.0.0.1",listen_port:10800},
+        {type:"http",tag:"http-in",listen:"127.0.0.1",listen_port:10801}
+      ],
+      outbounds:[{type:"hysteria2",tag:"proxy",server:$address,server_port:$port,
+        password:$password,tls:{enabled:true,server_name:$server}}]
+    }'
+    return
+  fi
   render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-}" --arg xhttpMode "${XHTTP_MODE:-auto}" '
@@ -1604,6 +1765,10 @@ export_client() (
 
 connection_matches_config() {
   local config_file=${1:-$CONFIG_FILE}
+  if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then
+    hysteria_node_matches_runtime
+    return
+  fi
   [[ -r $config_file ]] || return 1
   render_config /dev/stdout | jq -e --slurpfile live "$config_file" '
     def signature: {
@@ -1692,7 +1857,7 @@ show_connection_loaded() (
   case "$PROFILE" in
     hysteria-tls-quic)
       protocol=hysteria2; transport=quic; security=tls; flow=none
-      query="sni=${SERVER_NAME}&alpn=h3"
+      query="sni=${SERVER_NAME}"
       ;;
     vless-tls-raw)
       transport=raw; security=tls; flow=xtls-rprx-vision
@@ -1764,6 +1929,8 @@ show_connection_loaded() (
         --arg net "$transport" --arg host "$SERVER_NAME" --arg path "${PATH_VALUE:-}" --arg tls "${security/none/}" \
         '{v:"2",ps:$ps,add:$add,port:$port,id:$id,aid:"0",scy:"auto",net:$net,type:"none",host:$host,path:$path,tls:$tls,sni:$host}')
       link="vmess://$(printf '%s' "$vmess_payload" | base64 -w 0)"
+    elif [[ $protocol == hysteria2 ]]; then
+      link="${protocol}://${credential}@${uri_address}:${client_port}/?${query}#${encoded_name}"
     else
       link="${protocol}://${credential}@${uri_address}:${client_port}?${query}#${encoded_name}"
     fi
@@ -2400,12 +2567,15 @@ service_action() {
   systemctl "$action" "$SERVICE_NAME"
   if [[ $action == start || $action == restart ]]; then
     service_healthy || die "服务未通过健康检查，请运行 v2ray log。"
+    sync_hysteria_services || die "Hysteria2 官方服务未通过健康检查，请运行 journalctl -u 'hysteria-v2ray-manager@*'。"
+  elif [[ $action == stop ]]; then
+    systemctl stop 'hysteria-v2ray-manager@*.service' >/dev/null 2>&1 || true
   fi
   green "已执行：${action}。"
 }
 
-show_status() { systemctl --no-pager --full status "$SERVICE_NAME" || true; }
-show_logs() { journalctl -u "$SERVICE_NAME" -n 100 --no-pager; }
+show_status() { systemctl --no-pager --full status "$SERVICE_NAME" 'hysteria-v2ray-manager@*.service' || true; }
+show_logs() { journalctl -u "$SERVICE_NAME" -u 'hysteria-v2ray-manager@*.service' -n 100 --no-pager; }
 
 run_speedtest() {
   local version
@@ -3277,6 +3447,18 @@ doctor_report() (
         '$current + [{port:$port,transport:$transport,status:$status}]') || return 2
     done < <(jq -r '.inbounds[] | [.port, (if .protocol == "hysteria" then "udp" else "tcp" end)] | @tsv' "$CONFIG_FILE")
   fi
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    EXTRA_UUIDS=''; load_state_file "$node_file" || return 2
+    [[ $PROFILE == hysteria-tls-quic ]] || continue
+    listening=unknown
+    if command -v ss >/dev/null 2>&1; then
+      output=$(ss -H -lnu "sport = :$PORT" 2>/dev/null) && listening=absent
+      [[ $listening == unknown || -z $output ]] || listening=present
+    fi
+    listeners=$(jq -cn --argjson current "$listeners" --argjson port "$PORT" --arg status "$listening" \
+      '$current + [{port:$port,transport:"udp",status:$status}]') || return 2
+  done
   result=$(jq -n --arg core "$core" --arg config "$config" --arg service "$service" --arg state "$state" \
     --arg transaction "$transaction" --argjson listeners "$listeners" '{
       schema_version:1, scope:"local", checks:{core:$core,config:$config,service:$service,state:$state,transaction:$transaction},
@@ -3452,6 +3634,18 @@ doctor() {
 
   for node_file in "$NODES_DIR"/*.env; do
     [[ -f $node_file ]] || continue
+    EXTRA_UUIDS=''; load_state_file "$node_file" || continue
+    [[ $PROFILE == hysteria-tls-quic ]] || continue
+    if systemctl is-active --quiet "hysteria-v2ray-manager@$(basename "$node_file" .env).service" && \
+      ss -H -lnu "sport = :$PORT" | grep -q .; then
+      green "[通过] 官方 Hysteria2 服务正在监听 UDP $PORT"
+    else
+      red "[失败] 官方 Hysteria2 服务未运行或 UDP $PORT 未监听"; ((failures+=1))
+    fi
+  done
+
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
     ((node_count+=1))
     if (
       # shellcheck disable=SC1090
@@ -3493,7 +3687,7 @@ doctor() {
   if (( node_count == 0 )); then
     yellow "[未检查] 没有启用的入站状态文件。"
   fi
-  yellow "本机检查不能验证云安全组、NAT 端口映射或客户端兼容性；请从客户端网络测试节点 TCP 端口。"
+  yellow "本机检查不能验证云安全组、NAT 端口映射或客户端兼容性；请从客户端网络测试相应的 TCP/UDP 端口。"
 
   if (( failures == 0 )); then
     green "诊断完成：已执行的本机检查未发现问题。"
@@ -3740,6 +3934,9 @@ manager_bundle_path() {
     caddy-sites) printf '%s\n' "$CADDY_SITE_DIR" ;;
     service) printf '%s\n' "$SERVICE_FILE" ;;
     components) printf '%s\n' "$WARP_BACKEND_BIN_DIR" ;;
+    hysteria-bin) printf '%s\n' "$HYSTERIA_BIN" ;;
+    hysteria-config) printf '%s\n' "$HYSTERIA_CONFIG_DIR" ;;
+    hysteria-service) printf '%s\n' "$HYSTERIA_SERVICE_TEMPLATE" ;;
     *) return 1 ;;
   esac
 }
@@ -3749,7 +3946,7 @@ capture_manager_bundle() (
   umask 077
   local bundle=$1 name path links xray_active=false caddy_active=false
   mkdir "$bundle/files" || return 1
-  for name in manager config caddy-main caddy-sites service components; do
+  for name in manager config caddy-main caddy-sites service components hysteria-bin hysteria-config hysteria-service; do
     path=$(manager_bundle_path "$name") || return 1
     if [[ -e $path || -L $path ]]; then
       # cp -a would preserve references to mutable external files rather than
@@ -3805,7 +4002,8 @@ restore_manager_bundle() {
   caddy_active=$(jq -r '.caddy_active' "$bundle/metadata.json") || return 1
   # Restore directories exactly, including removal of post-upgrade nodes.
   # Manager replacement is last; the saved recovery entry survives partial I/O.
-  for name in config caddy-main caddy-sites service components; do
+  systemctl stop 'hysteria-v2ray-manager@*.service' >/dev/null 2>&1 || true
+  for name in config caddy-main caddy-sites service components hysteria-bin hysteria-config hysteria-service; do
     path=$(manager_bundle_path "$name") || return 1
     rm -rf -- "$path" || return 1
     if [[ -e $bundle/files/$name ]]; then
@@ -3818,8 +4016,12 @@ restore_manager_bundle() {
   if [[ -f $CONFIG_FILE ]]; then
     XRAY_LOCATION_ASSET="$ASSET_DIR" "$XRAY_BIN" run -test -config "$CONFIG_FILE" >/dev/null || return 1
   fi
-  if [[ $xray_active == true ]]; then restart_checked || return 1
+  if [[ $xray_active == true ]]; then
+    systemctl restart "$SERVICE_NAME" && service_healthy || return 1
   elif systemctl is-active --quiet "$SERVICE_NAME"; then systemctl stop "$SERVICE_NAME" || return 1; fi
+  if [[ $xray_active == true && -d $bundle/files/hysteria-config ]]; then
+    sync_hysteria_services || return 1
+  fi
   if [[ $caddy_active == true ]]; then
     caddy validate --config "$CADDY_CONFIG" >/dev/null || return 1
     systemctl restart caddy || return 1
@@ -3913,8 +4115,9 @@ uninstall_xray() {
   read -r -p "将停止服务并删除 Xray 程序与 /etc/xray 配置。继续？[y/N] " answer
   [[ ${answer,,} == y || ${answer,,} == yes ]] || return
   systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-  rm -f "$SERVICE_FILE" "$XRAY_BIN" "$MANAGER_BIN"
-  rm -rf "$CONFIG_DIR" "$ASSET_DIR"
+  systemctl disable --now 'hysteria-v2ray-manager@*.service' 2>/dev/null || true
+  rm -f "$SERVICE_FILE" "$XRAY_BIN" "$MANAGER_BIN" "$HYSTERIA_BIN" "$HYSTERIA_SERVICE_TEMPLATE"
+  rm -rf "$CONFIG_DIR" "$ASSET_DIR" "$HYSTERIA_CONFIG_DIR"
   if [[ -e "$LEGACY_MANAGER_BACKUP" ]]; then
     install -m 755 "$LEGACY_MANAGER_BACKUP" "$MANAGER_BIN"
     green "已恢复安装前的 v2ray 管理命令。"

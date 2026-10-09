@@ -71,7 +71,7 @@ def run_profile(folder, core, profile, mode="auto", wrong_auth=False):
     client["inbounds"] = [client["inbounds"][0]]
     client["inbounds"][0]["port"] = socks_port
     outbound = client["outbounds"][0]
-    peer = outbound["settings"] if profile == "hysteria-tls-quic" else outbound["settings"].get("vnext", outbound["settings"].get("servers"))[0]
+    peer = outbound["settings"].get("vnext", outbound["settings"].get("servers"))[0]
     peer.update(address="127.0.0.1", port=entry_port if caddy_route else server_port)
     stream = outbound["streamSettings"]
     if stream.get("security") == "tls":
@@ -102,11 +102,7 @@ def run_profile(folder, core, profile, mode="auto", wrong_auth=False):
             path = folder / f"traffic-{label}-server.json"
             path.write_text(json.dumps(server), encoding="utf-8")
             server_process = launch("server", [str(core), "run", "-config", str(path)])
-            if profile != "hysteria-tls-quic":
-                wait_for_port(server_port, server_process)
-            else:
-                time.sleep(0.3)
-                assert server_process.poll() is None, "Hysteria UDP server exited"
+            wait_for_port(server_port, server_process)
             if caddy_route:
                 site = (folder / "site.caddy").read_text(encoding="utf-8")
                 site = site.replace("example.com {", f"https://example.com:{entry_port} {{\n\tbind 127.0.0.1\n\ttls {json.dumps(str(folder / 'cert.pem'))} {json.dumps(str(folder / 'key.pem'))}")
@@ -147,8 +143,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 3:
         run_profile(folder, core, sys.argv[3])
         sys.exit(0)
-    for profile in ("vmess-tcp", "vless-tls-raw", "vless-tls-ws", "vless-tls-grpc", "trojan-tls-ws", "vmess-tls-ws", "vmess-tls-grpc", "hysteria-tls-quic"):
+    for profile in ("vmess-tcp", "vless-tls-raw", "vless-tls-ws", "vless-tls-grpc", "trojan-tls-ws", "vmess-tls-ws", "vmess-tls-grpc"):
         run_profile(folder, core, profile)
-    run_profile(folder, core, "hysteria-tls-quic", wrong_auth=True)
     for mode in ("auto", "packet-up", "stream-up"):
         run_profile(folder, core, "vless-tls-xhttp", mode=mode)

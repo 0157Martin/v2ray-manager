@@ -61,7 +61,7 @@ MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=
 export TLS_CERT_PATH_OVERRIDE="$temporary_dir/cert.pem"
 export TLS_KEY_PATH_OVERRIDE="$temporary_dir/key.pem"
 
-for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-raw vless-tls-xhttp vless-tls-ws vless-tls-grpc trojan-reality-raw vmess-tcp vmess-tls-ws vmess-tls-grpc trojan-tls-ws hysteria-tls-quic; do
+for PROFILE in vless-reality-raw vless-reality-xhttp vless-reality-grpc vless-tls-raw vless-tls-xhttp vless-tls-ws vless-tls-grpc trojan-reality-raw vmess-tcp vmess-tls-ws vmess-tls-grpc trojan-tls-ws; do
   export PROFILE
   case "$PROFILE" in
     *xhttp*|*ws) export PATH_VALUE=/test-path ;;
@@ -139,5 +139,5 @@ inject_warp_config "$temporary_dir/warp-all.json" all
 jq -e '.routing.rules[] | select(.outboundTag == "warp") | .network == "tcp"' "$temporary_dir/warp-all.json" >/dev/null
 XRAY_LOCATION_ASSET="$temporary_dir/core" "$core_binary" run -test -config "$temporary_dir/warp-all.json"
 
-printf 'Xray %s accepted the empty state, all protocol profiles, combined inbounds, and shared WARP routing.\n' "$tag"
+printf 'Xray %s accepted the empty state, all Xray-backed profiles, combined inbounds, and shared WARP routing.\n' "$tag"
 "${PYTHON:-python3}" "$repo_dir/tests/private-routing.py" "$temporary_dir" "$core_binary"

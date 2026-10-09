@@ -17,6 +17,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly WARP_BACKEND_BIN_DIR=.*|readonly WARP_BACKEND_BIN_DIR=\"$sandbox/components\"|" \
   -e "s|readonly CADDY_BRANCH_BIN=.*|readonly CADDY_BRANCH_BIN=\"$sandbox/components/caddy-manager\"|" \
   -e "s|readonly CFIP_BRANCH_BIN=.*|readonly CFIP_BRANCH_BIN=\"$sandbox/components/cloudflare-ip-manager\"|" \
+  -e "s|readonly HYSTERIA_BIN=.*|readonly HYSTERIA_BIN=\"$sandbox/bin/hysteria\"|" \
+  -e "s|readonly HYSTERIA_CONFIG_DIR=.*|readonly HYSTERIA_CONFIG_DIR=\"$sandbox/hysteria\"|" \
+  -e "s|readonly HYSTERIA_SERVICE_TEMPLATE=.*|readonly HYSTERIA_SERVICE_TEMPLATE=\"$sandbox/hysteria.service\"|" \
   "$repo/v2ray.sh" | sed '/^if \[\[ "${BASH_SOURCE\[0\]}"/,$d' > "$manager"
 cat >> "$manager" <<'MOCKS'
 require_root() { :; }

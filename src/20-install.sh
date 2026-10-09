@@ -158,7 +158,7 @@ service_healthy() {
 }
 
 restart_checked() {
-  systemctl restart "$SERVICE_NAME" && service_healthy
+  systemctl restart "$SERVICE_NAME" && service_healthy && sync_hysteria_services
 }
 
 restart_or_rollback() {
@@ -246,6 +246,19 @@ render_client_config() {
   local client_port
   valid_xhttp_mode "${XHTTP_MODE:-auto}" || return 1
   client_port=$(client_entry_port)
+  if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then
+    jq -n --arg address "$(server_address)" --argjson port "$client_port" \
+      --arg password "$UUID" --arg server "$SERVER_NAME" '{
+      log:{level:"warn"},
+      inbounds:[
+        {type:"socks",tag:"socks-in",listen:"127.0.0.1",listen_port:10800},
+        {type:"http",tag:"http-in",listen:"127.0.0.1",listen_port:10801}
+      ],
+      outbounds:[{type:"hysteria2",tag:"proxy",server:$address,server_port:$port,
+        password:$password,tls:{enabled:true,server_name:$server}}]
+    }'
+    return
+  fi
   render_config /dev/stdout | jq --arg address "$(server_address)" --argjson clientPort "$client_port" \
     --arg server "$SERVER_NAME" --arg public "${PUBLIC_KEY:-}" --arg short "${SHORT_ID:-}" \
     --arg profile "${PROFILE:-}" --arg xhttpMode "${XHTTP_MODE:-auto}" '
@@ -298,6 +311,10 @@ export_client() (
 
 connection_matches_config() {
   local config_file=${1:-$CONFIG_FILE}
+  if [[ ${PROFILE:-} == hysteria-tls-quic ]]; then
+    hysteria_node_matches_runtime
+    return
+  fi
   [[ -r $config_file ]] || return 1
   render_config /dev/stdout | jq -e --slurpfile live "$config_file" '
     def signature: {

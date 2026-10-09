@@ -260,6 +260,9 @@ rebuild_config_from_nodes() (
     # shellcheck disable=SC1090
     load_state_file "$node_file" || return 1
     node_id=$(basename "$node_file" .env)
+    # Hysteria2 is served by the official Hysteria process. Keeping it out of
+    # Xray avoids the known Xray inbound interoperability failures.
+    [[ $PROFILE == hysteria-tls-quic ]] && continue
     rendered="$work_dir/${node_id}.json"
     render_config "$rendered" || return 1
     jq --arg tag "$node_id" '.inbounds[0].tag=$tag | .inbounds[0]' "$rendered" > "$work_dir/inbound.json" || return 1
