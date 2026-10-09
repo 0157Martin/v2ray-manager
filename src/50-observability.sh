@@ -25,6 +25,18 @@ doctor_report() (
         '$current + [{port:$port,transport:$transport,status:$status}]') || return 2
     done < <(jq -r '.inbounds[] | [.port, (if .protocol == "hysteria" then "udp" else "tcp" end)] | @tsv' "$CONFIG_FILE")
   fi
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
+    EXTRA_UUIDS=''; load_state_file "$node_file" || return 2
+    [[ $PROFILE == hysteria-tls-quic ]] || continue
+    listening=unknown
+    if command -v ss >/dev/null 2>&1; then
+      output=$(ss -H -lnu "sport = :$PORT" 2>/dev/null) && listening=absent
+      [[ $listening == unknown || -z $output ]] || listening=present
+    fi
+    listeners=$(jq -cn --argjson current "$listeners" --argjson port "$PORT" --arg status "$listening" \
+      '$current + [{port:$port,transport:"udp",status:$status}]') || return 2
+  done
   result=$(jq -n --arg core "$core" --arg config "$config" --arg service "$service" --arg state "$state" \
     --arg transaction "$transaction" --argjson listeners "$listeners" '{
       schema_version:1, scope:"local", checks:{core:$core,config:$config,service:$service,state:$state,transaction:$transaction},
@@ -200,6 +212,18 @@ doctor() {
 
   for node_file in "$NODES_DIR"/*.env; do
     [[ -f $node_file ]] || continue
+    EXTRA_UUIDS=''; load_state_file "$node_file" || continue
+    [[ $PROFILE == hysteria-tls-quic ]] || continue
+    if systemctl is-active --quiet "hysteria-v2ray-manager@$(basename "$node_file" .env).service" && \
+      ss -H -lnu "sport = :$PORT" | grep -q .; then
+      green "[通过] 官方 Hysteria2 服务正在监听 UDP $PORT"
+    else
+      red "[失败] 官方 Hysteria2 服务未运行或 UDP $PORT 未监听"; ((failures+=1))
+    fi
+  done
+
+  for node_file in "$NODES_DIR"/*.env; do
+    [[ -f $node_file ]] || continue
     ((node_count+=1))
     if (
       # shellcheck disable=SC1090
@@ -241,7 +265,7 @@ doctor() {
   if (( node_count == 0 )); then
     yellow "[未检查] 没有启用的入站状态文件。"
   fi
-  yellow "本机检查不能验证云安全组、NAT 端口映射或客户端兼容性；请从客户端网络测试节点 TCP 端口。"
+  yellow "本机检查不能验证云安全组、NAT 端口映射或客户端兼容性；请从客户端网络测试相应的 TCP/UDP 端口。"
 
   if (( failures == 0 )); then
     green "诊断完成：已执行的本机检查未发现问题。"

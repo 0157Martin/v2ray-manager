@@ -16,6 +16,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly CADDY_SITE_DIR=.*|readonly CADDY_SITE_DIR=\"$sandbox/caddy-sites\"|" \
   -e "s|readonly LOCK_FILE=.*|readonly LOCK_FILE=\"$sandbox/manager.lock\"|" \
   -e "s|readonly ACME_RENEWAL_DIR=.*|readonly ACME_RENEWAL_DIR=\"$sandbox/renewal\"|" \
+  -e "s|readonly HYSTERIA_BIN=.*|readonly HYSTERIA_BIN=\"$sandbox/bin/hysteria\"|" \
+  -e "s|readonly HYSTERIA_CONFIG_DIR=.*|readonly HYSTERIA_CONFIG_DIR=\"$sandbox/hysteria\"|" \
+  -e "s|readonly HYSTERIA_SERVICE_TEMPLATE=.*|readonly HYSTERIA_SERVICE_TEMPLATE=\"$sandbox/hysteria.service\"|" \
   "$repo/v2ray.sh" | sed '/^if \[\[ "${BASH_SOURCE\[0\]}"/,$d' > "$manager"
 cat >> "$manager" <<'MOCKS'
 require_root() { :; }

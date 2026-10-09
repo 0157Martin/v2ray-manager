@@ -2,10 +2,13 @@
 
 ## Unreleased
 
+- 6.5.2：Hysteria2 改由固定版本、校验 SHA-256 的 Hysteria 官方服务端承载；升级保留节点 ID、UUID、域名、UDP 端口、证书和子链接，并自动移除 Xray 实验入站以避免端口冲突。
+- Hysteria2 分享 URI 按官方规范改为 `host:port/?sni=`，移除非必要 `alpn=h3`；客户端 JSON 改为 sing-box Hysteria2 格式，服务启停、日志与 `doctor` 同步覆盖官方服务实例。
+- Hysteria2 故障笔记以官方文档为主体，补充记录 v2rayN/sing-box 导入排查经验，并明确普通 Cloudflare 橙云不代理其 UDP 直连流量。
 - 6.5.1：修复独立 `caddy-manager` 使用旧 profile 名称导致同步时漏掉全部 VLESS/VMess/Trojan WebSocket 入站；同域名的 XHTTP 与 WS 路径现在会一起保留。
 - 补充 6.5.1 故障笔记：归纳 Caddy 同步漏掉 WS 路由的原因、标准处理步骤和灰云恢复验收条件。
 - 修复 Caddy 同步后 VLESS WebSocket TLS 失效：HTTPS WS 后端固定使用 HTTP/1.1 Upgrade，避免默认上游 ALPN 选择 HTTP/2；故障笔记同时记录旧节点失配与同步后再次失效的实际顺序。
-- 停止新建 Xray 实验性 Hysteria2 入站；官方报告确认其可能收包但不回包，而 v2rayN 分享链接默认由 sing-box 连接。保留稳定 profile ID 以支持旧节点识别、导出和迁移，并新增官方 Hysteria2 服务端迁移指南。
+- 停止使用 Xray 实验性 Hysteria2 入站；官方报告确认其可能收包但不回包，而 v2rayN 分享链接默认由 sing-box 连接。保留稳定 profile ID 以支持旧节点迁移，并新增官方 Hysteria2 服务端实现与迁移指南。
 - 协议选择菜单新增 `0) 取消并返回`；取消会通过事务回滚保证单节点和批量修改不留下部分配置。
 - 协议菜单改为按实际网络路径分类：REALITY 直连、HTTP/CDN、现代证书直连和兼容保留；不再把 VLESS Vision、Hysteria2 与 Trojan WebSocket 笼统归为“旧版兼容”。
 - 协议编号按分类重排为连续的 1–13；持久化 profile ID 保持不变，现有节点无需数据迁移。依赖旧交互数字的自动化需改用 `V2M_PROFILE`。

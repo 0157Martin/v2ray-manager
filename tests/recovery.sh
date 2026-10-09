@@ -45,6 +45,9 @@ sed -e "s|readonly BIN_DIR=.*|readonly BIN_DIR=\"$sandbox/bin\"|" \
   -e "s|readonly CADDY_SITE_DIR=.*|readonly CADDY_SITE_DIR=\"$sandbox/caddy-sites\"|" \
   -e "s|readonly CADDY_WEB_ROOT=.*|readonly CADDY_WEB_ROOT=\"$sandbox/www\"|" \
   -e "s|readonly WARP_BACKEND_BIN_DIR=.*|readonly WARP_BACKEND_BIN_DIR=\"$sandbox/components\"|" \
+  -e "s|readonly HYSTERIA_BIN=.*|readonly HYSTERIA_BIN=\"$sandbox/bin/hysteria\"|" \
+  -e "s|readonly HYSTERIA_CONFIG_DIR=.*|readonly HYSTERIA_CONFIG_DIR=\"$sandbox/hysteria\"|" \
+  -e "s|readonly HYSTERIA_SERVICE_TEMPLATE=.*|readonly HYSTERIA_SERVICE_TEMPLATE=\"$sandbox/hysteria.service\"|" \
   "$repo_dir/v2ray.sh" > "$sandbox/manager.sh"
 # shellcheck disable=SC1091
 source "$sandbox/manager.sh"

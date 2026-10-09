@@ -23,8 +23,8 @@ Hysteria2 TLS/QUIC 作为实验选项加入，使用 UDP、TLS 和 QUIC。它要
 端口，并需要客户端支持。非交互创建时必须设置 `V2M_EXPERIMENTAL=1`，避免自动化脚本在没有
 明确选择的情况下启用实验协议。
 
-> 后续勘误：Xray `v26.3.27` 的 Hysteria2 入站被确认存在收包但不回应的互通故障。本项目已
-> 停止新建该入站，旧 profile ID 仅为配置迁移保留。处理方法见
+> 后续勘误：Xray `v26.3.27` 的 Hysteria2 入站被确认存在收包但不回应的互通故障。6.5.2 起
+> 改用 Hysteria 官方服务端，升级时保留旧 profile ID 和连接参数并自动迁移。处理方法见
 > [Hysteria2 故障说明与迁移](HYSTERIA2_MIGRATION.md)。
 
 ## 协议菜单为什么重新分类

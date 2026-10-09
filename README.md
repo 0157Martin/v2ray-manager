@@ -331,9 +331,10 @@ v2ray uninstall
 凭据或新建节点。示例见 [`examples/desired-state.json`](examples/desired-state.json)。状态文件名继续保留
 `.env`/`.disabled` 以兼容现有目录布局，但 6.5.0 起内容为 JSON，管理器不会执行其中的 Shell。
 
-Hysteria2 TLS/QUIC 不再允许新建。Xray `v26.3.27` 的实验入站存在收到 UDP 包却不回应的
-已知互通故障，而 v2rayN 导入分享链接后默认使用 sing-box。旧节点 profile ID 保持有效，
-请按 [Hysteria2 故障说明与迁移](docs/HYSTERIA2_MIGRATION.md) 改用官方 Hysteria2 服务端。
+Hysteria2 TLS/QUIC 由 Hysteria 官方服务端承载，客户端配置按 sing-box 格式导出。升级时会保留
+旧节点的 profile ID、UUID、端口和证书，并从失效的 Xray 实验入站自动迁移。该协议必须使用
+Cloudflare 灰云（DNS only）且放行 UDP 端口；原因、迁移和验收方法见
+[Hysteria2 故障说明与迁移](docs/HYSTERIA2_MIGRATION.md)。
 本机诊断只检查本机配置、进程和监听状态；
 `public_reachability: "not_checked"` 表示它不能替代外网客户端连通性验证。
 

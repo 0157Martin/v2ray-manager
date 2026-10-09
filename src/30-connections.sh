@@ -41,7 +41,7 @@ show_connection_loaded() (
   case "$PROFILE" in
     hysteria-tls-quic)
       protocol=hysteria2; transport=quic; security=tls; flow=none
-      query="sni=${SERVER_NAME}&alpn=h3"
+      query="sni=${SERVER_NAME}"
       ;;
     vless-tls-raw)
       transport=raw; security=tls; flow=xtls-rprx-vision
@@ -113,6 +113,8 @@ show_connection_loaded() (
         --arg net "$transport" --arg host "$SERVER_NAME" --arg path "${PATH_VALUE:-}" --arg tls "${security/none/}" \
         '{v:"2",ps:$ps,add:$add,port:$port,id:$id,aid:"0",scy:"auto",net:$net,type:"none",host:$host,path:$path,tls:$tls,sni:$host}')
       link="vmess://$(printf '%s' "$vmess_payload" | base64 -w 0)"
+    elif [[ $protocol == hysteria2 ]]; then
+      link="${protocol}://${credential}@${uri_address}:${client_port}/?${query}#${encoded_name}"
     else
       link="${protocol}://${credential}@${uri_address}:${client_port}?${query}#${encoded_name}"
     fi
@@ -749,12 +751,15 @@ service_action() {
   systemctl "$action" "$SERVICE_NAME"
   if [[ $action == start || $action == restart ]]; then
     service_healthy || die "服务未通过健康检查，请运行 v2ray log。"
+    sync_hysteria_services || die "Hysteria2 官方服务未通过健康检查，请运行 journalctl -u 'hysteria-v2ray-manager@*'。"
+  elif [[ $action == stop ]]; then
+    systemctl stop 'hysteria-v2ray-manager@*.service' >/dev/null 2>&1 || true
   fi
   green "已执行：${action}。"
 }
 
-show_status() { systemctl --no-pager --full status "$SERVICE_NAME" || true; }
-show_logs() { journalctl -u "$SERVICE_NAME" -n 100 --no-pager; }
+show_status() { systemctl --no-pager --full status "$SERVICE_NAME" 'hysteria-v2ray-manager@*.service' || true; }
+show_logs() { journalctl -u "$SERVICE_NAME" -u 'hysteria-v2ray-manager@*.service' -n 100 --no-pager; }
 
 run_speedtest() {
   local version
